@@ -6,3 +6,9 @@ resolution: workspace
 
 environment:
   sdk: ^3.13.0
+
+dependencies:
+  libserialport_plus: ^1.0.5
+
+dev_dependencies:
+  test: ^1.33.0

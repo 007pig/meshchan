@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter and bundled Dart
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: '3.47.9'
+
+      - name: Print SDK versions
+        run: |
+          flutter --version --machine
+          dart --version
+
+      - name: Get locked workspace dependencies
+        run: dart pub get --enforce-lockfile
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze workspace
+        run: dart analyze --fatal-infos
+
+      - name: Test CLI
+        working-directory: apps/meshctl
+        run: dart test
+
+      - name: Smoke test CLI
+        working-directory: apps/meshctl
+        run: |
+          dart run bin/meshctl.dart --help
+          dart run bin/meshctl.dart --version

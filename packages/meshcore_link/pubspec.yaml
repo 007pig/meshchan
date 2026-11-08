@@ -1,0 +1,8 @@
+name: meshcore_link
+description: Pure Dart communication core for MeshCore-based applications.
+version: 0.1.0-dev.1
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0

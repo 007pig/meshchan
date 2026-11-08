@@ -1,0 +1,13 @@
+name: meshchan
+description: Workspace for a decentralized content application based on MeshCore.
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+workspace:
+  - packages/meshcore_link
+  - apps/meshctl
+
+dev_dependencies:
+  lints: ^6.1.0

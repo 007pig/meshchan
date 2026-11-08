@@ -1,0 +1,21 @@
+# Dart caches and build output (keep the root pubspec.lock).
+.dart_tool/
+.pub-cache/
+.packages
+build/
+coverage/
+*.dart.js
+*.dart.js.deps
+*.dart.js.map
+
+# Workspace members share the root lockfile.
+/apps/**/pubspec.lock
+/packages/**/pubspec.lock
+
+# Local editor and operating system files.
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+.DS_Store

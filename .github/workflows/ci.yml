@@ -77,7 +77,8 @@ jobs:
               result = subprocess.run(command, capture_output=True, text=True)
               assert result.returncode == 69, (command, result.returncode, result.stderr)
               assert not result.stdout, (command, result.stdout)
-              assert expected in result.stderr.splitlines(), (command, result.stderr)
+              # Dart build-hook progress can share the diagnostic's stderr line.
+              assert expected in result.stderr, (command, result.stderr)
               assert "#0" not in result.stderr, (command, result.stderr)
               print(f"Verified native enumeration rejection: {command}")
           PY

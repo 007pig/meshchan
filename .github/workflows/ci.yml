@@ -11,6 +11,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
@@ -41,84 +42,25 @@ jobs:
         working-directory: apps/meshctl
         run: dart test
 
-      - name: Test serial diagnostics without hardware
+      - name: Test core suite without hardware
         working-directory: packages/meshcore_link
         run: dart test
 
-      - name: Smoke test CLI
+      - name: Build native CLI bundle
         working-directory: apps/meshctl
-        run: |
-          dart run bin/meshctl.dart --help
-          dart run bin/meshctl.dart --version
-          dart run bin/meshctl.dart ports --help
-          dart run bin/meshctl.dart port-check --help
-          dart run bin/meshctl.dart info --help
-          dart run bin/meshctl.dart watch --help
-
-      - name: Build and run native CLI bundle
-        working-directory: apps/meshctl
-        run: |
-          dart build cli --target=bin/meshctl.dart --output=build/dist
-          build/dist/bundle/bin/meshctl --help
-          build/dist/bundle/bin/meshctl --version
-          build/dist/bundle/bin/meshctl info --help
-          build/dist/bundle/bin/meshctl watch --help
-
-      - name: Verify session CLI usage without hardware
-        working-directory: apps/meshctl
-        run: |
-          python3 - <<'PY'
-          import subprocess
-
-          prefixes = [
-              ["dart", "run", "bin/meshctl.dart"],
-              ["build/dist/bundle/bin/meshctl"],
-          ]
-          arguments = [
-              ["info"], ["watch"], ["info", "--port="],
-              ["info", "--timeout=0"],
-              ["info", "--init-timeout=86401"],
-              ["watch", "--duration=NaN"],
-              ["watch", "--startup-delay=-1"],
-          ]
-          for prefix in prefixes:
-              for args in arguments:
-                  command = prefix + args
-                  result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-                  assert result.returncode == 64, (command, result.returncode, result.stderr)
-                  assert not result.stdout, (command, result.stdout)
-                  assert "Error:" in result.stderr and "meshctl --help" in result.stderr
-                  assert "#0" not in result.stderr, (command, result.stderr)
-                  for argument in args[1:]:
-                      if argument.startswith(("--timeout=", "--init-timeout=", "--duration=", "--startup-delay=")):
-                          assert argument.split("=", 1)[0] in result.stderr, (command, result.stderr)
-                  print(f"Verified usage rejection without a selected port: {command}")
-          PY
+        run: dart build cli --target=bin/meshctl.dart --output=build/dist
 
       - name: Build serial transport check without opening hardware
         working-directory: packages/meshcore_link
         run: dart build cli --target=example/serial_transport_check.dart --output=build/serial-transport-check
 
-      - name: Verify Linux enumeration is rejected safely
-        working-directory: apps/meshctl
+      - name: Verify source and native entry points without hardware
         run: |
-          python3 - <<'PY'
-          import subprocess
+          python3 --version
+          python3 tool/smoke_cli.py \
+            --dart "$(command -v dart)" \
+            --cli-bundle apps/meshctl/build/dist/bundle \
+            --observation-bundle packages/meshcore_link/build/serial-transport-check/bundle
 
-          expected = (
-              "Error: Serial port enumeration is unavailable on Linux with "
-              "libserialport_plus 1.0.5: the native backend can open unselected ports."
-          )
-          commands = [
-              ["dart", "run", "bin/meshctl.dart", "ports"],
-              ["build/dist/bundle/bin/meshctl", "ports"],
-          ]
-          for command in commands:
-              result = subprocess.run(command, capture_output=True, text=True)
-              assert result.returncode == 69, (command, result.returncode, result.stderr)
-              assert not result.stdout, (command, result.stdout)
-              # Dart build-hook progress can share the diagnostic's stderr line.
-              assert expected in result.stderr, (command, result.stderr)
-              assert "#0" not in result.stderr, (command, result.stderr)
-              print(f"Verified native enumeration rejection: {command}")
-          PY
+      - name: Check patch whitespace
+        run: git diff --check

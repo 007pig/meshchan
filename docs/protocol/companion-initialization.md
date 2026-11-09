@@ -158,7 +158,9 @@ void main() {
 No transport, port, I/O, logging, or asynchronous executor is involved in this
 example. A separate [user-authorized hardware probe](../hardware-validation.md#step-5-authorized-command-probe-on-november-9-2026)
 validated the two command/response paths on one selected USB port; this does not
-add an initialization executor to the codec. Step 6 can combine this codec with
-the existing [transport](serial-transport.md). Product sessions, response
-waiting/matching, timeouts, handshakes, retries, reconnection, and automated
-initialization remain unimplemented; LoRa communication remains unverified.
+add an initialization executor to the codec. Step 6's separate
+[session](companion-session.md) combines this codec with the existing
+[transport](serial-transport.md), adding fixed initialization, response matching,
+deadlines, and cleanup. The codec remains stateless. Session hardware acceptance,
+authenticated identity, retries, reconnection, and LoRa communication remain
+unverified or unimplemented.

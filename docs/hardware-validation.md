@@ -1,4 +1,14 @@
-# Step 2 Validation Record
+# Hardware validation record
+
+Current status on November 9, 2026: the initial [Step 9 basic matrix](#step-9-device-acceptance-on-november-9-2026)
+passed H2–H7. Three separately authorized H10 startups failed before ready, most
+recently [attempt 3](#step-9-h10-third-startup-on-november-9-2026); all cleanups
+succeeded. A separate manual replug sequence had R1 info FAIL/R2 info PASS.
+Ready-state disconnect detection and the full H10 recovery cycle remain untested;
+recommendation is development with known limitations. Historical evidence below
+is retained, including the earlier successes and failures.
+
+## Historical Step 2 validation
 
 Validation date: November 8, 2026. Scope: Phase 1 / 1A / Step 2 only.
 
@@ -866,3 +876,241 @@ changed, so the preceding 68 core/27 CLI tests remain earlier results, not a new
 run for this documentation-only follow-up. Fresh control self-tests, Python syntax
 checks, root format/fatal-info analysis, and diff checks passed. No commit, push,
 PR, release, other-platform/remote CI run, or LoRa test was performed.
+
+
+## Step 9 device acceptance on November 9, 2026
+
+The user selected one exact USB path for this task, then explicitly authorized
+one metadata enumeration, the fixed H2–H7 matrix, H9 initialization cancellation,
+and SIGINT/SIGTERM only to this task's child processes. Physical unplug/replug
+and emergency forced termination were not authorized. Public records use `$PORT`
+and device alias **Companion USB A**. The physical model, firmware provenance and
+node name had no independent second source and remain unknown; successful device
+fields are device-reported, with only structural facts retained here. No prior
+Heltec label is used to identify this device.
+
+The software gate passed before hardware access. `BIN` is `bin/meshctl` in the
+complete CLI bundle copied to a fresh delivery directory outside the repository;
+all native hardware commands used that copy and that directory as cwd. `SRC`
+is the same SDK's direct Dart `run bin/meshctl.dart` from `apps/meshctl`.
+Source HEAD was clean `e1e16e28c2d99be197a9ed18a1df269f522e5c40` on `master`.
+Host: macOS 27.2 (26B123), arm64; direct Dart 3.13.7; libserialport_plus 1.0.5.
+
+Default sessions used target 3, 115200/8N1, request budget 5 s, total initialization
+budget 15 s, startup delay 0. H9 alone explicitly used 1000 ms to expose a
+cancellation window, with no default or workaround change. Each listed process
+ran once; H4a/H4b were the only predetermined repeated info calls. Every actual
+cleanup and process return completed before the next case. A temporary Python
+standard-library wrapper drained stdout/stderr concurrently, parsed results in
+memory, and retained only structural summaries. It implemented no protocol,
+retry, extra query, or USB capture. No raw device output or bytes were saved.
+
+Native artifact SHA-256 (unchanged through final archive extraction):
+
+- `bin/meshctl`: `51d4e7e10e3f7ea64927797f252a436b7f72ab775bfea262356aa837dce6b914`
+- `lib/liblibserialport_plus.dylib`: `6a3fbe15228b7e860b0cd9ec3fd8a60b55f0e40fbbe2ef3b5cef0f3a7ea4a56d`
+
+All times below are UTC on November 9, 2026. Elapsed values are whole-process
+wall time, including startup, source build hooks where applicable, and cleanup;
+they are not pure handshake latency. `succeeded` for info/error paths means the
+CLI awaited close and returned naturally with no cleanup diagnostic; successful
+info also explicitly reports sessionClosed. Watch independently reports its end
+cleanup result. H1 does not open a port and has no session cleanup to assess.
+
+| Case / attempt | Artifact / exact command | Start UTC → end UTC | Elapsed s | Result / actual exit / cleanup | Structural evidence |
+| --- | --- | --- | --- | --- | --- |
+| H1 / 1 | `BIN ports --json` | 20:41:26.706 → 20:41:26.967 | 0.260218 | PASS / 0 / not_applicable_no_open | Parsed one JSON object; 4 paths; explicit selected path matched; no port open. |
+| H2 / 1 | `BIN port-check --port $PORT` | 20:41:26.967 → 20:41:26.998 | 0.030558 | PASS / 0 / succeeded | Open/state/close/dispose success; protocol not checked. |
+| H3 / 1 | `SRC info --port $PORT --json` | 20:41:26.998 → 20:41:28.443 | 1.445170 | PASS / 0 / succeeded | One complete schema-1 info snapshot; initializationCompleted and sessionClosed true; target 3, reported protocol 14. |
+| H4a / 1 | `BIN info --port $PORT --json` | 20:41:28.444 → 20:41:28.804 | 0.360280 | PASS / 0 / succeeded | One complete closed info snapshot; target 3, reported protocol 14. |
+| H4b / 1 | `BIN info --port $PORT --json` | 20:41:28.804 → 20:41:29.060 | 0.255486 | PASS / 0 / succeeded | One complete closed info snapshot; all device/self fields and target equal to H4a in memory, including public-key prefix consistency only. |
+| H5 / 1 | `BIN watch --port $PORT --json --duration 3` | 20:41:29.061 → 20:41:32.401 | 3.340159 | PASS / 0 / succeeded | One ready, one end: duration / 0 / succeeded; ready-to-end 3.092708 s. |
+| H6 / 1 | `BIN watch --port $PORT --json` | 20:41:32.402 → 20:41:32.759 | 0.356518 | PASS / 130 / succeeded | SIGINT once after ready to this native child PID; one end: sigint / 130 / succeeded. |
+| H7 / 1 | `BIN watch --port $PORT --json` | 20:41:32.761 → 20:41:33.019 | 0.258034 | PASS / 143 / succeeded | SIGTERM once after ready to this native child PID; one end: sigterm / 143 / succeeded. |
+| H8 / 1 | `BIN info --port $CHECK_DIR/no-such-serial-port` | 20:41:33.020 → 20:41:33.143 | 0.123084 | PASS / 69 / succeeded | Confirmed nonexistent temporary path; opening-stage transport failure, no command/expected opcode; empty stdout, no stack. |
+| H9 / 1 | `BIN watch --port $PORT --json --startup-delay 1000` | 20:41:33.144 → 20:41:33.389 | 0.245712 | PASS / 130 / succeeded | SIGINT once on initializing state before ready, with explicit startup-delay 1000 ms; no ready, one end: sigint / 130 / succeeded. |
+| H10 / 0 | None | — | — | NOT_RUN / — / — | NOT_RUN: no physical unplug/replug authorization or action; recovery info also not run. |
+
+H8's `$CHECK_DIR/no-such-serial-port` was verified absent immediately before the
+fixed matrix; it was not another real device node. H9 used watch NDJSON to observe
+the initializing state after signal registration; process existence was not used
+as a readiness proxy. H6/H7 signals were sent to actual native child PIDs after
+ready, never to a terminal group or unrelated process.
+
+**Outcome:** H2–H7 basic gate passed on this host/device. H1, H8 and H9 passed;
+H10 and post-replug recovery were not run. There were 10 command invocations
+(including enumeration and the expected nonexistent-port failure), eight selected
+real-port open attempts, six complete initialized sessions, zero initialization
+timeouts, zero failed cases, zero unconfirmed cleanups, and no retry, external
+observation deadline, forced termination, or manual intervention. Every process
+returned naturally; no task process remains pending. JSON/NDJSON parsing reported
+zero errors. The fixed H4 pair had equal stable fields in memory; public-key prefix
+consistency is not identity authentication. No raw snapshot is retained for later
+field inspection, and no device-reported model/firmware value was independently
+verified.
+
+This round did not reproduce a request timeout. It neither repairs nor disproves
+the historical intermittent missing-64-byte observations and independent POSIX
+failures above. No lower-level bytes were captured in this round, so no new
+byte-boundary attribution is made. These finite counts support no reliability or
+success-rate estimate. No firmware/configuration change, unplug, port-release
+intervention, delay workaround, flush/drain, control-line operation or additional
+query was requested. No unexpected configuration difference was observed in the
+H4 snapshots; this is not a full configuration audit.
+
+Ready establishes only this implementation's two-command initialization and
+expected parsed responses, not full protocol-14 support, authentication or radio
+reachability. The software suite proves the two-command contract; this round did
+not count outgoing USB packets. No LoRa send was requested by this CLI; the
+device's own configured RF behavior was not measured. With no heartbeat after
+ready, silence cannot establish physical disconnect. A future authorized H10
+requires ready, user unplug, a bounded observation window (for example 10 s),
+normal authorized SIGINT if no notification arrives, then explicit confirmation
+of the replugged path before an independent info call. SIGINT success is not
+disconnect-detection success.
+
+The [delivery record](releases/phase-1a-dev1.md) separates software, hardware,
+artifact integrity and redistribution status. Clean-machine/quarantine behavior,
+other platforms, physical disconnect detection and the historical delivery issue
+remain open. Two-device LoRa round trips belong to a separately authorized Phase
+1B; none was started here.
+
+
+## Step 9 H10 follow-up on November 9, 2026
+
+After the initial fixed matrix and archive validation, the user explicitly
+authorized assisted physical unplug/replug testing. No physical action was
+requested before ready. One H10 watch was started using the same outside-checkout
+candidate executable, cwd and unchanged asset hashes recorded above. It failed
+before ready. The user then confirmed the device had remained connected and
+explicitly authorized exactly one additional startup attempt. That second
+attempt also failed before ready; no further startup was attempted.
+
+Both commands were `BIN watch --port "$PORT" --json`, using unchanged defaults:
+target 3, request budget 5 s, total budget 15 s, startup delay 0, 115200/8N1.
+A temporary standard-library wrapper drained both streams and retained only
+structural events. It did not inspect raw bytes or implement another handshake.
+No additional enumeration, query, delay, flush/drain, control-line operation,
+configuration change or firmware change was performed. No user unplug/replug
+was requested or reported; the additional attempt was an explicit user-approved
+finite attempt, not an automatic retry. Emergency forced termination remained
+unauthorized and was not used.
+
+| Case / attempt | Start UTC → end UTC (November 9) | Wall time s | Actual result | Exit / cleanup | Protocol evidence |
+| --- | --- | --- | --- | --- | --- |
+| H10 watch / 1 | 20:54:37.590 → 20:54:42.791 | 5.201052 | FAIL: initialization prerequisite | 69 / succeeded; natural return | requestTimeout, initializing, command 0x16, expected 0x0D; 0 ready, 1 end: failure / 69 / succeeded; no signal or stack. |
+| H10 watch / 2 | 20:55:31.116 → 20:55:36.247 | 5.131309 | FAIL: initialization prerequisite | 69 / succeeded; natural return | requestTimeout, initializing, command 0x16, expected 0x0D; 0 ready, 1 end: failure / 69 / succeeded; no signal or stack. |
+
+**Current H10 result:** two failed startup attempts. Physical disconnect detection
+is **NOT_RUN**, since neither invocation reached ready. Recovery info is
+**NOT_RUN**, since no physical unplug/replug cycle occurred. Do not count these
+as disconnect failures, cancellation successes or recovery successes. Both
+processes completed their own cleanup and were reaped; no task process is pending,
+no signal was sent, and no forced termination occurred. The user confirmation
+and separate second-attempt authorization are the only manual interactions.
+
+The original H2–H7 basic gate remains a passed dated matrix, not a claim that
+later sessions all initialize successfully. Across both Step 9 parts there were
+12 invocations, 10 selected-port open attempts, six complete initializations and
+two initialization timeouts. Counts are descriptive only; no reliability estimate
+is inferred. All completed-process cleanups were confirmed. Software gate evidence
+is unchanged because the executable, dylib and compilation inputs are unchanged.
+
+This follow-up reproduces a request-wait timeout, not a proven recurrence of the
+historical missing-64-byte cause. No receive-byte trace was collected. The current
+recommendation is **development-with-known-limitations**: a local development
+candidate can support further authorized testing with this initialization issue
+explicitly recorded, but full hardware acceptance and disconnect/recovery remain
+open. No root-cause fix, reset workaround, new retry behavior or Phase 1B work was
+added. A new documentation-only archive preserves the same native hashes and
+supersedes the initial archive's acceptance overview; the initial archive remains
+an earlier snapshot, not the current recommendation.
+
+
+## Step 9 post-replug follow-up on November 9, 2026
+
+After the two H10 startup failures, the user asked whether USB unplug/replug
+could help. Both earlier watch processes had naturally returned with cleanup
+succeeded. The user then confirmed one physical unplug/replug cycle, requested
+one new metadata enumeration, and explicitly confirmed the current selected
+path again before any new open. There was no watch running at unplug time, so
+this action was not a ready-state disconnect-detection test. The device alias
+remains Companion USB A; path selection is not independent identity proof.
+
+R0 enumeration completed at 21:00:04.582 UTC, exit 0 with four total paths,
+two USB ports, no warning, and no candidate open. Only the user-confirmed path
+was used afterward; no other enumerated device was opened. R1 was one explicitly
+authorized native info call. After its failure, the user asked about waiting for
+firmware startup and explicitly requested one more call, R2. No further physical
+change, artificial wait, startup delay, query or timeout adjustment was made.
+Both used `BIN info --port "$PORT" --json`, defaults target 3, request 5 s,
+total initialization 15 s, startup delay 0, 115200/8N1, and the same unchanged
+native assets and outside-checkout cwd as the preceding H10 attempt.
+
+| Case / attempt | Start UTC → end UTC (November 9) | Wall time s | Result / actual exit / cleanup | Structural evidence |
+| --- | --- | --- | --- | --- |
+| R1 / 1 | 21:00:45.350 → 21:00:50.576 | 5.225721 | FAIL / 69 / succeeded | requestTimeout at initializing, command 0x01, expected 0x05 (APP_START / SELF_INFO); no complete snapshot. |
+| R2 / 1 | 21:03:15.104 → 21:03:15.361 | 0.256838 | PASS / 0 / succeeded | One complete schema-1 snapshot; initializationCompleted and sessionClosed true; target 3, device-reported protocol 14. |
+
+Both processes returned naturally and were reaped. No signal, forced termination,
+stack, raw-output retention or unconfirmed cleanup occurred. R1 reached the
+APP_START/SELF_INFO stage, so DEVICE_QUERY had completed its send/response
+condition, but initialization still failed. R2 later completed the entire session.
+It is a separately authorized single attempt, not an automatic product retry.
+No additional hardware invocation followed it in this record.
+
+R1 started at least about 40 seconds after the post-replug enumeration completed,
+so a simple assumption that the board had only just been reconnected does not
+explain the full observation. R2 started about 150 seconds after R1 started.
+These wall times are not firmware boot-time measurements: the actual unplug/
+replug instant was not instrumented, opening might affect device state, and
+previous sessions can also affect it. There was no independent reset or firmware
+startup telemetry. R2 success cannot be attributed to waiting, a firmware fix,
+or a demonstrated stable recovery. No received bytes were captured, so R1's
+SELF_INFO timeout is not proof of the historical missing-64-byte mechanism.
+
+The original H2–H7 matrix remains a dated pass. H10's two startup prerequisites
+failed, and ready-state physical disconnect detection remains **NOT_RUN**.
+A separate real unplug/replug followed by initialization was performed: R1
+**FAIL**, R2 **PASS**. This is not a completed H10 fault-detection/recovery cycle.
+Across all Step 9 parts: 15 calls (including two enumerations and the nonexistent
+path case), 12 selected-port open attempts, seven complete initializations and
+three request timeouts. All process cleanups were confirmed; counts establish
+no success-rate estimate or causal fix. Recommendation remains
+**development-with-known-limitations**, with public redistribution blockers and
+Phase 1B exclusions unchanged. The latest documentation-only archive retains
+identical native hashes and supersedes earlier acceptance overviews; earlier
+archives remain dated snapshots.
+
+
+## Step 9 H10 third startup on November 9, 2026
+
+After R2 info succeeded, the user explicitly requested another single H10 watch
+on the same selected path, with unplug instructions only after ready. The same
+verified native executable and dylib, outside-checkout cwd and default parameters
+were used: `BIN watch --port "$PORT" --json`, target 3, 115200/8N1, request 5 s,
+total initialization 15 s, startup delay 0. No artificial delay, retry or protocol
+change was added. This was H10 startup attempt 3, separately authorized after the
+previous two H10 failures and the standalone R1/R2 sequence.
+
+| Case / attempt | Start UTC → end UTC (November 9) | Wall time s | Result / exit / cleanup | Evidence |
+| --- | --- | --- | --- | --- |
+| H10 watch / 3 | 21:06:27.516 → 21:06:33.100 | 5.583720 | FAIL / 69 / succeeded | requestTimeout, initializing, command 0x16, expected 0x0D; zero ready; exactly one end: failure / 69 / succeeded. |
+
+The process returned naturally and was reaped, with no signal, forced termination,
+stack, parse error or pending cleanup. No unplug instruction was given because
+ready was never reached, and no new physical action was reported. H10 ready-state
+disconnect detection and its recovery cycle remain **NOT_RUN**. The earlier manual
+replug with R1 FAIL/R2 PASS remains separate evidence and does not supply this
+missing fault-detection test.
+
+Current combined Step 9 counts: 16 calls, 13 selected-port open attempts, seven
+complete initializations and four request timeouts (three DEVICE_INFO, one
+SELF_INFO). Every process cleanup was confirmed. These exact counts are not a
+reliability estimate. The original H2–H7 matrix remains a dated pass; this later
+watch failure shows that the preceding R2 success did not establish stable
+initialization or a waiting/replug fix. No raw bytes were captured and no new
+64-byte attribution is made. Recommendation remains
+**development-with-known-limitations**. No further hardware call followed this
+attempt in this record. The latest documentation-only archive keeps identical
+native asset hashes; previous archives remain dated snapshots.

@@ -937,3 +937,118 @@ LoRa exchange or Step 9 acceptance was performed. The intermittent missing
 64-byte USB body remains unresolved and unattributed; passing synthetic tests
 and same-host AOT entry checks does not establish a hardware fix, actual native
 library loading, successful native session I/O or clean-machine compatibility.
+
+
+## Step 9 build and delivery on November 9, 2026
+
+The task began on clean `master` at `e1e16e28c2d99be197a9ed18a1df269f522e5c40`,
+the Step 8 merge, with ancestor `20441a0ef78f96d9d805b520f6d9eeb90ce5ec5c` verified
+locally. No product/compilation input, lockfile, dependency, version, CI or license
+changed. Only README and validation/delivery documentation were edited afterward.
+Build provenance is that clean commit, with the uncommitted delivery documentation
+recorded separately, rather than a worktree binary attributed to an older commit.
+
+Both Homebrew SDK wrappers were attempted and denied SDK cache-stamp/realm writes.
+The same SDK's direct Dart version command succeeded: 3.13.7 stable, macos_arm64.
+Flutter 3.47.9 stable, revision `c197ca5199e9ee5661e865596c9c07294dfab51c`, is
+existing flutter.version.json metadata, not a new successful CLI result.
+Host: macOS 27.2 (26B123), arm64; Apple Clang 21.0.0 (`clang-2100.4.1.1`), selected
+through current-process PATH; Python 3.15.2. No SDK or pub-cache source was edited.
+Root lockfile SHA-256 remained
+`9d31c319b24e72356feed7168a457671dd49cd356513f6ab77414edc473e504c`.
+libserialport_plus remained 1.0.5.
+
+The [existing software procedure](testing.md) ran once sequentially on the actual
+candidate: locked resolution passed, formatting checked 25 files with no changes,
+fatal-info analysis passed, core 68 tests and CLI 27 tests passed, and both new
+native bundles built. CLI build started at `2026-11-09T20:39:00Z` in a fresh
+outside-checkout output directory; observation build followed it. Shared smoke
+passed all 46 macOS cases. No new unit tests were needed for documentation-only
+delivery. Whitespace and final sensitive-content/untracked-file reviews passed.
+
+Existing remote CI was rechecked read-only for these specific Step 8 results:
+
+| Run | Event | Reported head SHA | Observed result |
+| --- | --- | --- | --- |
+| [42684752517](https://github.com/007pig/meshchan/actions/runs/42684752517) | push | `20441a0ef78f96d9d805b520f6d9eeb90ce5ec5c` | completed / success |
+| [42684795613](https://github.com/007pig/meshchan/actions/runs/42684795613) | pull_request | `20441a0ef78f96d9d805b520f6d9eeb90ce5ec5c` | completed / success |
+
+The PR event may use a merge-test checkout; no actual checkout SHA is inferred.
+These are existing commit/event results, separate from this fresh local gate and
+hardware evidence. No workflow was dispatched, rerun, pushed or changed.
+
+The complete CLI bundle was copied outside the checkout before native hardware
+acceptance. The [fixed matrix](hardware-validation.md#step-9-device-acceptance-on-november-9-2026)
+passed H2–H7, H1/H8/H9; H10 was not authorized/run. Every process returned naturally
+with confirmed cleanup; no retry, forced termination or manual intervention was
+needed. No initialization timeout occurred; historical USB faults remain unresolved.
+
+The [local delivery](releases/phase-1a-dev1.md) includes the complete CLI bundle,
+README, manifest with compilation-input hashes, acceptance snapshot, original
+third-party licenses/notices, member checksums and tar.gz plus its SHA-256 sidecar.
+Actual fresh archive extraction passed checksums, layout, execute mode, version,
+info help and missing-port exit 64. Extracted executable and dylib hashes matched
+the hardware-tested copy. Both arm64 files have verified ad-hoc signatures; no
+Developer ID signature/notarization is claimed. The candidate is limited to local
+development pending project/native/runtime license materials and distribution
+review. No clean-machine, other-platform hardware, disconnect or LoRa acceptance
+was inferred. No commit, push, tag, PR, Release, new feature or external notification
+was performed.
+
+
+### H10 follow-up and revised delivery
+
+After the initial archive validation, the user authorized assisted unplug/replug.
+Two native watch startups (the second separately authorized after the first
+cleaned timeout and confirmation that the device stayed connected) each timed
+out waiting for DEVICE_INFO, before ready. Both naturally exited 69 with end
+failure / 69 / cleanup succeeded; no signal, force, stack, unconfirmed resource
+or pending process occurred. Physical unplug/replug and recovery info were not
+executed, since the prerequisite was unmet. See the [dated follow-up](hardware-validation.md#step-9-h10-follow-up-on-november-9-2026).
+
+No binary, compilation input, version, dependency or toolchain changed. The prior
+software gate and H2–H7 matrix remain dated evidence; no repeat full software suite
+or hardware matrix was needed for this documentation update. A new local archive
+with the `-h10-followup` suffix includes the revised acceptance and manifest,
+with recommendation development-with-known-limitations. Its actual fresh
+extraction again passed all 38 member checksums, mode/layout checks, version/help,
+missing-port exit 64 and exact native asset hash comparison. The initial archive
+is retained as an earlier snapshot; its absence of timeouts is not the current
+combined conclusion. No raw hardware output or device identifiers were added to
+the repository or archive. Public redistribution blockers remain unchanged.
+
+
+### Post-replug checks and final info success
+
+The user then performed one USB unplug/replug outside a live session, requested
+metadata enumeration, and explicitly selected the current path again. R1 native
+info failed at APP_START/SELF_INFO with requestTimeout (5.225721 s, exit 69);
+R2 was separately requested and passed (0.256838 s, exit 0, one complete closed
+snapshot). Both naturally completed cleanup without signals or forced termination.
+The exact commands, timeline and changed conditions are in the [post-replug record](hardware-validation.md#step-9-post-replug-follow-up-on-november-9-2026).
+No causal waiting/boot-delay fix is established, and H10 ready-state disconnect
+detection remains NOT_RUN. Recommendation remains development-with-known-limitations.
+
+The final `-replug-followup` archive updates only documentation/manifest evidence;
+its unchanged binaries retain the original build and software-gate provenance.
+Its fresh extraction passed all 38 checksummed files, layout and execution mode,
+version/help/missing-port checks and exact binary/native hash comparison. Earlier
+archives were preserved. No source, dependency, version, CI, signing, firmware or
+configuration change, automatic retry or remote publication was performed.
+
+
+### H10 startup attempt 3
+
+After R2 info passed, the user requested one more H10 watch on the same confirmed
+port. With unchanged native hashes and defaults, it timed out waiting for
+DEVICE_INFO before ready (5.583720 s, exit 69, one failure end, cleanup succeeded).
+It naturally returned with no signal, force, stack or pending process. No unplug
+instruction was given, and no new physical action was reported. See the [dated
+attempt](hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).
+The latest `-h10-attempt3` archive updates documentation/manifest only; its fresh
+extraction again passed all 38 member checksums, modes/layout, version/help,
+missing-port rejection and original native hash comparison. Earlier archives and
+all failed/successful observations remain intact. Software/build inputs and the
+original software gate are unchanged. Recommendation remains development with
+known limitations; H10 disconnect/recovery is still unexecuted. No remote or
+product change was performed.

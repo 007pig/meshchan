@@ -85,6 +85,16 @@ native files, product code, defaults or recommendation.
 
 Candidate directory and archive basename:
 `meshchan-1a-0.1.0-dev.1-macos-arm64-e1e16e28c2d9-h10-attempt3`.
+
+**Artifact availability at PR preparation:** the temporary outside-checkout
+delivery directories were no longer present when preparing this documentation
+PR. The results and native hashes below describe the earlier completed build,
+hardware checks and archive extraction; the archive was not reverified during PR
+preparation. This PR includes documentation only and attaches no binary package.
+A subsequent delivery needs a fresh build and artifact verification with its own
+provenance and hashes; do not assume a rebuild has identical binary contents or
+automatically reuse the earlier hardware evidence for changed binaries.
+
 The new complete `bundle/` was copied as a unit outside the checkout before native
 hardware acceptance. It contains `bin/meshctl` and
 `lib/liblibserialport_plus.dylib`; no bundle asset was selected out or replaced.

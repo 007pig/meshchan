@@ -2,13 +2,13 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
-The current implementation covers **Phase 1 / 1A / Step 3: minimal serial framing**. It adds hardware-independent host frame encoding and incremental device frame decoding. Step 2's serial diagnostics, native CLI bundle, and selected-port macOS validation remain available; live MeshCore protocol compatibility remains unverified.
+The current implementation covers **Phase 1 / 1A / Step 4: USB serial transport**. The Flutter-independent `CompanionTransport` interface and `SerialTransport` connect the existing frame codec to `libserialport_plus`, using only an explicitly supplied system port. Hardware-free tests cover framing integration, partial writes, deadlines, and resource lifecycles.
 
-Serial framing is implemented and covered by software tests. Integration with live serial reads/writes, Companion commands, and sessions is not implemented in this step. See the [serial framing protocol and in-memory examples](docs/protocol/serial-framing.md). Run its tests with `(cd packages/meshcore_link && dart test test/serial_framing_test.dart)`.
+See the [serial transport contract and opt-in observation example](docs/protocol/serial-transport.md) and [serial framing protocol](docs/protocol/serial-framing.md). Step 2's selected-port macOS open/close results remain historical evidence. Step 4's authorized three-second source check on one selected macOS port passed configuration, reader reception, framing, and normal shutdown; native TX remains unverified. Companion commands, handshakes, device identification, sessions, and LoRa communication remain unimplemented.
 
 | Package | Responsibility and current status |
 | --- | --- |
-| `packages/meshcore_link` | Flutter-independent Dart core with a pure Dart serial frame codec and a thin `libserialport_plus` diagnostic adapter with explicit resource cleanup. |
+| `packages/meshcore_link` | Flutter-independent Dart core with serial framing, an explicit-port transport, and serial diagnostics. |
 | `apps/meshctl` | CLI help, application version, `ports`, and `port-check --port <path>`. |
 
 ## Quick start
@@ -39,7 +39,7 @@ To check a device, select its exact path explicitly, then run `dart run bin/mesh
 | `64` | Invalid arguments, unknown commands/options, missing or blank `--port`, or extra positional arguments. |
 | `69` | Expected serial, platform, or native runtime dependency failure. |
 
-**An open/close success does not identify a MeshCore device.** Live protocol integration, sessions, all data transfer, and LoRa communication remain unimplemented. Database features and the Flutter UI are outside this step. Automated tests do not access hardware.
+**An open/close success does not identify a MeshCore device.** Transport `open()` establishes local I/O only; `sendFrame()` completion means the local native/OS API accepted the framed bytes. Neither proves command execution, physical TX completion, or remote receipt. Database features and the Flutter UI are outside this step. Automated tests do not access hardware.
 
 ## Native CLI bundle
 

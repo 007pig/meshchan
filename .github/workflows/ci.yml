@@ -57,7 +57,12 @@ jobs:
         working-directory: apps/meshctl
         run: |
           dart build cli --target=bin/meshctl.dart --output=build/dist
+          build/dist/bundle/bin/meshctl --help
           build/dist/bundle/bin/meshctl --version
+
+      - name: Build serial transport check without opening hardware
+        working-directory: packages/meshcore_link
+        run: dart build cli --target=example/serial_transport_check.dart --output=build/serial-transport-check
 
       - name: Verify Linux enumeration is rejected safely
         working-directory: apps/meshctl

@@ -155,6 +155,11 @@ T nativeSerialOperation<T>(
       'libserialport_plus 1.0.5: the native backend can open unselected ports.',
     );
   }
+  if (!const {'macos', 'linux', 'android'}.contains(platform)) {
+    throw SerialPortFailure(
+      'No native serial backend is available on $platform.',
+    );
+  }
   return _nativeCall(action);
 }
 

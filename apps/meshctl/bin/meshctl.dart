@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:meshctl/meshctl.dart';
+import 'package:meshctl/src/process_io.dart';
 
-void main(List<String> arguments) {
-  exitCode = runCli(arguments, output: stdout, error: stderr);
+Future<void> main(List<String> arguments) async {
+  exitCode = await runProcessCli(arguments, output: stdout, error: stderr);
 }

@@ -466,3 +466,403 @@ to assign the delayed-body issue to a specific firmware or host-driver mechanism
 No firmware was flashed or USB-driver/SDK/cache source modified. The temporary
 diagnostic sources were removed after recording the results; ignored AOT build
 artifacts are not product commands. No LoRa transmission test was performed.
+
+## Step 7 CLI validation boundary on November 9, 2026
+
+Step 7 connects the existing session to `info` and `watch`. Initial acceptance
+authorized software-only checks: fake transport tests, hardware-free process checks,
+and native builds. No real enumeration, port check, valid-port session, or
+valid-port read-only example ran. Earlier selected ports and configuration
+permissions were not reused. The historical records above are unchanged evidence
+of their own separately authorized tasks.
+
+See the [actual Step 7 software results](development.md#diagnostic-session-cli-step-7)
+and [manual CLI acceptance checklist](cli.md#manual-hardware-acceptance).
+At that point, Step 7 CLI hardware behavior was **Not run / Pending explicit authorization**.
+The intermittent USB body-delay cause, hardware cleanup failure/hang behavior,
+and LoRa round trips remain unverified; this step adds no device workaround.
+
+## Step 7 authorized CLI hardware follow-up on November 9, 2026
+
+After software acceptance, the user explicitly requested a device test on
+`/dev/cu.usbmodem211101`. This new authorization was used only for that exact
+port. No enumeration, preliminary port-check, alternate path, read-only example,
+third-party process termination, browser disconnection, or configuration change
+was performed. The worktree remained on `master` at Step 6 merge
+`e27c024850ea80c8b3537f9c6aaf41895cbd812e`, with the uncommitted Step 7 changes.
+The CLI native bundle was rebuilt from this worktree before hardware execution
+and reported application version `0.1.0-dev.1`.
+
+Environment: macOS 27.2 arm64, the same Homebrew SDK's direct Dart 3.13.7,
+Apple Clang 21.0.0, and locked `libserialport_plus` 1.0.5. The selected character
+device existed. Hardware execution had tool-approved device access. All six
+invocations ran serially with app target 3, app name `Meshchan`, request budget
+5 seconds, total initialization budget 15 seconds, and startup delay 0 ms.
+Each invocation used the product CLI and its actual session/serial transport;
+there was no replacement handshake, transport wrapper, extra query, or retry.
+
+An external Python 3 harness launched the source or complete native CLI bundle,
+parsed JSON/NDJSON only in memory, and retained structural summaries. It checked
+ready snapshot fields and prefix format without printing or saving device names,
+model/firmware text, keys, PIN, positions, or payloads. Source build-hook progress
+was treated as prelaunch stderr. It waited for natural process completion without
+a cleanup timeout or forced kill. The two cancellation checks sent signals only
+to the child CLI processes created by this harness, immediately after their
+ready record was received. No unrelated process received a signal.
+
+| Case and start time (UTC) | Actual result |
+| --- | --- |
+| Source `info --json --verbose`, 14:51:16.397 | **Initialization failed**, exit 69 after 6.528 s including source startup. One requestTimeout diagnostic at initializing, command `0x16`, expected `0x0D` (DEVICE_QUERY / DEVICE_INFO). Stdout remained empty; no successful snapshot. No cleanup failure diagnostic. |
+| Source `watch --json --duration 5`, 14:51:22.926 | **Passed**, exit 0 after 6.103 s including source startup. One valid ready snapshot, app target 3, reported protocol code 14. Five state records, one end, no failure, zero NDJSON parse errors. Observed ready-to-end interval 5.099 s, including cleanup/output. End: reason duration, exitCode 0, cleanup succeeded. |
+| Native bundle `info --json`, 14:51:29.029 | **Initialization failed**, exit 69 after 5.494 s. One requestTimeout diagnostic at initializing, command `0x01`, expected `0x05` (APP_START / SELF_INFO). Stdout remained empty; no successful snapshot. No cleanup failure diagnostic. |
+| Native bundle `watch --json --duration 5`, 14:51:34.524 | **Passed**, exit 0 after 5.325 s. One valid ready snapshot, target 3, reported protocol code 14; five states, one end, no failure, zero NDJSON parse errors. Ready-to-end interval 5.084 s, including cleanup/output. End: duration, 0, succeeded. |
+| Native bundle watch, SIGINT after ready, 14:51:39.849 | **Passed**, exit 130 after 0.257 s. One ready, five states, one stopping notice, one end, no failure. End: sigint, 130, succeeded. Ready-to-end interval approximately 0.011 s. |
+| Native bundle watch, SIGTERM after ready, 14:51:40.107 | **Passed**, exit 143 after 0.253 s. One ready, five states, one stopping notice, one end, no failure. End: sigterm, 143, succeeded. Ready-to-end interval approximately 0.010 s. One initializing-stage unassociated response was summarized as opcode `0x88`, contentLength 84; no body was retained or displayed. |
+
+Each of the four watch runs observed opening, initializing, ready, closing,
+and closed in that order. Every completed line parsed independently as the
+expected schemaVersion-1 watch object, and end.exitCode matched the process exit.
+Both failed info runs returned naturally after the CLI's awaited close path,
+without cleanup errors; subsequent invocations successfully reopened the same
+selected port. This supports the observed cleanup/reopen behavior, not a claim
+that the port is globally unowned or every driver cleanup path is safe.
+
+The outcome is **four passing watch/cancellation checks and two failed info
+initializations**. Correct exit-69 handling and empty stdout do not convert the
+info attempts into successful hardware initialization. No successful hardware
+info snapshot was obtained in this follow-up. No additional info invocation was
+made to hide those failures, and no timeout or startup-delay setting changed.
+
+Historical intermittent response delivery remains a limitation. The current
+SELF_INFO timeout has the same command/expected-response stage as some earlier
+failures, but this harness observed only CLI structural data: it did not capture
+a serial header or prove that a 64-byte body stalled in this particular run.
+The DEVICE_INFO timeout's cause is also unconfirmed. A firmware, USB, driver,
+or client root cause is not established by these outcomes. No repair query,
+flush, name change, reset, retry, or forced resource release was attempted.
+
+This verifies source/native watch initialization, structured output, duration,
+and ready-state SIGINT/SIGTERM cleanup on this selected device for these runs.
+Text-mode hardware output, cancellation before ready, output-consumer failures,
+forced disconnects, hardware cleanup failures/hangs, long-term reliability,
+other devices/platforms, and remote Actions were not tested in this follow-up.
+Ready still does not establish authenticated identity, full protocol-14 support,
+or LoRa transmission/reception. No implementation, dependency, version, or device
+configuration change was made; only validation documentation was updated.
+
+## Step 7 CLI timeout comparison on November 9, 2026
+
+The user explicitly requested continued investigation on
+`/dev/cu.usbmodem211101`, including a minimal fix if a client defect was found,
+without retries, larger timeouts, or device configuration changes. The existing
+Step 7 worktree and product bundle were preserved. No implementation, dependency,
+version, app target, serial setting, startup-delay default, or device configuration
+was changed during this investigation. No enumeration, preliminary port-check,
+alternate port, reset, flush, repair query, firmware update, or process termination
+was used. All sessions completed their own cleanup before the next invocation.
+
+### Method and scope
+
+Code inspection confirmed that both commands use the same argument-to-session
+mapping, subscribe before connect, and immediately observe the same connect
+Future. Their successful-result behavior branches only after full initialization:
+info requests shared close and later prints a snapshot; watch prints ready and
+starts its observation timer. Watch's asynchronous output flush worker does not
+pause the session/transport receive subscription or gate initialization.
+
+The experiment used a fixed sequence, chosen before execution rather than adding
+attempts until one succeeded:
+
+1. Unmodified product AOT CLI: watch, info, info, watch.
+2. Traced actual CLI with memory sinks: info, watch, watch, info.
+3. The same traced actual CLI with real stdout/stderr IOSinks: info, watch,
+   watch, info.
+
+All twelve invocations used the same selected port, app target 3, `Meshchan`,
+5-second request budget, 15-second initialization budget, and zero startup delay.
+Watch used duration 1 second after ready solely to bound the observation phase;
+it did not change initialization budgets. All commands requested JSON. Each
+invocation made one session attempt without retry. Counts below describe these
+finite cases, not reliability rates or statistical equivalence.
+
+The ignored temporary probe called the real `runCli`, `MeshCoreSession`, and
+`SerialTransport`. The existing internal connection-construction seam supplied
+a thin delegate to the actual native connection. It buffered only monotonic
+structural events until cleanup: write lengths/accepted counts, native chunk
+lengths, complete frame opcode/length, send completion, and cleanup order.
+A passive instance of the existing `SerialFrameDecoder` inspected those same
+chunks; it introduced no replacement parser or protocol policy. Its `finish()`
+reported only pending-frame byte counts after shutdown. A map on the one owned
+transport stream recorded complete frame delivery without adding a second
+subscription, pausing reception, or modifying input.
+
+Memory sinks removed actual stdout/stderr flush activity during initialization;
+IOSink cases retained the production output boundary. The native trace was never
+printed during initialization. Instrumentation still adds small CPU/allocation
+costs, so the unmodified cases were retained as controls. The probe used the same
+Dart 3.13.7 and native asset dependency as the product. It passed focused fatal-info
+analysis, source and AOT no-argument exit-64 guards, and a fresh native build before
+device use. All device processes had tool-approved access. The external Python 3
+runner waited for natural completion without a forced cleanup timeout or kill.
+Raw input, device text, keys, PIN, positions, and payloads were not logged or saved;
+only structural projections were retained. No independent POSIX control or USB
+bus capture was performed in this round.
+
+### Fixed hardware outcomes
+
+All times below are UTC on November 9, 2026; elapsed time includes process startup
+and cleanup. Successful info objects had schemaVersion 1, the exact selected
+port, `sessionClosed: true`, and reported protocol code 14, distinct from target 3.
+Watch end records matched their process exit code and reported cleanup succeeded.
+
+| Case | Start UTC | Result |
+| --- | --- | --- |
+| 01, unmodified watch | 15:04:19.069 | Exit 0, 1.457 s; one ready and duration end. |
+| 02, unmodified info | 15:04:20.527 | Exit 0, 0.264 s; valid closed snapshot. |
+| 03, unmodified info | 15:04:20.792 | Exit 0, 0.259 s; valid closed snapshot. |
+| 04, unmodified watch | 15:04:21.051 | Exit 0, 1.355 s; one ready and duration end. |
+| 05, traced memory info | 15:04:22.407 | Exit 69, 5.428 s; SELF_INFO requestTimeout, empty stdout. Native chunks 85 and 3 bytes; incomplete frame received 3 of 67 bytes. |
+| 06, traced memory watch | 15:04:27.835 | Exit 0, 1.362 s; native chunks 85 and 67 bytes, complete DEVICE_INFO and SELF_INFO, duration end. |
+| 07, traced memory watch | 15:04:29.198 | Exit 0, 1.417 s; native chunks 85 and 67 bytes, complete responses, duration end. |
+| 08, traced memory info | 15:04:30.616 | Exit 0, 0.256 s; complete responses and closed snapshot. |
+| 09, traced IOSink info | 15:04:30.872 | Exit 69, 5.202 s; SELF_INFO requestTimeout, empty stdout. Native chunks 85 and 3 bytes; incomplete frame received 3 of 67 bytes. |
+| 10, traced IOSink watch | 15:04:36.075 | Exit 69, 5.230 s; SELF_INFO requestTimeout, no ready, failure end with successful cleanup. Native chunks 85 and 3 bytes; incomplete frame received 3 of 67 bytes. |
+| 11, traced IOSink watch | 15:04:41.305 | Exit 69, 5.111 s; DEVICE_INFO requestTimeout, no APP_START or ready, failure end with successful cleanup. One native chunk of 21 bytes; incomplete frame received 21 of 85 bytes. |
+| 12, traced IOSink info | 15:04:46.417 | Exit 0, 0.269 s; complete responses and closed snapshot. |
+
+Both commands had four successful and two failed initializations in these twelve
+fixed cases. The earlier two failed info runs remain failed historical results;
+the later successes do not erase them. Unmodified info can succeed without any
+workaround, and watch can fail at either initialization request.
+
+### Timing and byte-boundary evidence
+
+For all eight traced cases, every complete frame found at the native callback
+matched a frame delivered through the transport, in order. Each started send
+completed once. Native writes accepted the entire expected framed byte count:
+5 for DEVICE_QUERY and, when reached, 19 for APP_START. No extra send occurred.
+Case 11 sent only DEVICE_QUERY because DEVICE_INFO never became complete.
+
+| Failed case | Last send to CLI close request | Pending frame at shutdown |
+| --- | --- | --- |
+| 05, memory info | 5.001332 s | Header only: 3 of 67 total bytes, missing 64-byte SELF_INFO body. |
+| 09, IOSink info | 5.002620 s | Header only: 3 of 67 total bytes, missing 64-byte SELF_INFO body. |
+| 10, IOSink watch | 5.001467 s | Header only: 3 of 67 total bytes, missing 64-byte SELF_INFO body. |
+| 11, IOSink watch | 5.002414 s | 3-byte header plus 18 of 82 DEVICE_INFO body bytes: 21 of 85 total, missing 64 body bytes. |
+
+In case 09, for example, APP_START was requested at 114.637 ms, its complete
+19-byte native write was accepted at 114.778 ms, the next native callback supplied
+only the three-byte header at 221.883 ms, and close was requested at 5117.257 ms.
+No further chunk arrived before or during cleanup. The reader was active; this
+was not a missing subscription or a full response rejected by the CLI.
+
+Successful traced info requested close 73 microseconds (case 08) and
+132 microseconds (case 12) after delivery of complete SELF_INFO, never before it.
+All eight traced cleanups had the same order: reader stop request, natural reader
+done, stop completion, native port close, native disposal, transport close
+completion. The failed sessions did not need to reach closed state to finish
+cleanup. All twelve processes returned naturally, and later invocations reopened
+the same selected port.
+
+The captured failures therefore precede complete-frame delivery to the session
+and CLI. They were not caused by info closing before initialization, a lost
+complete transport frame, different request budgets, duration starting early,
+or slow watch stdout preventing reception. No CLI initialization defect was
+demonstrated, so no production fix was justified. These observations do not
+prove every possible client/driver path correct or identify which lower layer
+failed to deliver the missing bytes.
+
+The missing 64-byte suffix is consistent with the historical independently
+reproduced delivery issue, and case 11 adds an observed partial DEVICE_INFO
+boundary. A USB packet/flush mechanism remains an inference, not a confirmed
+firmware or macOS driver diagnosis. This round did not observe the missing bytes
+at the OS API, USB bus, or firmware boundary, so responsibility among device,
+USB/driver, native library, and reader-side delivery is not conclusively assigned.
+The prior independent POSIX findings remain separate historical evidence.
+
+### Regression and remaining limits
+
+A new hardware-free CLI integration group replaces only the native connection
+and runs the real framing decoder, SerialTransport, MeshCoreSession, and runCli.
+Its 16 virtual-time combinations cover info/watch, DEVICE_INFO 21/85 versus
+SELF_INFO 3/67 partial input, timely versus absent suffix, and ordinary versus
+blocked output. A suffix arriving at 4999 ms succeeds; an absent suffix times out
+at 5000 ms with correct command/expected-response metadata, and late bytes cannot
+revive the command or trigger APP_START after a DEVICE_INFO failure. Tests verify
+no premature ready/info/close, one cleanup in the required order, no extra sends,
+ready-relative duration, and no remaining timers. Fixtures are synthetic, not
+hardware captures; no native handle or real device is used by these tests.
+
+Core's complete 68-test suite and CLI's complete 27-test suite passed serially.
+The focused new group passed all 16 combinations. No dependency or lockfile
+change was needed. Root formatting, fatal-info analysis, and diff checks passed.
+The temporary probe source was removed from the package after validation; its
+ignored native build artifact is not a product command. No extra production API,
+retry, larger timeout, startup delay, repair query, reset, flush, or device
+configuration change was added. This investigation does not establish LoRa,
+long-term reliability, other-platform operation, or remote CI results.
+
+## Step 7 independent POSIX comparison on November 9, 2026
+
+The user explicitly requested an independent POSIX client on the same selected
+`/dev/cu.usbmodem211101` to distinguish upstream delivery from loss inside
+libserialport_plus or its reader. This followed the CLI timing investigation
+above; it did not reuse historical configuration-change authorization. The
+worktree stayed on `master` at `e27c024`, preserving the existing Step 7 changes.
+No production source, dependency, app target, timeout policy, or device setting
+was changed. No port enumeration, port-check, alternate path, extra query,
+command retry, serial flush, device-name/radio/firmware change, modem-line toggle,
+process termination, or forced cleanup was performed.
+
+### Independent control and baseline
+
+The control was a temporary Python 3.15.2 standard-library process using only
+`os.open`, `os.write`, `os.read`, `select`, `termios`, and `fcntl` for device I/O.
+It did not import or execute Dart, libserialport_plus, its FFI, or its reader.
+Normal outgoing frames were generated beforehand by the existing Dart encoders
+and serial framing API, using app target 3 and app name Meshchan. The resulting
+fixture contained only the two static outgoing commands, of 5 and 19 framed
+bytes; it contained no received data. The control's receive path independently
+counted `>` frame boundaries and lengths, retained only the first two content
+bytes for structural opcode/version/error checks, and never decoded display
+text, names, keys, positions, or payloads.
+
+Each POSIX attempt used nonblocking read/write open with O_NOCTTY/O_CLOEXEC,
+flock and TIOCEXCL, then applied the same existing host tty baseline:
+115200/8N1, raw input/output, CLOCAL/CREAD, no software or CTS/DSR flow control,
+VMIN/VTIME 0, and HUPCL cleared. All six applied profiles were identical, including
+disabled RTS/DTR flow, and no RTS/DTR output level was explicitly changed.
+TCSANOW applied settings without flushing or draining. Like the existing native
+transport, the control did not restore a different host line configuration at
+close. The newly opened tty reported 9600 baud, HUPCL on, CLOCAL off, and VMIN 1
+before configuration on all six opens; the control consistently applied the
+existing 115200 baseline rather than assuming that a previous descriptor's
+termios state persisted. These are host tty settings, not stored device/radio
+configuration changes.
+
+The request budget was exactly 5 seconds, registered before writing each command;
+the total initialization budget was 15 seconds, starting before open. Startup
+delay was zero. The nonblocking write path could advance only over an accepted
+suffix, never resend an accepted prefix or restart a command. In the actual
+twelve cases every command was accepted in a single write, so each attempt had
+exactly one 5-byte write and one 19-byte write. Only a complete DEVICE_INFO allowed
+APP_START. Unassociated input never caused another send, and earlier responses
+were not pooled for a later stage.
+
+At a request deadline, a read-only probe recorded FIONREAD, zero-wait select,
+and one immediate nonblocking read, then closed. It did not wait longer, accept
+late input as a successful initialization, send a release query, or flush.
+With VMIN 0 an empty read can return zero bytes; this was recorded as no data,
+not misclassified as proof of device disconnection. The control released its
+exclusive flag and closed its own descriptor in finally. No background reader
+or native pointer existed in this path, and no process timeout killed a child.
+
+The comparison used the unchanged, reviewed AOT native-boundary probe from the
+previous investigation, calling the real info command with memory output and
+buffered structural tracing. Its native connection delegated to the normal
+libserialport_plus path. POSIX read as soon as select reported input; no artificial
+100-ms coalescing delay was added to imitate the native reader. This affects
+observation granularity, so elapsed times are not a performance comparison.
+The fixed sequence was POSIX/native/native/POSIX,
+repeated as three blocks, chosen before hardware execution. No case was added
+because a previous one failed or succeeded. Both clients kept the same command,
+port, target, name, 5/15-second budgets, zero delay, and immediate close after
+success or failure. They ran serially and exclusively, never as competing
+readers of one descriptor. Different processes cannot observe the same individual
+packet simultaneously; the comparison establishes independent reproduction,
+not packet-by-packet equivalence or reliability rates.
+
+Before hardware execution, the Python counter passed three focused self-test
+groups: every two-part split of synthetic 82-byte DEVICE_INFO and 64-byte
+SELF_INFO frames (154 split positions), both observed missing-64-byte shapes,
+and bytewise/coalesced/noisy input plus invalid lengths. Guard checks rejected
+missing and non-authorized ports with 64 before open. The outgoing-fixture helper
+passed focused Dart fatal-info analysis. The existing native probe's no-argument
+exit-64 guard passed. All actual device invocations had tool-approved access.
+
+### Fixed outcomes
+
+UTC times are on November 9, 2026. Elapsed values below are process wall time,
+including interpreter/runtime startup and cleanup, not per-request budgets.
+All twelve attempts completed cleanup naturally and later attempts reopened the
+same port. Complete expected frames were 82-byte DEVICE_INFO (reported protocol
+code 14) and 64-byte SELF_INFO; no display fields or raw receive bytes were saved.
+
+| Case | Start UTC | Actual result |
+| --- | --- | --- |
+| 01, POSIX | 18:34:27.607 | Exit 0, 0.093730 s; both responses complete. One preceding unassociated opcode 0x88/125-byte frame was summarized, with no extra send. |
+| 02, native | 18:34:27.702 | Exit 69, 5.275714 s; APP_START/SELF_INFO requestTimeout, complete DEVICE_INFO then only a 3-byte header declaring 64 content bytes. |
+| 03, native | 18:34:32.979 | Exit 0, 0.323414 s; complete responses and closed info snapshot. |
+| 04, POSIX | 18:34:33.304 | Exit 0, 0.177171 s; both responses complete. |
+| 05, POSIX | 18:34:33.491 | Exit 69, 5.131784 s; APP_START/SELF_INFO requestTimeout. After APP_START, direct os.read returned only 3 bytes, declaring a 64-byte body; none of that body arrived before close. |
+| 06, native | 18:34:38.623 | Exit 0, 0.263311 s; complete responses and closed snapshot. |
+| 07, native | 18:34:38.887 | Exit 0, 0.267757 s; complete responses and closed snapshot. |
+| 08, POSIX | 18:34:39.156 | Exit 69, 5.062930 s; same header-only 64-byte-body wait after APP_START, no body returned by direct reads. |
+| 09, POSIX | 18:34:44.219 | Exit 69, 5.062591 s; same header-only wait, no body returned by direct reads. |
+| 10, native | 18:34:49.282 | Exit 69, 5.253131 s; same header-only 64-byte-body wait, requestTimeout. |
+| 11, native | 18:34:54.536 | Exit 0, 0.261043 s; complete responses and closed snapshot. |
+| 12, POSIX | 18:34:54.798 | Exit 0, 0.073697 s; both responses complete. |
+
+The fixed sample contained three POSIX successes/three timeouts and four native
+successes/two timeouts. These counts are descriptive only. Failures remain
+failures; subsequent successes did not turn them into passes or justify retry.
+No DEVICE_INFO timeout occurred in this round.
+
+The first POSIX read also contained 128 bytes outside recognized frames,
+discarded under the bounded synchronization policy. In contrast, every failed
+POSIX attempt had exactly 85 bytes for complete DEVICE_INFO and then 3 bytes
+after APP_START, so no received 64-byte body was hidden in discarded input.
+
+### OS-read evidence in the three POSIX failures
+
+Each failed POSIX attempt first received complete DEVICE_INFO, then wrote all
+19 APP_START bytes once. The sum of all subsequent nonempty os.read returns was
+exactly 3 bytes: one serial header, with declared content length 64. Thus the
+independent frame counter was not discarding a previously read 64-byte body.
+Because no content byte arrived, the response opcode itself could not be read;
+SELF_INFO was the expected response at this stage, not an inferred body value.
+
+| POSIX case | Request-to-deadline observation | At the deadline |
+| --- | --- | --- |
+| 05 | 5.005099 s; header received about 0.57 ms after APP_START | FIONREAD 0 before/after probe, select not readable, final read 0 bytes, 64 content bytes still missing. |
+| 08 | 5.001678 s; header received about 0.54 ms after APP_START | FIONREAD 0 before/after, select not readable, final read 0 bytes, 64 missing. |
+| 09 | 5.001762 s; header received about 0.47 ms after APP_START | FIONREAD 0 before/after, select not readable, final read 0 bytes, 64 missing. |
+
+The small deadline overshoot is observed OS/Python scheduling and probe overhead,
+not a larger configured timeout or an added grace period. No later data was
+accepted as success. Input queues were also empty when close began. For the two
+native failures, the actual reader callback likewise reported chunks of 85
+(complete DEVICE_INFO frame) and 3 bytes, and the passive decoder ended with
+3 of 67 total bytes. Native reader done preceded port close/dispose in all six
+native runs; every native transport close completed successfully.
+
+### Conclusion and limits
+
+The header-only 64-byte wait was reproduced three times with no Dart,
+libserialport_plus, or reader in the POSIX process. The missing content was not
+available from the OS tty input stream within the existing request budget; it
+was not data returned to that client and subsequently discarded by its parser.
+Therefore libserialport_plus/reader are not necessary causes of this stall, and
+the observations do not support a wrapper/reader fix for the reproduced symptom.
+No client implementation defect was demonstrated and no production fix was made.
+
+This narrows the observed failure to generation/delivery before a POSIX read can
+obtain the bytes: the device, USB path, or host driver can still be responsible.
+An empty public tty queue does not reveal whether bytes remained in firmware,
+a USB endpoint, driver-private buffering, were never emitted, or were lost lower
+down. No USB bus or firmware trace was obtained, and no query was sent to force
+release, so this round proves non-delivery within five seconds, not the eventual
+fate of the missing bytes. It does not prove the native library has no other bugs
+or that every native failure has the same cause. In particular the earlier
+DEVICE_INFO 21/85-byte case was not independently reproduced here; its individual
+cause remains unconfirmed. Historical POSIX release experiments remain separate
+evidence, not actions performed in this no-extra-query round.
+
+The control scripts and structural results were kept outside the repository;
+the temporary encode-only Dart helper was removed from the package. No capture
+of device text, keys, PIN, locations, or payload was retained. The only repository
+changes for this follow-up are documentation. No production code or dependency
+changed, so the preceding 68 core/27 CLI tests remain earlier results, not a new
+run for this documentation-only follow-up. Fresh control self-tests, Python syntax
+checks, root format/fatal-info analysis, and diff checks passed. No commit, push,
+PR, release, other-platform/remote CI run, or LoRa test was performed.

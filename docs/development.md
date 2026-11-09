@@ -872,3 +872,68 @@ were not rerun for documentation-only changes; fresh control self-tests, Python
 syntax checks, workspace format (25 Dart files), fatal-info analysis, and
 `git diff --check` passed. No commit, push, PR, release, Step 8, LoRa, other-platform,
 or remote Actions work was performed.
+
+## Step 8 software validation on November 9, 2026
+
+Started on clean `master` at `7847e74a2cdf94b872be296227c6a26326cbb353`, the
+Step 7 PR #6 merge. The [testing guide](testing.md) records the behavior audit,
+shared smoke contract, exact acceptance commands and evidence limits. No missing
+unit/integration group was identified: zero Dart tests were added, deleted or
+weakened. The 16 synthetic split-body CLI combinations remain in their existing
+parameterized group. Product source, application version, dependencies, lockfile,
+platform guards, reader ownership and cleanup budgets are unchanged.
+
+Actual host: macOS 27.2 (26B123), arm64; Python 3.15.2; Apple Clang 21.0.0.
+`/opt/homebrew/share/flutter/bin/flutter --version --machine` failed because the
+sandbox denied cache stamp/realm writes. This was not a successful Flutter CLI
+check. The same SDK's installed
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --version` succeeded and
+reported Dart 3.13.7 stable (`macos_arm64`, October 22, 2026). All Dart checks used
+that executable with `/usr/bin` ahead of Homebrew compilers in the process PATH;
+no alternate SDK, upgrade, cache edit or permission change was performed.
+
+| Local check | Observed result |
+| --- | --- |
+| `pub get --enforce-lockfile` | Passed; lockfile unchanged. |
+| Root format check and `analyze --fatal-infos` | Passed before and after edits; 25 Dart files, zero formatting changes, no analysis issues. |
+| Full core / CLI suites, serial execution | Baseline: 68 / 27 passed. After edits: 68 / 27 passed again. No retries or randomized-order runs. |
+| `dart build cli --help` and fresh CLI/example builds | Confirmed installed flags/layout; both builds passed serially. |
+| Shared smoke | 46 macOS process checks passed, then passed again after tightening help validation, invoking the script from outside the checkout. |
+| Real native stdout pipe with read end already closed | Exit 74, safe output-failure diagnostic, no unhandled exception or stack, in both smoke runs. |
+| Whole CLI bundle copied outside checkout | Version, info help and missing-port exit 64 passed from the temporary cwd, including a path with spaces; copy removed automatically. Both original bundles and relocated CLI contained nonempty executable/native library assets. |
+| Script validation | `--help`, Python syntax, missing arguments, invalid Dart path, missing bundle and empty bundle rejection passed. |
+| `git diff --check` | Passed for the tracked patch; new Python/Markdown files were separately reviewed for whitespace. |
+| Linux enumeration refusal | Not applicable on this macOS host; not executed or simulated. CI will run real source/native `ports` and `ports --json`, requiring 69 and the exact guard diagnostic. |
+
+Fresh build output is retained for inspection at
+`/private/var/folders/g2/3ydgbl6n0xn9cv4h_sqv70qc0000gn/T/meshchan-step8.HVaxrh/`,
+with `meshctl/bundle/` and `observation/bundle/`. No old build was substituted;
+user build directories were not removed. An intermediate tooling edit initially
+used a package cwd for a root-relative script path and failed with
+`FileNotFoundError`; it was corrected from the root before smoke execution. This
+was an editing-command error, not a product/test failure or a successful check.
+
+CI now calls the shared script after both builds, with 60-second child watchdogs
+and a 20-minute job timeout. It retains the existing single Ubuntu runner,
+Flutter 3.47.9, action pins, triggers and read-only permissions. No workflow was
+triggered, rerun or changed remotely. There is no remote run for these uncommitted
+Step 8 changes, and local success does not establish a Linux result.
+
+For historical context, read-only GitHub API checks during this task confirmed
+both Step 7 runs below as `completed / success`, each reporting head
+`b4ec6d15213b503bf51890b4f852ad2342eaefe8`:
+
+- [Push run 42679410025](https://github.com/007pig/meshchan/actions/runs/42679410025), event `push`.
+- [PR run 42679506860](https://github.com/007pig/meshchan/actions/runs/42679506860), event `pull_request`.
+  [Job 129369919414](https://github.com/007pig/meshchan/actions/runs/42679506860/job/129369919414)
+  reported analysis, both suites, native builds, usage checks and Linux refusal
+  successful. Its PR checkout context may differ from the push checkout; the
+  reported head SHA is not a claim that both checked out the same Git ref.
+
+These observed Step 7 results supersede earlier historical statements that
+remote results had not yet been observed. They do not validate Step 8 changes.
+No commit, push, PR, release, real port enumeration/open, device info/watch,
+LoRa exchange or Step 9 acceptance was performed. The intermittent missing
+64-byte USB body remains unresolved and unattributed; passing synthetic tests
+and same-host AOT entry checks does not establish a hardware fix, actual native
+library loading, successful native session I/O or clean-machine compatibility.

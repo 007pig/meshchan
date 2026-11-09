@@ -98,6 +98,14 @@ in `cleanupErrors` as shutdown completes. A completed send means all framed byte
 were accepted by the local native/OS write API; it proves no physical completion,
 device command execution, LoRa transmission, or remote receipt.
 
+A later authorized [Step 6 timeout investigation](../hardware-validation.md#session-timeout-investigation-on-november-9-2026)
+observed a serial header arriving without its declared 64-byte body on one macOS
+USB device. An independent POSIX client reproduced the stall without Dart or
+this transport. A header alone is not complete content; the decoder correctly
+waits, and a session may reach its request deadline. This observation does not
+justify treating a partial frame as a response or adding automatic flushes,
+queries, retries, or a fixed startup delay.
+
 ## Reader ownership and shutdown evidence
 
 The actual resolved archive is `libserialport_plus` 1.0.5 (root lockfile and

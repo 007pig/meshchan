@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:libserialport_plus/libserialport_plus.dart' as native;
 import 'package:meshcore_link/meshcore_link.dart';
 import 'package:meshcore_link/src/transport/native_serial_connection.dart';
@@ -172,6 +173,78 @@ void main() {
       }
     },
   );
+
+  test('session waits for the complete body after a standalone serial header', () async {
+    for (final bodyArrives in [true, false]) {
+      final clock = FakeAsync();
+      var cleaned = false;
+      clock.run((_) {
+        final connection = TestConnection();
+        final transport = serialTransportForTest(
+          portPath: '/dev/synthetic',
+          createConnection: (_) => connection,
+        );
+        final session = MeshCoreSession(transport: transport);
+        MeshCoreSessionInfo? result;
+        Object? failure;
+        session.connect().then<void>(
+          (info) => result = info,
+          onError: (Object error) => failure = error,
+        );
+        clock.flushMicrotasks();
+        expect(connection.writes, [
+          encodeSerialFrame(encodeDeviceQuery(appTargetVersion: 3)),
+        ]);
+        final deviceInfo = Uint8List(82)..setRange(0, 2, [0x0d, 14]);
+        connection.data([0x3e, 82, 0, ...deviceInfo]);
+        clock.flushMicrotasks();
+        expect(connection.writes, hasLength(2));
+        expect(connection.writes.last, encodeSerialFrame(encodeAppStart()));
+
+        // USB/native read boundaries need not match complete serial frames.
+        // A header declaring 64 bytes is not a SELF_INFO response by itself.
+        connection.data([0x3e, 64, 0]);
+        clock.elapse(const Duration(seconds: 4));
+        expect(result, isNull);
+        expect(failure, isNull);
+        expect(session.info, isNull);
+        final body = Uint8List(64)..[0] = 0x05;
+        if (bodyArrives) {
+          connection.data(body);
+          clock.flushMicrotasks();
+          expect(result, same(session.info));
+          expect(result!.selfInfo.contentLength, 64);
+          expect(session.state, MeshCoreSessionState.ready);
+        } else {
+          clock.elapse(const Duration(seconds: 1));
+          expect(failure, same(session.lastFailure));
+          expect(
+            session.lastFailure!.kind,
+            MeshCoreSessionFailureKind.requestTimeout,
+          );
+          expect(session.lastFailure!.commandOpcode, 0x01);
+          expect(session.state, MeshCoreSessionState.failed);
+          // A late body cannot revive the terminated session or trigger a
+          // diagnostic query/retry to force additional USB traffic.
+          connection.data(body);
+          clock.flushMicrotasks();
+          expect(result, isNull);
+          expect(session.info, isNull);
+        }
+        session.close().then<void>((_) => cleaned = true);
+        clock.flushMicrotasks();
+        expect(connection.writes, hasLength(2));
+        expect(connection.calls.where((call) => call == 'close'), hasLength(1));
+        expect(connection.calls.last, 'dispose');
+        expect(clock.pendingTimers, isEmpty);
+      });
+      // The SDK may reuse a cancellation Future from outside the fake zone.
+      // Settle that microtask, then finish the zone-local cleanup continuation.
+      await turn();
+      clock.flushMicrotasks();
+      expect(cleaned, isTrue);
+    }
+  });
 
   test('encoder, byte ownership, short writes, zero progress, and one in-flight frame', () async {
     final clock = TestClock()..gate = Completer<void>();

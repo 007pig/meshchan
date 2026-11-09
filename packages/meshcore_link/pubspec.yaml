@@ -11,4 +11,5 @@ dependencies:
   libserialport_plus: ^1.0.5
 
 dev_dependencies:
+  fake_async: ^1.3.3
   test: ^1.33.0

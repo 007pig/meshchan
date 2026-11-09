@@ -25,6 +25,18 @@ export 'src/protocol/serial_framing.dart'
         SerialFrameDecodeErrorKind;
 export 'src/serial_ports.dart'
     show SerialPortDescription, SerialPortFailure, SerialPorts;
+export 'src/session/meshcore_session.dart'
+    show
+        meshCoreSessionAppTargetVersion,
+        MeshCoreSession,
+        MeshCoreSessionInfo,
+        MeshCoreSessionState,
+        MeshCoreSessionFailure,
+        MeshCoreSessionFailureKind,
+        MeshCoreSessionEvent,
+        MeshCoreSessionStateChanged,
+        MeshCoreSessionUnassociatedResponse,
+        MeshCoreSessionFailed;
 export 'src/transport/companion_transport.dart' show CompanionTransport;
 export 'src/transport/serial_transport.dart'
     show SerialTransport, SerialTransportFailure, SerialTransportFailureKind;

@@ -6,6 +6,10 @@ Phase 1 / 1A / Step 6 adds callable initialization through
 and Dart asynchronous primitives. It passes complete inner content directly to
 the transport and decoder; it never adds or searches for serial framing.
 
+Step 7 exposes this unchanged session through the [info/watch CLI](../cli.md).
+The CLI owns one fresh transport/session per invocation, sends no extra commands,
+and awaits the shared cleanup result before returning.
+
 ## API and ownership
 
 Construct a session with an unused transport and call `connect()` once:
@@ -239,9 +243,12 @@ The 16 focused behavior groups use a small synchronous fake transport, synthetic
 content decoded by the real codec, and pub-resolved `fake_async` 1.3.3 for timers
 and microtasks. They never enumerate or open hardware. See the dated
 [Step 6 development record](../development.md#companion-session-step-6) for actual
-full-suite and build results. Existing CLI/example builds can tree-shake the
-session away and are only regressions of those existing products, not session
-AOT execution or hardware validation. The later temporary hardware harness
+full-suite and build results. At Step 6, existing CLI/example builds could
+tree-shake the session away and were regressions of those products, not session
+AOT execution or hardware validation. Step 7's product CLI now includes the
+session; its builds and hardware-free checks are recorded in the
+[Step 7 development record](../development.md#diagnostic-session-cli-step-7).
+The later temporary Step 6 hardware harness
 explicitly called this session and separately passed AOT execution on hardware;
 it added no product CLI or change to the read-only example.
 

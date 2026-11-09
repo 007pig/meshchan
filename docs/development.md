@@ -6,7 +6,7 @@ Use American English for project documentation, code comments, CLI output, and c
 
 The root `pubspec.yaml` lists `packages/meshcore_link` and `apps/meshctl`. Both members use `resolution: workspace`; all packages use `publish_to: none` and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`. Do not create member lockfiles or add Flutter SDK dependencies. The CLI resolves `meshcore_link` to the local workspace member without overrides. Check membership with `dart pub workspace list`.
 
-The root provides `lints`; the CLI uses `args` and `test`; the core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. No Flutter engine or platform project is involved.
+The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. No Flutter engine or platform project is involved.
 
 ## SDK and native toolchain baseline
 
@@ -529,6 +529,10 @@ was added. The selected device retains its original name and radio settings.
 
 ## Source CLI behavior
 
+Step 7 adds `info` and `watch` over the existing session. The [CLI guide](cli.md)
+is the current command, option, structured output, cancellation, and exit-code
+contract. The diagnostic/platform notes below still apply to ports/port-check.
+
 From `apps/meshctl`:
 
 ```bash
@@ -536,7 +540,8 @@ dart run bin/meshctl.dart --help
 dart run bin/meshctl.dart --version
 dart run bin/meshctl.dart ports --help
 dart run bin/meshctl.dart port-check --help
-dart run bin/meshctl.dart ports
+dart run bin/meshctl.dart info --help
+dart run bin/meshctl.dart watch --help
 ```
 
 No arguments and `-h` also display help. Top-level help takes precedence over version. Subcommand help does not require `--port` or call diagnostics. Invalid syntax and extra positional arguments are rejected before any serial operation. The version is the constant in `apps/meshctl/lib/src/version.dart`, independent of the working directory; keep it consistent with the CLI pubspec and its behavior test. It remains `0.1.0-dev.1` for this step.
@@ -555,9 +560,12 @@ Help, version, and argument validation remain available without invoking native 
 | --- | --- |
 | `0` | Success, including an empty enumeration. |
 | `64` | Argument error, unknown option/command, extra positional argument, or missing/blank `--port`. |
-| `69` | Expected serial, platform, or native runtime dependency error. |
+| `69` | Expected serial, platform, session, or cleanup failure. |
+| `74` | Output failure without an earlier primary failure. |
+| `130` / `143` | SIGINT / SIGTERM cancellation after awaited cleanup. |
+| `70` | Unexpected program error at the process boundary. |
 
-Normal results go to stdout; errors and warnings go to stderr. Expected operation errors retain available native error details without a stack trace or an assumption that the port is busy. Unexpected programming errors propagate. A source build-hook failure can terminate Dart before the application runs and is not governed by the application's exit-code contract.
+Normal results go to stdout; errors and warnings go to stderr. Expected diagnostic errors retain available safe native details without a stack trace or an assumption that the port is busy; session failures use only structural fields. Unexpected programming errors propagate from `runCli` and are handled at the process boundary with exit 70. A source build-hook failure can terminate Dart before the application runs and is not governed by the application's exit-code contract.
 
 Verify argument-error process codes on macOS or Linux:
 
@@ -624,3 +632,243 @@ CI configuration was updated; no remote workflow was run for these changes. Ubun
 After a Homebrew SDK change, record the actual versions/channel, run every applicable check above, and review lockfile changes. Update the fixed CI baseline and this guide together only when the local SDK actually changed and compatibility checks pass. Do not upgrade Flutter, switch channels, or reinstall Homebrew packages as part of routine project validation.
 
 See the [Validation Record](hardware-validation.md) for dated results and remaining hardware work.
+
+## Diagnostic session CLI (Step 7)
+
+Step 7 adds asynchronous `info` and `watch` commands over the unchanged public
+session, with explicit-port validation, text/JSON output, signal cancellation,
+and shared awaited cleanup. See [CLI usage and schema](cli.md). No core production
+code, read-only example behavior, platform guard, protocol target, timeout default,
+or application version changed. `apps/meshctl` now directly declares
+`fake_async: ^1.3.3`; normal `dart pub get` retained the existing resolved 1.3.3
+and produced no root lockfile difference. There are no new production dependencies.
+
+### Software validation on November 9, 2026
+
+The initial worktree was clean on `master` at
+`e27c024850ea80c8b3537f9c6aaf41895cbd812e`, the Step 6 merge. Applicable ancestor
+and repository agent guidance was checked; no additional on-disk AGENTS.md was
+found. No checkout, pull, merge, reset, rebase, commit, push, PR, or release was
+performed. Hardware authorization from earlier records was not reused.
+
+Both `/opt/homebrew/share/flutter/bin/flutter --version --machine` and that SDK's
+`bin/dart --version` wrapper failed because the sandbox denied cache engine-stamp
+and `engine.realm` writes. Direct execution of the same installed SDK's
+`bin/cache/dart-sdk/bin/dart --version` reported Dart 3.13.7 stable on macos_arm64.
+The installed `flutter.version.json` reports Flutter 3.47.9 stable, revision
+`c197ca5199e9ee5661e865596c9c07294dfab51c`; this is metadata, not successful fresh
+Flutter CLI validation. Actual host checks reported macOS 27.2 (26B123), arm64,
+and Apple Clang 21.0.0 (`clang-2100.4.1.1`). No SDK or dependency source was
+patched, and no global PATH or permission changes were made.
+
+Commands used the process-only PATH and direct Dart below. Package tests and
+native builds ran serially to avoid the recorded shared-native-asset conflict.
+Only task Dart files were formatted before the read-only workspace format check.
+
+```bash
+# From the repository root.
+export PATH="/opt/homebrew/share/flutter/bin:/usr/bin:$PATH"
+MESHCHAN_DART=/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart
+"$MESHCHAN_DART" --version
+"$MESHCHAN_DART" pub get
+"$MESHCHAN_DART" pub get --enforce-lockfile
+"$MESHCHAN_DART" format --output=none --set-exit-if-changed .
+"$MESHCHAN_DART" analyze --fatal-infos
+(cd packages/meshcore_link && "$MESHCHAN_DART" test)
+(cd apps/meshctl && "$MESHCHAN_DART" test)
+(cd apps/meshctl && "$MESHCHAN_DART" build cli --target=bin/meshctl.dart --output=build/dist)
+(cd packages/meshcore_link && "$MESHCHAN_DART" build cli --target=example/serial_transport_check.dart --output=build/serial-transport-check)
+git diff --check
+```
+
+| Check | Actual result |
+| --- | --- |
+| Normal and enforced locked pub resolution | Passed; no lockfile change or unrelated package upgrade. |
+| Workspace format and fatal-info analysis | Passed; 24 Dart files, no pending formatting changes, no analyzer issues. |
+| Complete core suite | Passed; 68 tests. Core implementation and tests are unchanged. |
+| Complete CLI suite | Passed; 26 tests: the original 10 migrated to awaited Futures plus 16 focused behavior groups. |
+| Source help/version and command help | Passed; no arguments, top-level help/version, and all four subcommand help paths returned 0 (7 process checks). |
+| Final rebuilt CLI bundle help/version | Passed; the same 7 process checks returned 0 with empty stderr, version `0.1.0-dev.1`. |
+| Source/bundle usage rejection | Passed; 14 strict subprocess assertions from the added CI check, substituting only the local direct Dart path. Missing info/watch ports, empty info port, and invalid time inputs without a selected port returned 64, empty stdout, a usage diagnostic, and no stack trace. No valid port was supplied. |
+| CLI native bundle | Passed; fresh `dart build cli`, including executable and `lib/liblibserialport_plus.dylib`. Rebuilt after the final production change. |
+| Read-only example native bundle | Passed with the unchanged CI build command; includes its native dylib. |
+| Source/bundled read-only example usage | Passed; no arguments and one whitespace-only argument each returned 64, empty stdout, expected usage diagnostic, and no stack (4 process checks). |
+| Complete CLI bundle relocation | Passed; copied the entire final bundle to a fresh `/private/tmp` directory. Help/version/info-help/watch-help returned 0, with no stderr (4 process checks); the temporary copy was removed. |
+| CI syntax | Passed; parsed the workflow YAML and checked all 11 run blocks with `bash -n`, plus both embedded Python blocks. SDK/action pins, permissions, single Ubuntu job, and exact Linux enumeration refusal assertion remain unchanged. |
+| Diff/scope | Passed; no whitespace errors, no core/example behavior change, no version or license change. |
+
+The process smoke run totals 36 hardware-free assertions (14 help/version,
+14 usage errors, 4 example guards, 4 relocation checks). Source native build-hook
+progress on stderr is outside the application schema. Early incremental checks
+reported type/style issues and a virtual-time completion mismatch; those failed
+iterations were corrected and are not counted as passing runs.
+
+The new tests use real `MeshCoreSession` and decoding with a small independent
+fake transport and synthetic DEVICE_INFO/SELF_INFO. They cover side-effect-free
+validation and help/version priority, unchanged path forwarding, JSON nulls and
+key prefix, exactly two sends, close-before-info output, early watch events,
+deduplicated failures, pending/failed cleanup, ready-relative duration, signal
+races including queued initialization advancement, output-failure priority,
+asynchronous IOSink.done/flush failures, bounded queue overflow, safe text and
+secret sentinels, invocation isolation, and lazy supported-signal registration
+and cancellation. The process boundary also verifies safe exit 70 for an injected
+programming error. All timers/fake Futures are created inside virtual-time zones;
+no seconds-long test sleeps, native handles, real enumeration, device access, or
+OS signals are used. Broadcast observer cancellation removes the observer
+synchronously and observes its empty completion; native cleanup and signal-source
+cancellation are awaited. A later cleanup error retains an existing primary
+failure/signal code and receives a safe supplemental diagnostic.
+
+No real `ports`, `port-check`, valid-port info/watch, or valid-port example was
+executed. Historical hardware results remain historical. Step 7 hardware,
+Linux-host process behavior, other operating systems, and remote GitHub Actions
+were not run or observed. The historical intermittent USB SELF_INFO body delay
+and potentially pending native cleanup remain unresolved; no retry, repair
+query, reset, flush, name change, or default startup delay was introduced.
+Step 8, LoRa round trips, reconnect, database, and UI work were not started.
+
+### Authorized CLI hardware follow-up on November 9, 2026
+
+The user subsequently authorized `/dev/cu.usbmodem211101` for actual Step 7 CLI
+tests. The current CLI bundle was rebuilt successfully with the same direct
+Dart 3.13.7/Apple compiler and reported `0.1.0-dev.1`. Six source/native command
+invocations ran serially with unchanged defaults (5-second request budget,
+15-second total budget, zero startup delay). Source and native 5-second JSON
+watch runs passed, as did native ready-state SIGINT/SIGTERM cleanup with expected
+exit codes 130/143. All four watch runs produced one ready, the complete normal
+state sequence, parseable NDJSON, and one end with cleanup succeeded.
+
+Both info attempts failed initialization: source timed out on `0x16` / expected
+`0x0D`; native timed out on `0x01` / expected `0x05`. Each returned 69 with empty
+stdout, one primary diagnostic, awaited cleanup, and no cleanup failure; later
+sessions reopened the same port. These are failed initialization results, not
+successful info hardware acceptance or proof of the historical delayed-body
+mechanism. No retries, extra commands, timeout/delay changes, forced kill,
+configuration changes, or production fixes were added.
+
+The [hardware record](hardware-validation.md#step-7-authorized-cli-hardware-follow-up-on-november-9-2026)
+contains the six actual outcomes, UTC times, and limits. Device display data was
+validated only in memory; only structural summaries were retained. Software test
+counts above are the earlier software runs and were not rerun for documentation
+changes. No core/protocol/CLI source, dependency, lockfile, or version changed in
+this follow-up. Remote Actions, other-platform behavior, and LoRa remain
+unverified. No commit, push, PR, release, or Step 8 work was performed.
+
+### CLI timeout comparison on November 9, 2026
+
+The user requested investigation of the apparent info/watch difference on the
+same explicitly selected `/dev/cu.usbmodem211101`, with a minimal fix only if a
+client defect was demonstrated. The worktree stayed on `master` at `e27c024`,
+retaining the existing uncommitted Step 7 implementation. No production file,
+dependency, lockfile, version, app target, timeout, or startup-delay default was
+changed. All hardware attempts used the actual CLI/session/serial code with the
+same 5/15-second budgets and zero startup delay; watch's post-ready observation
+window was one second for these comparisons.
+
+The fixed hardware experiment had 12 cases: unmodified AOT watch/info/info/watch,
+then traced info/watch/watch/info with memory sinks, then the same order with
+real IOSinks. The unmodified cases all succeeded, including two consecutive info
+snapshots. The traced cases had four successes and four timeouts. In total, info
+and watch each succeeded four times and failed twice; these small descriptive
+counts are not reliability estimates. Cases were not added until one passed.
+
+An ignored temporary AOT probe used the existing internal native connection seam,
+delegating every operation to the real connection and recording only structural
+monotonic events in memory until close. The product's codec, initialization, and
+transport algorithm were unchanged. The probe passed focused fatal-info analysis,
+a native build, and source/bundle no-argument exit-64 guards before device access.
+No second receive subscription, payload capture, extra query, retry, forced kill,
+serial flush, or device configuration change was used.
+
+The four captured timeouts had incomplete frames at the native receive callback:
+three had only a 3-byte header for a 64-byte SELF_INFO body; one had 21 of the
+85 total DEVICE_INFO bytes, also missing a 64-byte suffix. Every complete native
+frame matched transport delivery, every started send completed once with full
+native byte acceptance, and cleanup began 5.001..5.003 seconds after the pending
+request. Successful traced info closed only after full SELF_INFO delivery.
+All processes completed cleanup naturally; all traced native releases followed
+reader stop/done before port close/dispose. No CLI initialization defect was
+demonstrated, so no production fix or timing workaround was added. Responsibility
+for missing bytes below that callback remains unresolved; a specific firmware,
+USB/driver, native-library, or reader-side cause was not proven.
+
+See the [full fixed outcomes and timing evidence](hardware-validation.md#step-7-cli-timeout-comparison-on-november-9-2026).
+The earlier failed info attempts remain failures. Native info hardware success is
+now observed in separate runs with unchanged defaults; source info was not rerun
+in this AOT comparison. Device text and bytes were inspected only in memory and
+were not retained as captures. The temporary probe source was removed from the
+package; its ignored build output remains a local diagnostic artifact.
+
+The only new code is `apps/meshctl/test/session_serial_cli_test.dart`: one focused
+group with 16 virtual-time combinations of command, partial response stage,
+timely/absent suffix, and ordinary/blocked output. It replaces only the native
+connection and exercises the real CLI, session, transport, and decoder. It checks
+both observed partial-frame shapes, no early close/ready/info, success just before
+the deadline, correct timeout metadata, late-byte rejection, no extra sends,
+reader-before-port cleanup, ready-relative duration, and timer removal. It uses
+synthetic fixtures and the CLI's existing direct fake_async dependency.
+
+Actual software checks used the same direct SDK Dart 3.13.7 and process-only Apple
+compiler PATH recorded above. Core and CLI tests ran serially. The focused group
+passed all 16 combinations; full core passed 68 tests, full CLI passed 27 tests,
+root formatting checked 25 Dart files with no changes, fatal-info analysis found
+no issues, locked pub resolution and `git diff --check` passed. No unrelated
+package upgrade occurred. No commit, push, PR, release, Step 8, LoRa, other-platform,
+or remote Actions run was performed.
+
+### Independent POSIX control on November 9, 2026
+
+The user authorized a standard-library POSIX comparison on the same selected
+`/dev/cu.usbmodem211101`, keeping the existing deadlines and device configuration
+and prohibiting retries, release queries, or flushes. This follow-up changed only
+validation documentation. The existing Step 7 code, app target 3, Meshchan name,
+5-second request/15-second total budgets, zero startup delay, dependencies,
+lockfile, and application version stayed unchanged.
+
+A temporary Dart encode-only helper generated the normal two outgoing frames
+using the existing public codec/framing API. It passed focused fatal-info analysis
+and performed no device I/O. The independent Python 3.15.2 process then used
+os.open/os.write/os.read/select/termios/fcntl only: no Dart, libserialport_plus,
+FFI, reader, or pyserial. Its separate frame counter retained only structural
+prefix bytes and lengths. It passed three self-test groups (including all 154
+two-part splits of the synthetic expected frame sizes), Python syntax checks,
+and missing/wrong-port exit-64 guards before hardware execution.
+
+All six POSIX opens applied and verified the same raw 115200/8N1 host tty profile
+as the existing native transport, using TCSANOW without flush/drain or explicit
+RTS/DTR output changes. Newly opened descriptors reported the OS's 9600/HUPCL-on/
+CLOCAL-off/VMIN-1 initial profile; the control applied the existing baseline on
+each open instead of assuming a preceding descriptor's settings persisted. This
+was host serial setup, not a stored device/radio configuration change. flock and
+TIOCEXCL ownership were released before closing, and all processes returned
+naturally without a forced timeout or kill.
+
+The fixed experiment used three POSIX/native/native/POSIX blocks (12 serial
+attempts), with the unchanged native AOT info trace as the other path. Every
+attempt had exactly one accepted 5-byte write and one accepted 19-byte write.
+POSIX had three successes and three APP_START/SELF_INFO timeouts; native had four
+successes and two timeouts with the same header-only shape. These are finite
+case counts, not reliability/performance statistics, and no attempts were added
+until a desired result occurred.
+
+In each POSIX failure, after complete DEVICE_INFO and the one APP_START write,
+the sum of nonempty os.read results was exactly three bytes: a header declaring
+64 bytes of content. At the original request deadline FIONREAD was zero, select
+was not readable, one immediate nonblocking read returned zero bytes, and the
+tty queue was still empty at close. No grace period, extra command, or flush
+was used to expose or rescue late data. The reader/wrapper therefore are not
+required to reproduce this symptom: the missing content was not returned to
+this independent client and discarded afterward. No client defect or justified
+production fix was identified. Device generation, USB delivery, and driver-private
+buffering/loss remain distinct unresolved possibilities. The earlier native
+DEVICE_INFO 21/85-byte case was not independently reproduced in this round.
+
+See the [complete POSIX/native outcomes and OS-queue observations](hardware-validation.md#step-7-independent-posix-comparison-on-november-9-2026).
+All raw receive content and device fields stayed out of logs/captures; only
+structural records were retained outside the repository. The encode-only Dart
+helper was removed from the package. No new production API, package, runtime
+policy, or default test dependency was introduced. Prior core 68/CLI 27 results
+were not rerun for documentation-only changes; fresh control self-tests, Python
+syntax checks, workspace format (25 Dart files), fatal-info analysis, and
+`git diff --check` passed. No commit, push, PR, release, Step 8, LoRa, other-platform,
+or remote Actions work was performed.

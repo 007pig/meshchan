@@ -2,13 +2,13 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
-The current implementation covers **Phase 1 / 1A / Step 4: USB serial transport**. The Flutter-independent `CompanionTransport` interface and `SerialTransport` connect the existing frame codec to `libserialport_plus`, using only an explicitly supplied system port. Hardware-free tests cover framing integration, partial writes, deadlines, and resource lifecycles.
+The current implementation covers **Phase 1 / 1A / Step 5: Companion command and response codecs**. Synchronous, stateless Dart functions encode APP_START and DEVICE_QUERY inner content and parse SELF_INFO, version-gated DEVICE_INFO, device errors, and unhandled responses. They perform no I/O. The existing Flutter-independent `CompanionTransport` and `SerialTransport` continue to connect serial framing to `libserialport_plus` through an explicitly supplied system port.
 
-See the [serial transport contract and opt-in observation example](docs/protocol/serial-transport.md) and [serial framing protocol](docs/protocol/serial-framing.md). Step 2's selected-port macOS open/close results remain historical evidence. Step 4's authorized three-second source check on one selected macOS port passed configuration, reader reception, framing, and normal shutdown; native TX remains unverified. Companion commands, handshakes, device identification, sessions, and LoRa communication remain unimplemented.
+See the [Companion codec layout, policies, and in-memory example](docs/protocol/companion-initialization.md), [serial transport contract and opt-in observation example](docs/protocol/serial-transport.md), and [serial framing protocol](docs/protocol/serial-framing.md). Step 2's selected-port macOS open/close results and Step 4's passive reception results remain historical evidence. A separate [user-authorized Step 5 USB probe](docs/hardware-validation.md#step-5-authorized-command-probe-on-november-9-2026) subsequently sent DEVICE_QUERY and APP_START once each on one selected macOS port, parsed DEVICE_INFO and SELF_INFO, and shut down successfully. The codec itself performs no I/O. Automated initialization, handshakes, authenticated device identity, sessions, and LoRa communication remain unimplemented or unverified.
 
 | Package | Responsibility and current status |
 | --- | --- |
-| `packages/meshcore_link` | Flutter-independent Dart core with serial framing, an explicit-port transport, and serial diagnostics. |
+| `packages/meshcore_link` | Flutter-independent Dart core with Companion message codecs, serial framing, an explicit-port transport, and serial diagnostics. |
 | `apps/meshctl` | CLI help, application version, `ports`, and `port-check --port <path>`. |
 
 ## Quick start

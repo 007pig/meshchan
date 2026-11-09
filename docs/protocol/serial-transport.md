@@ -4,8 +4,10 @@ Phase 1 / 1A / Step 4 exposes `CompanionTransport` and `SerialTransport` through
 `package:meshcore_link/meshcore_link.dart`, without Flutter. Both `frames` and
 `sendFrame(content)` carry complete, opaque inner Companion content. The existing
 [serial codec](serial-framing.md) owns all outer framing and its unchanged limits.
-There is no command parsing, handshake, identity check, automatic discovery,
-reconnection, retransmission, idle timeout, or radio operation.
+The transport itself does no command parsing; Step 5's separate
+[Companion codec](companion-initialization.md) can parse complete content in memory.
+There is no handshake, identity check, automatic discovery, reconnection,
+retransmission, idle timeout, or radio operation.
 
 ## Connection and stream contract
 
@@ -166,7 +168,10 @@ observation proves no MeshCore identity, TX, or LoRa capability.
 Initial validation ran software tests and native builds only. A subsequent
 user-authorized three-second source observation on one selected macOS port passed
 configuration, reception of two complete frames, and normal shutdown after the
-user released an initially busy port. No bytes were sent; native TX, forced
-disconnects, device identity, command processing, and LoRa remain unverified.
+user released an initially busy port. That observation sent no bytes and did not
+validate native TX, forced disconnects, device identity, command processing, or
+LoRa. A later [Step 5 command probe](../hardware-validation.md#step-5-authorized-command-probe-on-november-9-2026)
+validated DEVICE_QUERY/DEVICE_INFO and APP_START/SELF_INFO on the selected port,
+without adding a session layer or changing this read-only example.
 See the dated [development checks](../development.md#serial-transport-step-4) and
 [hardware follow-up](../hardware-validation.md#authorized-read-only-follow-up-on-november-9-2026).

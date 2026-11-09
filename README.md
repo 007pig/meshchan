@@ -2,11 +2,13 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
-The current implementation covers **Phase 1 / 1A / Step 2: serial library and native build validation**. It includes serial port enumeration, an explicit single-port open/close diagnostic, hardware-free tests, and a CLI bundle with its native library. Local macOS checks passed for an explicitly selected real port, including reopening after release and running the bundle. MeshCore protocol support remains unverified.
+The current implementation covers **Phase 1 / 1A / Step 3: minimal serial framing**. It adds hardware-independent host frame encoding and incremental device frame decoding. Step 2's serial diagnostics, native CLI bundle, and selected-port macOS validation remain available; live MeshCore protocol compatibility remains unverified.
+
+Serial framing is implemented and covered by software tests. Integration with live serial reads/writes, Companion commands, and sessions is not implemented in this step. See the [serial framing protocol and in-memory examples](docs/protocol/serial-framing.md). Run its tests with `(cd packages/meshcore_link && dart test test/serial_framing_test.dart)`.
 
 | Package | Responsibility and current status |
 | --- | --- |
-| `packages/meshcore_link` | Flutter-independent Dart core with a thin `libserialport_plus` FFI adapter and explicit resource cleanup. |
+| `packages/meshcore_link` | Flutter-independent Dart core with a pure Dart serial frame codec and a thin `libserialport_plus` diagnostic adapter with explicit resource cleanup. |
 | `apps/meshctl` | CLI help, application version, `ports`, and `port-check --port <path>`. |
 
 ## Quick start
@@ -37,7 +39,7 @@ To check a device, select its exact path explicitly, then run `dart run bin/mesh
 | `64` | Invalid arguments, unknown commands/options, missing or blank `--port`, or extra positional arguments. |
 | `69` | Expected serial, platform, or native runtime dependency failure. |
 
-**An open/close success does not identify a MeshCore device.** MeshCore protocol support, sessions, frame handling, all data transfer, and LoRa communication remain unimplemented. Database features and the Flutter UI are outside this step. Automated tests do not access hardware.
+**An open/close success does not identify a MeshCore device.** Live protocol integration, sessions, all data transfer, and LoRa communication remain unimplemented. Database features and the Flutter UI are outside this step. Automated tests do not access hardware.
 
 ## Native CLI bundle
 

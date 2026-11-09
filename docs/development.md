@@ -85,6 +85,40 @@ For a clone with an unchanged lockfile, start with `dart pub get --enforce-lockf
 
 Tests inject a small serial service, handle adapter, or native operation callbacks and never enumerate or open actual hardware. CLI tests check output, warnings, exit codes, exact-path forwarding, and that help/version/invalid arguments do not invoke diagnostics. Core tests check metadata failures, close/dispose behavior, open/state/close/dispose failures, and primary-error preservation. Regressions also cover false open-state reports, partial acquisition before an open failure, already-closed recovery, and USB serial numbers embedded in full or truncated Linux descriptions. Platform tests verify that blocked backends never execute their native callbacks. Invalid UTF-8 decoding tests retain the affected path, continue other records, and dispose every metadata handle; errors outside that decoding boundary still propagate. Build hooks compiling native assets are expected during tests.
 
+## Serial framing (Step 3)
+
+Serial framing is implemented and covered by software tests. Integration with live serial reads/writes, Companion commands, and sessions is not implemented in this step.
+
+The public core API exposes `encodeSerialFrame`, `SerialFrameDecoder`, decode result/error types, and `maxSerialFrameContentLength`. The codec imports only `dart:typed_data` and does not invoke diagnostics or native serial operations. See the [fixed protocol baseline, policies, and in-memory examples](protocol/serial-framing.md). The existing core `dart test` command automatically includes these tests; CI configuration does not need to change.
+
+The new framing tests cover independent fixed vectors, every two-part split of a short stream, bytewise input, empty chunks, coalesced frames and pending tails, full 16-bit length validation, noise budgets, failure locking, finish/reset, independent instances, offset views, and byte ownership. Existing native safety and CLI tests remain in place.
+
+### Software validation on November 8, 2026
+
+The starting worktree was clean on `master` at `5e5864a9114ebbc5a496921a3560cbc8b025ff2c`. Local ancestry confirms that Step 2 commit `1f65198aa7fef29692271e29ed2e6aa0022fcf1a` is included through the PR #1 merge. Both fixed MeshCore source links were checked online at commit `81dbae592ffad40b4212bc0b37e82b38da08f4bc`.
+
+The standard `flutter --version --machine` and `dart --version` wrappers failed because the sandbox denied writes to `/opt/homebrew/share/flutter/bin/cache/engine.stamp.tmp.*` and `engine.realm`. The existing SDK's `bin/cache/flutter.version.json` reports Flutter 3.47.9 stable, revision `c197ca5199e9ee5661e865596c9c07294dfab51c`; a fresh Flutter CLI version result was unavailable. Direct execution of that SDK's bundled Dart reported 3.13.7 stable on `macos_arm64`. No SDK or global configuration changes were made, and no alternate SDK was installed.
+
+Checks used the same bundled Dart binary directly, with the existing Apple compiler preferred for this process:
+
+```bash
+export PATH="/opt/homebrew/share/flutter/bin:/usr/bin:$PATH"
+MESHCHAN_DART=/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart
+"$MESHCHAN_DART" --version
+"$MESHCHAN_DART" pub get --enforce-lockfile
+"$MESHCHAN_DART" format --output=none --set-exit-if-changed .
+"$MESHCHAN_DART" analyze --fatal-infos
+(cd packages/meshcore_link && "$MESHCHAN_DART" test test/serial_framing_test.dart)
+(cd packages/meshcore_link && "$MESHCHAN_DART" test)
+(cd apps/meshctl && "$MESHCHAN_DART" test)
+```
+
+Locked dependency resolution passed without lockfile changes. Formatting checked 9 Dart files with no changes, analysis reported no issues, all 11 new framing tests passed, the complete core suite passed 21 tests (including 10 existing diagnostics tests), and the CLI suite passed all 10 existing tests.
+
+From `apps/meshctl`, source `dart run bin/meshctl.dart --help`, `--version`, `ports --help`, and `port-check --help` all exited `0`, using `"$MESHCHAN_DART"` in place of `dart`. The native bundle regression passed with the same binary for `dart build cli --target=bin/meshctl.dart --output=build/dist`. The resulting `build/dist/bundle/bin/meshctl --help` and `--version` both exited `0`; the application version remains `0.1.0-dev.1`. The executable and `lib/liblibserialport_plus.dylib` are included in the ignored bundle directory.
+
+This validation uses no real enumeration, `port-check`, serial reads/writes, or device protocol commands. Step 2's [hardware validation record](hardware-validation.md) is preserved as historical evidence. No remote GitHub Actions run was dispatched or observed for Step 3; Linux and other-platform execution remain unverified.
+
 ## Source CLI behavior
 
 From `apps/meshctl`:
@@ -169,7 +203,7 @@ The pinned wrapper's `isOpen()` reports a valid POSIX descriptor `0` as closed. 
 
 Opening/closing can trigger board resets through driver or control-line behavior; this is not guaranteed to be side-effect-free. See [Espressif's control-line guidance](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html). Do not toggle lines to test reset behavior.
 
-Successful open/close does not identify a MeshCore device or establish protocol support, firmware identity, a session, or LoRa communication. No reader, frame handling, `APP_START`, device queries, reconnection, radio tests, database, or UI is implemented in this step.
+Successful open/close does not identify a MeshCore device or establish protocol support, firmware identity, a session, or LoRa communication. Step 3 adds only in-memory framing; no live reader/writer, `APP_START`, device queries, sessions, reconnection, radio tests, database, or UI is implemented.
 
 ## CI and SDK updates
 

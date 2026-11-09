@@ -3,6 +3,18 @@
 /// Serial diagnostics do not identify devices or establish protocol sessions.
 library;
 
+export 'src/protocol/companion_messages.dart'
+    show
+        encodeAppStart,
+        encodeDeviceQuery,
+        decodeCompanionResponse,
+        CompanionResponse,
+        SelfInfoResponse,
+        DeviceInfoResponse,
+        DeviceErrorResponse,
+        UnhandledCompanionResponse,
+        CompanionProtocolException,
+        CompanionProtocolExceptionKind;
 export 'src/protocol/serial_framing.dart'
     show
         maxSerialFrameContentLength,

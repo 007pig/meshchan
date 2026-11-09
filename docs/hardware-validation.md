@@ -192,3 +192,65 @@ No payload bytes, device identity, or keys were printed or retained. No
 explicit DTR/RTS change was performed. Driver-induced board reset behavior was
 not independently observed. This single source run validates the observed normal
 receive/shutdown path only; it does not generalize to every driver or platform.
+
+## Step 5 authorized command probe on November 9, 2026
+
+After the Step 5 software validation, the user requested a real USB test on the
+explicit path `/dev/cu.usbmodem211101`. The probe used the existing
+`SerialTransport` at 115200/8N1 and the new public codec APIs, with one
+DEVICE_QUERY (`appTargetVersion: 3`) followed by one APP_START (`Meshchan`). Target
+3 is an explicit test choice, not a product default or a claim of complete
+protocol-version support. DEVICE_QUERY can change the firmware's session target
+version. No radio, time, position, contact, or channel settings are requested.
+
+A temporary ignored Dart script under
+`packages/meshcore_link/.dart_tool/step5_hardware_probe.dart` passed focused static
+analysis and an argument guard that performs no hardware access. It subscribes
+before opening, allows one second for startup, waits at most five seconds for
+each expected response, and awaits transport shutdown before canceling the
+subscription. It uses structural response/error summaries only, retaining no
+capture file or device payload. It adds no product session layer, CLI command,
+retry, or change to the existing read-only example.
+
+The probe used the same Homebrew SDK's direct Dart 3.13.7 binary and locked
+`libserialport_plus` 1.0.5. Its historical execution command from the repository
+root was:
+
+```bash
+export PATH="/opt/homebrew/share/flutter/bin:/usr/bin:$PATH"
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart run \
+  packages/meshcore_link/.dart_tool/step5_hardware_probe.dart --run-authorized-probe
+```
+
+The temporary script was removed after this test; it is not a committed example
+or a new product initialization executor.
+
+| Attempt | Actual result |
+| --- | --- |
+| Restricted execution at 10:00:34 UTC | Exit 69: native open rejected with `Operation not permitted (code: 1)`. Zero frames, no commands sent, awaited cleanup passed. |
+| Device-access execution at 10:00:54 UTC | Exit 69: native open rejected with `Resource busy (code: 16)`. Zero frames, no commands sent, awaited cleanup passed. |
+| Read-only ownership inspection at 10:01 UTC | `lsof -nP` on the selected `cu` path and its paired `tty` path found Brave PID 44377 holding the selected `cu` node. No process was stopped or browser connection closed. |
+| User-confirmed release, device-access execution at 10:02:52..10:02:54 UTC | Exit 0. Local serial open/configuration succeeded. Each command was sent once; no retry was performed. |
+| DEVICE_QUERY / DEVICE_INFO | Local send completed; a complete 82-byte DEVICE_INFO response parsed successfully. The device reported protocol code 14, distinct from the test's app target 3. Only the supported known prefix was interpreted; full protocol-14 support is not claimed. |
+| APP_START / SELF_INFO | Local send completed; a complete 64-byte SELF_INFO response parsed successfully, including the required 58-byte prefix. No names, keys, coordinates, PIN, or payload dump were printed. |
+| Reception and normal shutdown | Two complete frames, zero parser failures, both expected response types observed. Awaited transport cleanup succeeded before subscription cancellation; no cleanup hang or failure occurred. |
+
+The successful run's structural summary was:
+
+```text
+Received: DeviceInfoResponse(protocolVersion: 14, contentLength: 82)
+DEVICE_INFO parse: PASS.
+Received: SelfInfoResponse(opcode: 5, contentLength: 64)
+SELF_INFO parse: PASS.
+Awaited transport cleanup: PASS.
+Summary: frames=2; parserFailures=0; deviceInfo=true; selfInfo=true; cleanup=true.
+```
+
+This is limited evidence that these two USB Companion commands produced their
+expected response types through the existing framing/transport and new parser on
+this selected port. It adds local command TX/response evidence to Step 4's earlier
+passive reception record. The initial failed opens remain failures. It does not
+establish authenticated identity, independently verified firmware identity, full
+protocol-version compatibility, automated session management, reconnect behavior,
+forced-disconnect recovery, LoRa transmission, or a radio round trip. No device
+capture was saved, and no other serial port was enumerated or opened.

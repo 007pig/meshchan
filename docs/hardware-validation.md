@@ -136,4 +136,59 @@ build/dist/bundle/bin/meshctl port-check --port "$MESHCHAN_PORT"
 
 Record the actual date, host, command exit code, whether close/dispose completed, and the second-open result. Record target firmware and CPU architecture only when independently confirmed. Do not record USB serial numbers or Bluetooth MAC addresses for this step.
 
-A successful check must say that the serial port opened and closed and that MeshCore protocol support has not been checked. It proves no MeshCore identity, session, data transfer, or LoRa capability. Step 3 remains outside this task.
+A successful check must say that the serial port opened and closed and that MeshCore protocol support has not been checked. It proves no MeshCore identity, session, data transfer, or LoRa capability. Step 3 remains outside this historical Step 2 validation.
+
+## Step 4 transport validation boundary
+
+On November 9, 2026, Step 4 added the serial transport, hardware-free lifecycle
+tests, and an explicit-port [read-only observation example](protocol/serial-transport.md).
+During the initial software validation, no new hardware access was authorized or
+performed: no enumeration, port check, reader, configuration, or native TX operation
+ran against a device. The Step 2
+results above remain unchanged historical diagnostic evidence and do not establish
+Step 4 transport operation. Native builds and simulated tests are recorded in the
+[Developer Guide](development.md#serial-transport-step-4). At that point, live reader/configuration,
+driver disconnect handling, native TX, device identity, Companion handshakes, and
+LoRa reception/round trips were **Not run / Pending hardware validation**.
+
+### Authorized read-only follow-up on November 9, 2026
+
+The user subsequently requested hardware testing and enumeration, then explicitly
+selected `/dev/cu.usbmodem211101` for 115200/8N1 configuration, a three-second
+read-only observation, and shutdown. This authorization did not include sending
+bytes. The environment remains macOS arm64, direct bundled Dart 3.13.7, and
+`libserialport_plus` 1.0.5, on the Step 4 worktree based on `ec2a98a`.
+
+| Check | Status | Actual result |
+| --- | --- | --- |
+| Source CLI `ports` after authorization | Passed | Exit 0; four serial paths, including two USB entries, no warnings. No port was opened by enumeration. |
+| Initial source transport observation attempts | Failed | Both the restricted attempt and the attempt with tool-approved device access returned 69 with a generic opening I/O error. Neither printed the local-open success message; zero frames were reported. The example did not expose each attempt's underlying native cause. |
+| Existing `port-check` on the selected path | Failed | With tool-approved device access, exit 69 and `SerialPortException: Resource busy (code: 16)`. No data or explicit configuration was sent by this diagnostic. |
+| Open-file ownership inspection | Inconclusive | `lsof -nP` for the selected `cu` node and its paired `tty` node returned 1 without output. No visible owner was identified; this is not proof that the port was free. No process was stopped. |
+| Source observation after user-confirmed release | Passed | With tool-approved device access, local open/configuration succeeded; two complete Companion content buffers of 50 and 47 bytes arrived during the three-second window; exit 0. Successful result recorded at 05:01 UTC. |
+| Normal reader stop and native cleanup | Passed | The source example awaited transport close before returning. Reader stop and natural stream completion preceded subscription cancellation and native close/dispose; no cleanup error or hang was observed. |
+| Native TX, forced disconnects, and bundled-example hardware execution | Not run | No send operation or forced device removal was performed. The existing AOT bundle result remains build-only evidence. |
+| Device identity, firmware, Companion commands, and LoRa | Not run | Opaque frame lengths establish none of these capabilities. |
+
+Using the current-process PATH `/opt/homebrew/share/flutter/bin:/usr/bin:$PATH`,
+the source observation command was run from `packages/meshcore_link`:
+
+```bash
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart run \
+  example/serial_transport_check.dart /dev/cu.usbmodem211101
+```
+
+After the user released the busy port, its output included:
+
+```text
+Local serial port opened; observing for 3 seconds.
+Frame 1: 50 content bytes.
+Frame 2: 47 content bytes.
+Observation ended: 2 frames. Zero frames is valid.
+```
+
+No payload bytes, device identity, or keys were printed or retained. No
+`sendFrame()`, test character, query, startup command, flush, drain, break, or
+explicit DTR/RTS change was performed. Driver-induced board reset behavior was
+not independently observed. This single source run validates the observed normal
+receive/shutdown path only; it does not generalize to every driver or platform.

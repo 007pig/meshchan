@@ -87,7 +87,7 @@ Tests inject a small serial service, handle adapter, or native operation callbac
 
 ## Serial framing (Step 3)
 
-Serial framing is implemented and covered by software tests. Integration with live serial reads/writes, Companion commands, and sessions is not implemented in this step.
+Step 3 introduced serial framing and its software tests. Step 4 now connects that unchanged codec to a native serial transport; Companion commands and sessions remain unimplemented. See [Serial transport](protocol/serial-transport.md) for its separate stream and resource contracts.
 
 The public core API exposes `encodeSerialFrame`, `SerialFrameDecoder`, decode result/error types, and `maxSerialFrameContentLength`. The codec imports only `dart:typed_data` and does not invoke diagnostics or native serial operations. See the [fixed protocol baseline, policies, and in-memory examples](protocol/serial-framing.md). The existing core `dart test` command automatically includes these tests; CI configuration does not need to change.
 
@@ -118,6 +118,74 @@ Locked dependency resolution passed without lockfile changes. Formatting checked
 From `apps/meshctl`, source `dart run bin/meshctl.dart --help`, `--version`, `ports --help`, and `port-check --help` all exited `0`, using `"$MESHCHAN_DART"` in place of `dart`. The native bundle regression passed with the same binary for `dart build cli --target=bin/meshctl.dart --output=build/dist`. The resulting `build/dist/bundle/bin/meshctl --help` and `--version` both exited `0`; the application version remains `0.1.0-dev.1`. The executable and `lib/liblibserialport_plus.dylib` are included in the ignored bundle directory.
 
 This validation uses no real enumeration, `port-check`, serial reads/writes, or device protocol commands. Step 2's [hardware validation record](hardware-validation.md) is preserved as historical evidence. No remote GitHub Actions run was dispatched or observed for Step 3; Linux and other-platform execution remain unverified.
+
+## Serial transport (Step 4)
+
+`CompanionTransport` and `SerialTransport` add one explicit-port connection attempt, complete-content reception, and nonblocking framed writes. No CLI subcommand was added; `port-check` still performs only the original diagnostic without a reader or new settings. The [transport contract](protocol/serial-transport.md) records the installed reader source review, configuration limits, pause/cancel behavior, monotonic deadline, and stop-before-release order.
+
+Transport tests use injected connections and a matching monotonic time/delay seam, with the real codec. No runtime or test dependency was added. Run the focused tests and compile the opt-in example without opening hardware:
+
+```bash
+(cd packages/meshcore_link && dart test test/serial_transport_test.dart)
+(cd packages/meshcore_link && dart build cli --target=example/serial_transport_check.dart --output=build/serial-transport-check)
+```
+
+The example build exercises the new adapter's AOT path and native asset packaging, which the diagnostic CLI alone does not cover. CI includes this build in its existing fixed-SDK job; it does not execute the example against hardware. Existing dated Step 2/3 results remain historical.
+
+### Software validation on November 9, 2026
+
+The starting worktree was clean on `master` at `ec2a98a5a95d596312ecf2b26d67d1d24884ee08`, the PR #2 merge commit. Local ancestry includes its framing head `24b3e76d8af0c59df3029e3f40ce9156d04f4e8a`; the PR page also showed merged status when checked. No checkout, fetch, merge, commit, or push was performed during the initial software validation.
+
+Both SDK wrappers were attempted and failed because the sandbox denied writes to SDK cache engine stamps and `engine.realm`. The same installed SDK's direct `bin/cache/dart-sdk/bin/dart --version` succeeded and reported Dart 3.13.7 stable (`macos_arm64`). Existing `flutter.version.json` reports Flutter 3.47.9 stable, revision `c197ca5199e9ee5661e865596c9c07294dfab51c`; that is metadata, not a fresh successful Flutter CLI result. The host reported macOS 27.2 (26B123), arm64. Apple Clang 21.0.0 was selected with process-only PATH `/opt/homebrew/share/flutter/bin:/usr/bin:$PATH`. No SDK, global configuration, permissions, or pub-cache sources were modified.
+
+The root lockfile and resolved package configuration still select `libserialport_plus` 1.0.5. Its actual installed reader, port, configuration, enums, error helpers, build hook, and relevant native flow-control setters were inspected read-only. The fixed Companion initialization source was also checked online at `81dbae592ffad40b4212bc0b37e82b38da08f4bc`. No dependency, lockfile, application version, or license change was needed.
+
+All Dart commands below used `/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` with the process PATH above:
+
+| Check | Actual result |
+| --- | --- |
+| `dart pub get --enforce-lockfile` | Passed; root lockfile unchanged. |
+| `dart format --output=none --set-exit-if-changed .` | Passed; 14 Dart files, zero changes after formatting the edited files. |
+| `dart analyze --fatal-infos` | Passed; no issues after correcting initial style findings. |
+| Focused `test/serial_transport_test.dart` | Passed; 14 behavior groups using the real codec and injected native boundary/time. |
+| Complete core suite | Passed; 35 tests, including all 21 existing diagnostics/codec tests. |
+| Complete CLI suite | Passed; all 10 existing tests. |
+| Source CLI help, version, `ports --help`, `port-check --help` | Passed; each exit 0, application version `0.1.0-dev.1`. |
+| Existing CLI native bundle build, bundle help/version | Passed; each exit 0. |
+| `dart build cli --help` and example native bundle build | Passed with the documented target/output syntax; no port supplied. |
+| Source and bundled example usage branches | No arguments and a whitespace-only argument each exited 64 with usage, no stdout, and no transport construction/open. |
+| Native assets | Both bundles include a Mach-O arm64 executable and `lib/liblibserialport_plus.dylib`; outputs remain ignored. |
+
+Build hooks ran during the initial software checks; this is native compilation rather than hardware access. During that initial validation, no real `ports`, `port-check`, transport open/configuration/read/write, or example with a selected port was run. Reader/configuration hardware behavior, native TX, disconnect handling, MeshCore compatibility, and LoRa operation were unverified at that point. No remote Actions run was dispatched or inspected for Step 4; the CI change preserves the fixed SDK and existing Linux enumeration refusal.
+
+### Authorized read-only hardware follow-up on November 9, 2026
+
+After the software checks, the user requested hardware testing, authorized enumeration, and explicitly selected `/dev/cu.usbmodem211101` for configuration and three seconds of observation without sending data. The source example initially returned I/O failures; the diagnostic CLI reported `Resource busy (code: 16)`. After the user confirmed release of the port, the same source example passed: local open/configuration succeeded, two complete content frames of 50 and 47 bytes arrived, and awaited reader stop/port close/dispose completed with exit 0. Only lengths and counts were printed. The same direct Dart 3.13.7 and locked serial library were used, with tool-approved device execution access.
+
+This is limited local evidence for configuration, reception, framing integration, and normal shutdown on the selected port. Native TX, forced disconnects, the bundled example's hardware path, device identity, command processing, and LoRa remain unverified. Full commands and the failed attempts are preserved in the [hardware follow-up record](hardware-validation.md#authorized-read-only-follow-up-on-november-9-2026).
+
+### Review follow-up: receive failures during partial writes
+
+On November 9, 2026, review found that a receive failure during a partial-write
+retry caused the in-flight send to throw a cancellation `StateError`, losing the
+classified terminal reason already delivered to the receive stream. Four new
+regression tests reproduced this against the previous code for native read error,
+clean unexpected EOF, invalid framing, and truncated EOF.
+
+The send loop now propagates the recorded terminal failure when shutdown
+interrupts a retry, retaining the same object, kind, cause, and cleanup details.
+It still rejects intentional close/cancel/pause without a terminal failure with
+`StateError`. The tests cover retry resumption both during and after cleanup,
+with successful cleanup and with a close error, and check that no additional
+write or duplicate disposal occurs. Intentional subscription cancellation and
+pause are also covered while a send is in flight.
+
+Using the same direct bundled Dart 3.13.7, locked dependency resolution,
+formatting, and fatal-info analysis passed. The focused transport suite passed
+18 tests, the complete core suite passed 39, and the CLI suite passed 10. The
+serial observation example's AOT bundle rebuilt successfully without a port.
+The root lockfile is unchanged. No hardware operation was performed during this
+review follow-up; the earlier authorized hardware record remains separate.
 
 ## Source CLI behavior
 
@@ -203,7 +271,7 @@ The pinned wrapper's `isOpen()` reports a valid POSIX descriptor `0` as closed. 
 
 Opening/closing can trigger board resets through driver or control-line behavior; this is not guaranteed to be side-effect-free. See [Espressif's control-line guidance](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html). Do not toggle lines to test reset behavior.
 
-Successful open/close does not identify a MeshCore device or establish protocol support, firmware identity, a session, or LoRa communication. Step 3 adds only in-memory framing; no live reader/writer, `APP_START`, device queries, sessions, reconnection, radio tests, database, or UI is implemented.
+Successful open/close does not identify a MeshCore device or establish protocol support, firmware identity, a session, or LoRa communication. Step 3 added in-memory framing; Step 4 adds the reader/writer adapter described above. `APP_START`, device queries, sessions, reconnection, radio tests, database, and UI remain unimplemented.
 
 ## CI and SDK updates
 

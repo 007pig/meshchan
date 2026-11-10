@@ -1,7 +1,11 @@
 # Meshctl diagnostics
 
-Phase 1 / 1A / Step 7 connects the existing single-use `MeshCoreSession` to
-`info` and `watch`. The application version remains `0.1.0-dev.1`.
+The CLI includes the 1A `ports`, `port-check`, `info`, and `watch` diagnostics
+and the 1B.7 finite `datagram send/listen/ping/respond` commands. 1B.8 adds
+[shared serial-byte source/AOT acceptance](testing.md#datagram-cross-layer-coverage-audit-1b8)
+and [software evidence](development.md#1b8-software-validation-on-november-10-2026).
+The application version remains `0.1.0-dev.1`. Real-device datagram acceptance
+and final candidate handling remain 1B.9 work.
 
 From the repository root, use the existing Homebrew SDK on this Mac:
 
@@ -13,6 +17,8 @@ cd apps/meshctl
 "$MESHCHAN_DART" run bin/meshctl.dart --help
 "$MESHCHAN_DART" run bin/meshctl.dart info --help
 "$MESHCHAN_DART" run bin/meshctl.dart watch --help
+"$MESHCHAN_DART" run bin/meshctl.dart datagram --help
+"$MESHCHAN_DART" run bin/meshctl.dart datagram ping --help
 ```
 
 Build with `"$MESHCHAN_DART" build cli --target=bin/meshctl.dart --output=build/dist`.
@@ -455,4 +461,6 @@ meshctl datagram listen --port "$PORT" --json --receive-channel "$RECEIVE_SLOT" 
 ```
 
 This software integration does not perform real serial/LoRa acceptance or
-complete 1B.8/1B.9 delivery. Historical hardware/USB findings above remain unchanged.
+complete 1B.9 device acceptance or delivery. The separate
+[1B.8 synthetic checks](testing.md#datagram-cross-layer-coverage-audit-1b8)
+replace only the native boundary. Historical hardware/USB findings above remain unchanged.

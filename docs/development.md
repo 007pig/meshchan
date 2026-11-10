@@ -623,7 +623,7 @@ Successful open/close does not identify a MeshCore device or establish protocol 
 
 ## CI and SDK updates
 
-The existing single `ubuntu-latest` job remains pinned to Flutter `3.47.9` stable via `subosito/flutter-action@v2.23.0`, using its bundled Dart and read-only repository permissions. It runs locked dependency resolution, formatting, analysis, both test suites, source help/version smoke checks, `dart build cli`, and bundle `--version`. A separate step invokes real source and bundle `ports` commands and strictly requires exit `69`, empty stdout, the exact Linux safety diagnostic, and no stack trace. Any different failure or a successful enumeration fails that step. It never runs `port-check` and does not ignore native build failures. No platform matrix or release workflow was added.
+The existing single `ubuntu-latest` job remains pinned to Flutter `3.47.9` stable via `subosito/flutter-action@v2.23.0`, using its bundled Dart and read-only repository permissions. It runs locked dependency resolution, formatting, analysis, both full test suites, and sequential native builds for the product CLI, read-only observation example, and separate 1B.8 development datagram probe. The [shared smoke script](testing.md#shared-smoke-contract-and-ci) checks source/AOT entries, arguments, broken pipes, complete product-bundle relocation, native assets, and both executions of the five synthetic datagram scenarios. On Linux it also invokes real source and bundle `ports` commands and strictly requires exit `69`, empty stdout, the exact Linux safety diagnostic, and no stack trace. Any different failure or a successful enumeration fails smoke. It never runs a valid `port-check` and does not ignore native build failures. No platform matrix or release workflow was added.
 
 This is an intentional restriction of the earlier Ubuntu enumeration acceptance check: with the pinned backend, successful enumeration would violate the no-open requirement. Ubuntu CI validates native compilation/packaging and the refusal to enumerate, not successful native enumeration or runtime native library loading. Actual enumeration remains locally validated on macOS. No fake enumeration or ignored failure is used in CI.
 
@@ -1106,3 +1106,105 @@ was performed. Native builds and synthetic tests do not establish device
 compatibility or diagnostic AOT execution against hardware. No remote CI run
 was dispatched or observed. The previous USB evidence remains unresolved;
 1B.8/1B.9 delivery and explicitly authorized two-device acceptance remain separate.
+
+## 1B.8 software validation on November 10, 2026
+
+Started from a clean `master` worktree at
+`8eaefeaf3683c6a2cd93143d74ae96f68ff9d57b`, the PR #15 merge, with
+`1a5b20816e44d9f0264f372d64d26726641b217d` confirmed as an ancestor.
+`gh pr view 15 --repo 007pig/meshchan --json number,state,mergedAt,headRefOid,mergeCommit,url` could not connect to the
+GitHub API. The [public PR page](https://github.com/007pig/meshchan/pull/15)
+was then read successfully and showed merged status and merge `8eaefea`.
+No remote merge, reset, workflow dispatch, commit, push, or publication was
+performed. Changes remain local and reviewable on the existing branch.
+
+Actual host: macOS **27.2.1 (26B131), arm64**. The installed SDK metadata
+(`bin/cache/flutter.version.json`) reports Flutter 3.47.9 stable at
+`c197ca5199e9ee5661e865596c9c07294dfab51c`, with bundled Dart 3.13.7.
+This metadata is distinct from a successful version command: the attempted
+`/opt/homebrew/share/flutter/bin/flutter --version --machine` failed on denied
+`engine.stamp.tmp.*` / `engine.realm` cache writes. No permission/cache change,
+second SDK, upgrade, or channel switch was used. The direct bundled
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --version` succeeded:
+Dart 3.13.7 stable, `macos_arm64`, October 22, 2026.
+Apple Clang 21.0.0 (`clang-2100.4.1.1`) and macOS SDK 27.2 were observed.
+The default shell initially selected Homebrew Clang 18.1.8 and Python 3.15.2;
+the final gate used process PATH
+`/opt/homebrew/share/flutter/bin:/usr/bin:$PATH`, selecting Apple Clang and
+**Python 3.9.6** for smoke. Nothing changed the system configuration.
+
+The [1B.8 coverage audit](testing.md#datagram-cross-layer-coverage-audit-1b8)
+documents five shared scenarios. Only the final `NativeSerialConnection`
+boundary is synthetic: `runCli`, adapters, tasks, session/reception, codec,
+`SerialTransport`, asynchronous streams and serial framing execute normally.
+The test and development tool share always-active checks and independent fixed
+serial byte vectors. The tool imports no test runner and has no hardware mode.
+
+Initial focused runs exposed a support-code settlement error, reporting
+`CLI did not settle after cleanup and one event turn` on raw runners even after
+`stop, stop.ack, reader.done, stopped, close, dispose`. Investigation identified
+the SDK shared cancellation Future crossing the virtual zone during sequential
+transport/event/signal cleanup. The final support supplies a controlled
+cancellation Future, one zero-duration external event turn, and one explicit
+microtask barrier before checking completion. An intermediate controller-close
+ordering experiment also failed the explicit stop-stream completion check and
+was corrected. No conditional pump, retry-until-pass, real deadline sleep,
+production timeout, or production-code fix was introduced. Final focused tests
+and the full suite below passed with the corrected support.
+
+The final commands used the direct Dart above and ran each test process, native
+build, and smoke child sequentially, following the
+[complete reproduction commands](testing.md#reproduce-acceptance-on-the-existing-mac-sdk):
+
+| Check | Actual result |
+| --- | --- |
+| Root `dart pub get --enforce-lockfile` | Passed; root lockfile unchanged. |
+| Root `dart format --output=none --set-exit-if-changed .` | Passed; 46 Dart files, zero changes. |
+| Root `dart analyze --fatal-infos` | Passed; no issues. |
+| CLI `dart test --reporter expanded test/datagram_acceptance_test.dart` | Passed; five shared serial-byte scenarios. |
+| Core `dart test --reporter expanded` | Passed; 180 tests. |
+| CLI `dart test --reporter expanded` | Passed; 57 tests, including the five new scenarios and unchanged original 16 info/watch combinations. |
+| CLI `dart build cli --target=bin/meshctl.dart --output=/private/tmp/meshchan-1b8.OCTKCs/meshctl` | Passed; fresh complete product bundle. |
+| Core `dart build cli --target=example/serial_transport_check.dart --output=/private/tmp/meshchan-1b8.OCTKCs/observation` | Passed; fresh separate read-only observation bundle. |
+| CLI `dart build cli --target=tool/datagram_acceptance.dart --output=/private/tmp/meshchan-1b8.OCTKCs/datagram-acceptance` | Passed; fresh separate development bundle. |
+| `python3 tool/smoke_cli.py --dart /opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --cli-bundle /private/tmp/meshchan-1b8.OCTKCs/meshctl/bundle --observation-bundle /private/tmp/meshchan-1b8.OCTKCs/observation/bundle --datagram-acceptance-bundle /private/tmp/meshchan-1b8.OCTKCs/datagram-acceptance/bundle` | Passed; **69** actual macOS process checks, including broken pipe, whole-product-bundle relocation, three bundles' nonempty native assets, source probe and AOT probe outside checkout. |
+| Both probe reports, parsed and type-checked by shared smoke | Passed; exact five unique IDs, completed/passed/failed = 5/5/0; actual CLI exits 0/0/0/0/69. The expected timeout is a passing acceptance scenario. |
+| Smoke report validator checks using Python standard library | One valid report accepted; 15 malformed reports rejected, including empty/missing/duplicate IDs, bad types/counts and wrong CLI exit. Python syntax passed. |
+| `git diff --check`; changed/new UTF-8, LF, final newline, relative document links/anchors | Passed after completing the dated record and its linked anchor. |
+| Linux enumeration checks | NOT_APPLICABLE on this macOS host; not run or simulated. |
+| Remote Ubuntu CI for these changes | **NOT_RUN**; no corresponding run was dispatched or observed. The existing job is configured to build the third bundle and call the same smoke script. |
+| Real USB/serial, two-device LoRa, device compatibility/stability, signing/release | **NOT_RUN**; outside this software step. |
+
+Retained fresh output (not an old candidate) is
+`/private/tmp/meshchan-1b8.OCTKCs/`:
+
+- Product: `meshctl/bundle/`, with `bin/meshctl` and
+  `lib/liblibserialport_plus.dylib`. Deliver or move the **entire bundle**.
+- Development acceptance: `datagram-acceptance/bundle/`, with
+  `bin/datagram_acceptance` and its native asset; keep it out of product content.
+- Observation: `observation/bundle/`, with `bin/serial_transport_check` and its
+  native asset. The observation example remains read-only.
+- Execution logs: `core-tests.log`, `cli-tests.log`, `meshctl-build.log`,
+  `observation-build.log`, `datagram-acceptance-build.log`, and `smoke.log`.
+  Observed development failure excerpts and their resolutions are retained in
+  `development-failures.log`.
+
+The final review found no production source changes. Public exports, CLI
+parameters/schemaVersion 1/exit precedence/defaults, app target 3, queue bounds,
+ownership/cleanup contracts, dependencies and root lockfile are unchanged.
+Application version remains `0.1.0-dev.1`; MeshCore remains pinned to
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`. The planned `0.1.0-dev.2` is not
+enabled. The only executable/configuration changes are development acceptance
+support, its thin test/tool entries, shared smoke, and the existing CI job.
+
+Dart test success establishes the asserted software behavior. AOT probe success
+adds independently compiled execution of production Dart business logic with a
+replaced native boundary. Product relocation establishes only the checked
+entries on this same host outside the checkout. Native build/assets establish
+neither every FFI symbol loading nor reader-isolate execution or hardware I/O.
+Synthetic platform injection does not enable protected native capabilities in
+Linux. These results are no new device or LoRa evidence and do not repair the
+historical intermittent USB partial-body problem. H10 ready-state unplug and a
+complete recovery cycle remain open. 1B.9 still needs explicit device/firmware,
+channel/radio, forward/return routes, peer labels, binary content and measured
+budgets before authorized device trials and final candidate handling.

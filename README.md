@@ -2,9 +2,11 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
-The current implementation covers **Phase 1 / 1A / Step 9: tested-host hardware acceptance and a local development candidate**, retaining the Step 7 diagnostic CLI behavior. On November 9, 2026, a fresh software gate and the fixed H2–H7 USB hardware matrix passed on one macOS 27.2 arm64 host and one explicitly authorized Companion USB device. H1 enumeration, H8 nonexistent-port handling and H9 initialization cancellation passed. Later H10 startups failed three times before ready, with confirmed cleanup; a separate manual replug/info sequence had one timeout and one success. Ready-state disconnect detection and a complete H10 recovery cycle remain untested. See the [current delivery record](docs/releases/phase-1a-dev1.md) and [latest H10 attempt](docs/hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).
+The current implementation covers **Phase 1 / 1B / Step 8: datagram software regression and source/AOT synthetic acceptance**. The core now includes serialized ready commands, bounded shared-inbox reception, diagnostic PING/PONG v1, and finite PING/responder tasks. The CLI exposes `datagram send`, `listen`, `ping`, and `respond`. See the [1B.8 coverage audit and reproduction guide](docs/testing.md#datagram-cross-layer-coverage-audit-1b8) and [dated execution record](docs/development.md#1b8-software-validation-on-november-10-2026). Application version stays `0.1.0-dev.1`; real datagram USB/LoRa acceptance and the final candidate remain 1B.9 work.
 
-The complete archived bundle passed extraction and integrity checks. The current recommendation is **development with known limitations**: historical intermittent USB delivery failures remain unresolved, and a successful info call did not establish stable initialization or a waiting/replug fix. This is a local candidate, with public redistribution and remaining hardware scenarios still open. Phase 1B.1 adds only the [planned channel-datagram contract](docs/protocol/channel-datagrams.md); datagram and PING/PONG implementation and acceptance remain pending.
+Historical 1A evidence remains separate. On November 9, 2026, a fresh software gate and the fixed H2–H7 USB hardware matrix passed on one macOS 27.2 arm64 host and one explicitly authorized Companion USB device. H1 enumeration, H8 nonexistent-port handling and H9 initialization cancellation passed. Later H10 startups failed three times before ready, with confirmed cleanup; a separate manual replug/info sequence had one timeout and one success. Ready-state disconnect detection and a complete H10 recovery cycle remain untested. See the [1A delivery record](docs/releases/phase-1a-dev1.md) and [latest H10 attempt](docs/hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).
+
+The complete archived 1A bundle passed extraction and integrity checks. The recommendation remains **development with known limitations**: historical intermittent USB delivery failures remain unresolved, and a successful info call did not establish stable initialization or a waiting/replug fix. The [channel-datagram contract](docs/protocol/channel-datagrams.md) is implemented in software; its real-device acceptance remains pending. Public redistribution and remaining hardware scenarios are still open.
 
 See the [testing guide](docs/testing.md) for the behavior audit and shared source/native smoke checks, including broken pipes and complete-bundle relocation. `meshctl info --port <path>` initializes one existing `MeshCoreSession`, awaits cleanup, and prints a complete closed-connection snapshot. `meshctl watch --port <path>` initializes once and observes session states and unassociated response summaries until duration, signal, or failure. The original `ports` and `port-check` commands remain available. All four commands support JSON; watch uses NDJSON. See the [CLI guide](docs/cli.md) for options, schemas, cancellation, exit codes, and explicit-port hardware authorization.
 
@@ -16,8 +18,8 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 
 | Package | Responsibility and current status |
 | --- | --- |
-| `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, message codecs, serial framing, an explicit-port transport, and serial diagnostics. |
-| `apps/meshctl` | Asynchronous diagnostic CLI: `ports`, `port-check`, `info`, and `watch`; text/JSON output and awaited session cleanup. |
+| `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
+| `apps/meshctl` | Asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
 
 ## Quick start
 
@@ -35,6 +37,9 @@ dart run bin/meshctl.dart ports --help
 dart run bin/meshctl.dart port-check --help
 dart run bin/meshctl.dart info --help
 dart run bin/meshctl.dart watch --help
+dart run bin/meshctl.dart datagram --help
+dart run bin/meshctl.dart datagram ping --help
+dart run bin/meshctl.dart datagram respond --help
 ```
 
 Running without arguments or with `-h` also displays help. The application version remains `0.1.0-dev.1`. Help and version do not access hardware. Select and authorize a port explicitly before device commands; old selections do not carry over. `ports` lists exact system paths, descriptions, transport types, and USB VID/PID when available. It does not open ports or send probes. Missing metadata appears as `-`; a per-port metadata failure retains the path and writes a warning to stderr.

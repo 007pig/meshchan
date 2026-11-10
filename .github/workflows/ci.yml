@@ -54,13 +54,18 @@ jobs:
         working-directory: packages/meshcore_link
         run: dart build cli --target=example/serial_transport_check.dart --output=build/serial-transport-check
 
+      - name: Build development datagram acceptance bundle
+        working-directory: apps/meshctl
+        run: dart build cli --target=tool/datagram_acceptance.dart --output=build/datagram-acceptance
+
       - name: Verify source and native entry points without hardware
         run: |
           python3 --version
           python3 tool/smoke_cli.py \
             --dart "$(command -v dart)" \
             --cli-bundle apps/meshctl/build/dist/bundle \
-            --observation-bundle packages/meshcore_link/build/serial-transport-check/bundle
+            --observation-bundle packages/meshcore_link/build/serial-transport-check/bundle \
+            --datagram-acceptance-bundle apps/meshctl/build/datagram-acceptance/bundle
 
       - name: Check patch whitespace
         run: git diff --check

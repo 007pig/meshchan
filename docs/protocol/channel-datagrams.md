@@ -17,7 +17,8 @@ remains `0.1.0-dev.1`.
 | Implementation after 1B.5 | Frozen diagnostic v1 payload, pure Dart message codec/classification, targeted PONG construction, exact field matching, and shared send-route capacities. |
 | Implementation after 1B.6 | Single-run PING and finite responder tasks, secure nonce lifecycle, runtime deduplication, monotonic deadlines/RTT, and independent actual cleanup. See [task API](diagnostic-tasks.md). |
 | Implementation after 1B.7 | Nested `datagram send/listen/ping/respond`, pure CLI input/budget validation, safe JSON/NDJSON projections, signal/output cancellation, and awaited actual cleanup. See [CLI contract](../cli.md#finite-datagram-commands-1b7). |
-| Remaining planned 1B behavior | Separate 1B.8/1B.9 delivery and explicit device/LoRa acceptance. |
+| Implementation after 1B.8 | Shared finite serial-byte scenarios, ordinary Dart tests, source/AOT development probe, strict shared process smoke and third CI bundle. See [coverage mapping](#1b8-software-coverage-mapping). |
+| Remaining planned 1B behavior | 1B.9 explicit device/LoRa acceptance, final candidate handling, signing and release. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
 The [session contract](companion-session.md) remains authoritative for the
@@ -860,6 +861,37 @@ through typed results/events; default `toString()`, exceptions, verbose logs,
 and structural debug output must not reveal them or recursively format causes.
 No raw-message capture is needed for this step or for routine acceptance records.
 
+## 1B.8 software coverage mapping
+
+The [1B.8 audit](../testing.md#datagram-cross-layer-coverage-audit-1b8) and
+[dated record](../development.md#1b8-software-validation-on-november-10-2026)
+map software coverage to the original plan below. The unchecked historical
+1B.1 checklist is retained as a plan, not retroactively marked as hardware
+acceptance or as evidence that these tests existed in 1B.1.
+
+| Original software group | Existing implementation evidence | Added 1B.8 representative acceptance |
+| --- | --- | --- |
+| Codec, length, paths, ownership | Core `channel_datagrams_test.dart`, `companion_messages_test.dart`, `serial_framing_test.dart`, `ping_pong_test.dart` | `raw_send`: independent full outer/inner binary frame and successful short write; fixed diagnostic TX/RX bytes |
+| Command/notice interleaving | Core `meshcore_session_commands_test.dart`, `meshcore_session_test.dart`; CLI `datagram_cli_test.dart` | Ordered initialization, local OK, initial queue read, notification-triggered read, no unsolicited `0x1B` push |
+| Bounded reception/cancellation | Core `meshcore_reception_test.dart`; CLI final-entry/read and signal tests | `bounded_listen`: ordinary and filtered consumption, final matching entry, split/coalesced bytes, exact quota |
+| Application correlation | Core diagnostic codec/cache/task suites; CLI exact match/early-failure tests | `ping_round_trip` and `responder_reply`: fixed nonces/requests/content, swapped peer IDs, distinct slots/local return route, virtual microsecond RTT and finite response count |
+| Timeout/disconnect/cleanup | Core session/transport/task suites; original 16 info/watch serial combinations and CLI failure-priority tests | `partial_pong_timeout`: full command/OK then partial outer PONG, first-cause response timeout, late tail, separate stop/done gates, one final failure after cleanup |
+| CLI results/privacy | CLI parameter, signal, output, cleanup and private-data tests | All five shared scenarios parse real CLI JSON/NDJSON and check output/counts/facts/cleanup; smoke checks the exact source/AOT probe report |
+
+No production protocol, ownership, queue bound, default, app target (3), or
+application version (`0.1.0-dev.1`) changes here. The planned `0.1.0-dev.2`
+candidate is not enabled. Core tests retain the broader algorithm and failure
+matrices; five shared scenarios add cross-layer execution, not a duplicate
+matrix. The native boundary remains synthetic even after AOT compilation.
+This does not explain or repair the historical USB partial-body issue.
+
+All hardware items below remain pending for 1B.9: explicit device/firmware and
+channel/route inputs, direct and repeater paths in both directions, real local
+acceptance versus remote receipt, no-responder timeout, binary boundaries,
+cancellation/disconnect, and actual native cleanup. H10 and intermittent USB
+findings retain their recorded limits. Builds and assets do not establish FFI
+symbol loading, reader-isolate execution, or device compatibility.
+
 ## Acceptance to execute later
 
 All boxes below were **planned / not run in 1B.1**. This retained full-1B
@@ -950,7 +982,9 @@ implemented as `datagram send/listen/ping/respond`; it retains the coordination
 logic above and adds only CLI validation, lifecycle wiring, and safe projections.
 Radio waits still need measured operator inputs. See the
 [1B.7 command contract](../cli.md#finite-datagram-commands-1b7) and separate
-[software validation record](../development.md#1b7-software-validation-on-november-10-2026). No hardware acceptance or full-1B release is implied.
+[software validation record](../development.md#1b7-software-validation-on-november-10-2026).
+1B.8 adds the [software coverage mapping](#1b8-software-coverage-mapping)
+and retained development bundles. No hardware acceptance or full-1B release is implied.
 
 1B.1 review is limited to current-code/source comparisons, table/formula
 consistency, relative and fixed-commit links, UTF-8/LF/whitespace checks, and

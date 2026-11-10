@@ -2,6 +2,7 @@
 """Run only fixed, hardware-free source and native process checks."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,47 @@ LINUX_REFUSAL = (
     "libserialport_plus 1.0.5: the native backend can open unselected ports."
 )
 USAGE = "Usage: dart run example/serial_transport_check.dart <port>"
+DATAGRAM_EXITS = {
+    "raw_send": 0,
+    "bounded_listen": 0,
+    "ping_round_trip": 0,
+    "responder_reply": 0,
+    "partial_pong_timeout": 69,
+}
+
+
+def datagram_report(stdout):
+    """Validate evidence from the fixed probe, including expected CLI failure."""
+    if len(stdout) > 8192:
+        raise ValueError("Probe report exceeds 8192 characters")
+    report = json.loads(stdout)
+    if not isinstance(report, dict):
+        raise ValueError("Probe report must be an object")
+    if report.get("probe") != "meshchan.datagram-acceptance.1b8":
+        raise ValueError("Unexpected probe identifier")
+    if type(report.get("schemaVersion")) is not int or report["schemaVersion"] != 1:
+        raise ValueError("Expected probe schemaVersion 1")
+    scenarios = report.get("scenarios")
+    if not isinstance(scenarios, list) or len(scenarios) != len(DATAGRAM_EXITS):
+        raise ValueError("Expected all five datagram scenarios")
+    seen = set()
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            raise ValueError("Scenario must be an object")
+        name = scenario.get("id")
+        if not isinstance(name, str) or name not in DATAGRAM_EXITS or name in seen:
+            raise ValueError(f"Unexpected or duplicate scenario ID: {name!r}")
+        seen.add(name)
+        if scenario.get("passed") is not True:
+            raise ValueError(f"Scenario did not pass: {name}")
+        code = scenario.get("cliExitCode")
+        if type(code) is not int or code != DATAGRAM_EXITS[name]:
+            raise ValueError(f"{name}: unexpected actual CLI exit code: {code!r}")
+    if seen != set(DATAGRAM_EXITS):
+        raise ValueError("Missing datagram scenario IDs")
+    for field, expected in (("completed", len(seen)), ("passed", len(seen)), ("failed", 0)):
+        if type(report.get(field)) is not int or report[field] != expected:
+            raise ValueError(f"Inconsistent probe {field} count")
 
 
 def executable(value):
@@ -85,7 +127,7 @@ class Checks:
         self.count = 0
 
     def check(self, name, command, cwd, code=0, out=None, err=(),
-              broken_pipe=False, options=None):
+              broken_pipe=False, options=None, validate=None):
         try:
             actual, stdout, stderr = run(command, cwd, broken_pipe)
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -116,6 +158,11 @@ class Checks:
                 failures.append(
                     f"expected options {sorted(options)}, got {sorted(actual_options)}"
                 )
+        if validate is not None:
+            try:
+                validate(stdout)
+            except ValueError as error:
+                failures.append(f"invalid JSON evidence: {error}")
         if failures:
             raise ValueError(
                 f"{name}: command={shlex.join(map(str, command))}; cwd={cwd}\n"
@@ -170,12 +217,14 @@ def main():
     parser.add_argument("--dart", required=True, type=executable)
     parser.add_argument("--cli-bundle", required=True, type=bundle)
     parser.add_argument("--observation-bundle", required=True, type=bundle)
+    parser.add_argument("--datagram-acceptance-bundle", required=True, type=bundle)
     args = parser.parse_args()
     if sys.platform not in ("darwin", "linux"):
         parser.error("This smoke script supports macOS and Linux hosts only.")
     try:
         native = bundle_executable(args.cli_bundle, "meshctl")
         observation = bundle_executable(args.observation_bundle, "serial_transport_check")
+        acceptance = bundle_executable(args.datagram_acceptance_bundle, "datagram_acceptance")
         # Read the existing application constant; do not duplicate a version here.
         definition = (CLI / "lib/src/version.dart").read_text(encoding="utf-8")
         version = re.search(r"const String meshctlVersion = '([^']+)';", definition)
@@ -255,7 +304,18 @@ def main():
                 "relocated: missing port", relocated + ["info"], destination,
                 code=64, err=("Error:", "--port", "meshctl --help"),
             )
-        print(f"PASS: {checks.count} process checks on {sys.platform}; both bundles contain native assets.")
+            checks.check(
+                "source: datagram synthetic acceptance",
+                [str(args.dart), "run", "tool/datagram_acceptance.dart"], CLI,
+                out="", validate=datagram_report,
+            )
+            checks.check(
+                "native: datagram synthetic acceptance outside checkout",
+                [str(acceptance)], destination, out="", validate=datagram_report,
+            )
+        print(f"PASS: {checks.count} process checks on {sys.platform}; "
+              "CLI, observation, and development acceptance bundles contain native assets; "
+              "five datagram scenarios passed in source and AOT.")
         return 0
     except (OSError, ValueError, argparse.ArgumentTypeError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

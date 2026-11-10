@@ -6,9 +6,14 @@ Phase 1 / 1A / Step 6 adds callable initialization through
 and Dart asynchronous primitives. It passes complete inner content directly to
 the transport and decoder; it never adds or searches for serial framing.
 
-Step 7 exposes this unchanged session through the [info/watch CLI](../cli.md).
+Step 7 exposed initialization through the [info/watch CLI](../cli.md).
 The CLI owns one fresh transport/session per invocation, sends no extra commands,
 and awaits the shared cleanup result before returning.
+
+Phase 1B.3 adds ready-state `sendChannelData()` and explicit `readNextMessage()`
+through this same session. They share its single pending slot and one bounded
+FIFO. Automatic reception, application PING/PONG, and new CLI commands remain
+later work; existing `info/watch` still send only the initialization pair.
 
 ## API and ownership
 
@@ -21,13 +26,14 @@ MeshCoreSession(
   requestTimeout: const Duration(seconds: 5),
   initializationTimeout: const Duration(seconds: 15),
   startupDelay: Duration.zero,
+  maxQueuedCommands: 8,
 );
 ```
 
 Construction validates the application name using `encodeAppStart`, positive
-timeouts, and a nonnegative startup delay. Invalid local arguments throw
-`ArgumentError` or `RangeError` without I/O. Construction, getters, and event
-subscriptions never open the transport.
+timeouts, a nonnegative startup delay, and nonnegative queue capacity. Invalid
+local arguments throw `ArgumentError` or `RangeError` without I/O.
+Construction, getters, and event subscriptions never open the transport.
 
 The session exclusively owns its transport's subscription, open, send, and close
 operations. The caller must not subscribe to `transport.frames`, send alongside
@@ -42,6 +48,53 @@ duplicate protocol fields. `info` remains null until both steps succeed. The
 successful immutable snapshot remains available after failure or close for
 offline display; it is historical data then. Only `state == ready` means the
 current session is usable.
+
+## Ready commands and admission
+
+```dart
+Future<OkResponse> sendChannelData({
+  required int channelIndex,
+  required int dataType,
+  required int routeDescriptor,
+  required Uint8List path,
+  required Uint8List payload,
+});
+Future<CompanionResponse> readNextMessage();
+```
+
+Both methods accept new work only in `ready`, without connecting implicitly.
+Admission errors are delivered through the returned Future: `StateError` outside
+ready, codec `ArgumentError` / `RangeError` for invalid send parameters, and
+`MeshCoreSessionQueueFull` when waiting capacity is exhausted. These errors do
+not fail the session, affect accepted commands, or perform transport I/O.
+Constructor configuration errors still throw synchronously.
+
+`sendChannelData()` uses `encodeSendChannelData` at admission, validating and
+copying path/payload into owned inner content before asynchronous waiting. Later
+caller mutations cannot alter a queued send. Its `OkResponse` proves only local
+write completion and device command acceptance, not physical radio transmission,
+remote delivery, application acknowledgment, or a round trip.
+
+`readNextMessage()` sends exactly one `encodeSyncNextMessage()` command (`0x0A`)
+when dispatched. Its only successful results are `ChannelDataResponse` (typed
+fields and independent read-only payload), `QueuedMessageResponse` (ordinary
+message kind and structural summary), or `NoMoreMessagesResponse` (empty queue).
+This **consumes one shared queue entry; it is not a peek**. It can remove ordinary
+chat, whose body the current codec discards. Ordinary messages and empty results
+complete this read normally; neither they nor a later `0x83` cause another read.
+
+`maxQueuedCommands` defaults to **8** and counts waiting commands only, excluding
+the one active command. Zero permits a command on an idle ready session but
+rejects another while it is busy. This is Meshchan's local resource policy,
+unrelated to firmware inbox capacity or radio constants. Full queues reject only
+the new call: no dropping, reordering, hidden waiting, or retry. Sends and reads
+share strict FIFO order and one transport send at a time.
+
+An idle admission synchronously reserves the active position, before scheduling
+dispatch in a microtask. Reservation does not register a matching request or
+start its timer. Input in that gap remains unassociated and cannot supply the
+later command. On completion, the next waiting command is reserved before other
+calls can enter, so neither FIFO nor capacity can be bypassed between microtasks.
 
 ## States and initialization policy
 
@@ -86,8 +139,8 @@ APP_START affects its connection initialization state. They have device-side
 effects. Ready means only that these two commands' local sends and corresponding
 parsed response types completed under this policy. It proves neither identity
 authentication, wireless reachability, LoRa TX/RX, nor all firmware functionality.
-There is no flush, reset, DTR/RTS toggle, contact/channel polling, clock setting,
-message synchronization, or automatic response to a `0x83` push.
+Initialization performs no flush, reset, DTR/RTS toggle, contact/channel polling,
+clock setting, message synchronization, or automatic response to a `0x83` push.
 
 ## Matching and failures
 
@@ -96,7 +149,7 @@ response codes, the first matching response, send completion, and one timer. The
 slot and timer are registered **before** calling `sendFrame()`. A response arriving
 inside the send call or before its Future completes is retained. It cannot advance
 the sequence until the send succeeds. Later matching duplicates cannot replace the
-first response. A subsequent send failure still terminates initialization.
+first response. A subsequent send failure still terminates the session.
 
 All reception uses the same long-lived subscription and the real decoder:
 
@@ -105,12 +158,38 @@ All reception uses the same long-lived subscription and the real decoder:
 | Pending expected response type | Retain the first result; require successful send too. |
 | Device error while pending | Fail as deviceRejected with raw error code and known name if available; no retry. |
 | Device error without pending | Publish an unassociated structural event. |
-| OK, `0x83`, unknown or unimplemented opcode | Publish a structural event; do not complete or extend the request. |
+| `0x83`, unknown or unimplemented opcode | Publish a structural event; do not complete or extend the request. |
 | Valid wrong-type or duplicate response | Publish an unassociated summary; never cache it for another request. |
 | `CompanionProtocolException` | Fail as protocol, retaining the original exception and stack. |
 | Stream/open/send error | Fail as transport, retaining the original cause and stack. |
 | Unexpected active stream done | Fail as disconnected immediately. |
 | Callback after closing, closed, or failed | Discard content without parsing or advancement; observe asynchronous errors. |
+
+Initialization still accepts only DEVICE_INFO for DEVICE_QUERY and SELF_INFO
+for APP_START. OK cannot complete either initialization step. Ready commands use:
+
+| Valid response | Pending send `0x3E` | Pending read `0x0A` | No dispatched request |
+| --- | --- | --- | --- |
+| `OkResponse` | Retain first result. | Structural summary; keep waiting. | Structural summary. |
+| `ChannelDataResponse`, `QueuedMessageResponse`, `NoMoreMessagesResponse` | Structural summary; keep waiting. | Retain first result, including ordinary chat or empty queue. | Structural summary. |
+| `MessageWaitingResponse` (`0x83`) | Structural summary only. | Structural summary only. | Structural summary only. |
+| `DeviceErrorResponse` | Terminate as deviceRejected. | Terminate as deviceRejected. | Structural error summary. |
+| Other valid type or duplicate | Structural summary. | Structural summary. | Structural summary. |
+
+Every retained success also requires local write completion. ERROR still
+terminates a command whose result arrived while its write remains pending.
+`readNextMessage` has multiple permitted response types, so its session failure's
+`expectedResponseOpcode` is null, while `commandOpcode` remains `0x0A`.
+Unassociated datagrams are structural events without typed payload delivery;
+there is no raw response stream or response pool. `0x83` never sets a drain flag
+or schedules work. Explicit typed automatic reception belongs to 1B.4.
+
+A ready command commits success by completing its internal Future before
+releasing pending state and reserving its successor. Dispatch of the successor
+runs outside the receive callback, with state, token, and reservation rechecked.
+Close in that gap cannot change committed success; it promptly terminates the
+reserved successor and all waiting commands. No accepted completion is deferred
+without an owned record that cancellation can still terminate.
 
 SELF_INFO arriving before APP_START never supplies that later step. Repeated
 startup responses after ready do not replace the published snapshot. The first
@@ -119,6 +198,23 @@ by both the stream and a send Future. `lastFailure` preserves it. Failures use
 `MeshCoreSessionFailureKind`: transport, protocol, deviceRejected, requestTimeout,
 initializationTimeout, disconnected, canceled, and cleanup. Necessary stage,
 command/expected response codes, raw device error, cause, and stack are available.
+
+Accepted ready commands fail with `MeshCoreSessionCommandFailure`. Its immutable
+`commandOpcode` describes that command (`0x3E` send or `0x0A` read), alongside
+three facts frozen at termination: `dispatched` means `sendFrame()` was called,
+`localWriteCompleted` means its success was observed, and
+`matchingResponseObserved` means its first allowed response was saved. An active
+reservation alone has all three facts false. Waiting commands terminated by an
+earlier failure also have all three false, even if the root failure describes
+another command's device rejection or timeout. `sessionFailure` references that
+shared root with its actual stage/command, raw device error, original cause and
+stack. Cleanup failures remain separately available in `cleanupFailures`.
+
+A false write-completion fact does not prove that no bytes reached the device.
+An early matching response followed by write failure remains an observed response
+with a failed command. Termination cannot retract a device-accepted radio send.
+Default command/admission exception text contains only structural metadata and
+does not format raw causes or retain path, payload, or chat bodies.
 
 The protocol supplies **no end-to-end request ID** for these responses. Local
 tokens invalidate old timers and continuations; they are not device-returned
@@ -135,12 +231,22 @@ The earlier deadline wins. Neither budget restarts for write completion, unrelat
 frames, duplicate responses, or partial progress. These are client defaults, not
 MeshCore constants; the transport's separate native write budget is unchanged.
 
+Each ready command uses that same 5-second default budget, starting only at
+actual pending/timer registration immediately before `sendFrame()`. Queue wait
+does not consume it. An early result with an unfinished write still times out.
+**A device-command timeout terminates the entire session** and all accepted work;
+it never frees the slot to send another command. Task-wide and remote-response
+deadlines and application RTT are not implemented here. Future task callers must
+include queue waiting in their total budget and close the session to stop work.
+
 On fault or cancellation, the session invalidates pending work and cancels all
-session timers immediately. It completes an unfinished `connect()` with a
-classified failure **before awaiting cleanup**. Explicit close during opening or
-initializing completes it as canceled; cancellation itself does not set
-`lastFailure`. Late open/send success or error cannot send another command or
-restore ready. Every started asynchronous operation has an error observer.
+session timers immediately. It completes an unfinished `connect()` and every
+accepted, uncommitted ready command **before awaiting cleanup**. Explicit close
+during opening or initializing completes it as canceled; cancellation itself does
+not set `lastFailure`. Ready commands canceled by close reference a canceled session
+failure without creating a new primary fault. Late open/send success or error
+cannot send another command or restore ready. Every started asynchronous operation
+has an error observer.
 
 Software deadlines do not cancel native I/O: a synchronous native call blocking
 the Dart event loop cannot be preempted by a Timer. A pending native open or reader
@@ -154,13 +260,14 @@ its receive subscription alive and unpaused. Only after transport close settles,
 successfully or with an error, does it cancel that subscription and close its own
 notification controller. A failure in one cleanup step does not skip the next safe
 step. `close()` reports actual cleanup failure, even after a primary fault. If
-cleanup succeeds, it does not rethrow the earlier initialization fault.
+cleanup succeeds, it does not rethrow the earlier operation fault.
 
 `cleanupFailures` retains classified cleanup details without replacing a prior
 `lastFailure`. If close is the first fault, cleanup becomes `lastFailure`. Automatic
 cleanup observes its own failing Future; explicit `close()` still returns the
 same result. Logical failure and resource release are deliberately separate:
-`connect()` may already have failed while `close()` remains pending indefinitely.
+`connect()` or a command may already have failed while `close()` remains pending
+indefinitely. A successful command does not establish successful cleanup.
 
 ## Events and privacy
 
@@ -188,23 +295,37 @@ also remain available for explicit debugging and should not be blindly logged.
 
 This function accepts an already selected, unused transport; it does not choose
 or hard-code a port. Merely reading this example runs nothing. It demonstrates a
-complete short session and returns a historical snapshot after explicit close.
+complete short session, one explicit send, and one consuming read, returning that
+read result after explicit close. All channel and route inputs come from the caller.
 The optional observer prints only safe structural summaries.
 
 ```dart
+import 'dart:typed_data';
+
 import 'package:meshcore_link/meshcore_link.dart';
 
-Future<MeshCoreSessionInfo> initializeAndClose(
-  CompanionTransport transport,
-) async {
+Future<CompanionResponse> sendAndReadOnce({
+  required CompanionTransport transport,
+  required int channelIndex,
+  required int dataType,
+  required int routeDescriptor,
+  required Uint8List path,
+  required Uint8List payload,
+}) async {
   final session = MeshCoreSession(transport: transport);
   final observer = session.events.listen((event) => print(event));
   var operationFailed = false;
   try {
-    final info = await session.connect();
-    print('App target: ${info.appTargetVersion}; '
-        'reported protocol code: ${info.deviceInfo.protocolVersion}.');
-    return info;
+    await session.connect();
+    await session.sendChannelData(
+      channelIndex: channelIndex,
+      dataType: dataType,
+      routeDescriptor: routeDescriptor,
+      path: path,
+      payload: payload,
+    );
+    // This can consume ordinary chat and does not wait for an application reply.
+    return await session.readNextMessage();
   } catch (_) {
     operationFailed = true;
     rethrow; // Preserve the original operation exception and stack.
@@ -251,6 +372,42 @@ session; its builds and hardware-free checks are recorded in the
 The later temporary Step 6 hardware harness
 explicitly called this session and separately passed AOT execution on hardware;
 it added no product CLI or change to the read-only example.
+
+### 1B.3 software verification on November 10, 2026
+
+The new `test/meshcore_session_commands_test.dart` adds 16 focused behavior
+groups using the same synchronous fake, real codec, controlled Completers, and
+virtual time. Minimal initialization fixtures and immediate Future observers
+are shared through `test/support/session_test_support.dart`; the original 16
+initialization groups retain their assertions. New coverage includes admission,
+mixed FIFO/capacity, byte ownership, both write/response orders, single reads,
+duplicates, dispatch deadlines, cancellation windows, frozen failure facts,
+pending/failed cleanup, late errors, and privacy.
+
+Checks used `/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` 3.13.7 on
+macOS arm64, with Apple tools preferred in the process PATH. Installed SDK
+metadata reports Flutter 3.47.9 stable; the Flutter wrapper was not invoked.
+
+| Check | Actual result |
+| --- | --- |
+| `dart pub get --enforce-lockfile` | Passed; dependencies and root lockfile unchanged. |
+| Format, then format check of the five changed Dart files | Passed; final check made zero changes. |
+| `dart analyze --fatal-infos` | Passed; no issues. |
+| `dart test test/meshcore_session_test.dart test/meshcore_session_commands_test.dart` | Passed; 32 tests. |
+| Complete core suite, then complete CLI suite | Passed sequentially; 93 and 27 tests. |
+| Existing CLI and observation `dart build cli` commands | Passed once each, sequentially, in fresh temporary output. |
+| Existing `python3 tool/smoke_cli.py` | Passed once; all 46 macOS process checks, both native asset checks, and bundle relocation. Linux refusal checks were not applicable. |
+| Patch/new-file hygiene and dependency/version/CI diff checks | Passed; UTF-8 without BOM, LF, final newlines, and no trailing whitespace. |
+
+The initial focused run exposed two test-owned unused Completers being completed
+with errors; the initial analysis found an unused import and missing braces.
+Those were corrected before the passing checks. An initial format invocation
+used root-relative paths from the package directory and found no files; formatting
+and its final check subsequently ran from the root with the correct paths.
+There were no retries around unresolved product failures. Builds/smoke validate
+existing products, not ready-command AOT execution or hardware behavior. No real
+port enumeration/access, LoRa operation, or remote CI run was performed. The
+application remains `0.1.0-dev.1`.
 
 The Dart asynchronous semantics were rechecked against the actual SDK and these
 primary references on November 9, 2026:

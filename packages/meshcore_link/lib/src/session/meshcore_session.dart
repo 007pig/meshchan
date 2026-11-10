@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:typed_data';
 
 import '../protocol/companion_messages.dart';
@@ -74,6 +75,41 @@ final class MeshCoreSessionFailure implements Exception {
       'deviceErrorCode: $deviceErrorCode)';
 }
 
+/// Local admission failure. Existing commands and the session remain usable.
+final class MeshCoreSessionQueueFull implements Exception {
+  const MeshCoreSessionQueueFull._(this.maxQueuedCommands);
+
+  final int maxQueuedCommands;
+
+  @override
+  String toString() =>
+      'MeshCoreSessionQueueFull(maxQueuedCommands: $maxQueuedCommands)';
+}
+
+/// Frozen facts about this command when the session terminated it.
+/// A false [localWriteCompleted] does not prove that no bytes reached the device.
+/// [sessionFailure] can describe a different command that failed ahead of this one.
+final class MeshCoreSessionCommandFailure implements Exception {
+  MeshCoreSessionCommandFailure._(_ReadyCommand command, this.sessionFailure)
+    : commandOpcode = command.kind.commandOpcode,
+      dispatched = command.dispatched,
+      localWriteCompleted = command.localWriteCompleted,
+      matchingResponseObserved = command.matchingResponseObserved;
+
+  final int commandOpcode;
+  final bool dispatched;
+  final bool localWriteCompleted;
+  final bool matchingResponseObserved;
+  final MeshCoreSessionFailure sessionFailure;
+
+  @override
+  String toString() =>
+      'MeshCoreSessionCommandFailure(commandOpcode: $commandOpcode, '
+      'dispatched: $dispatched, localWriteCompleted: $localWriteCompleted, '
+      'matchingResponseObserved: $matchingResponseObserved, '
+      'sessionFailure: $sessionFailure)';
+}
+
 sealed class MeshCoreSessionEvent {
   const MeshCoreSessionEvent._();
 }
@@ -126,7 +162,7 @@ final class MeshCoreSessionFailed extends MeshCoreSessionEvent {
 
 /// One initialization attempt, exclusively owning an unused [CompanionTransport].
 /// Construction and event observation perform no I/O. Retry with a new transport
-/// and session. There is no public command queue, retry, or reconnection API.
+/// and session. Ready commands share one bounded FIFO without retries.
 final class MeshCoreSession {
   MeshCoreSession({
     required this._transport,
@@ -134,6 +170,7 @@ final class MeshCoreSession {
     this.requestTimeout = const Duration(seconds: 5),
     this.initializationTimeout = const Duration(seconds: 15),
     this.startupDelay = Duration.zero,
+    this.maxQueuedCommands = 8,
   }) : _appStart = encodeAppStart(appName: appName),
        _deviceQuery = encodeDeviceQuery(
          appTargetVersion: meshCoreSessionAppTargetVersion,
@@ -147,6 +184,9 @@ final class MeshCoreSession {
     if (startupDelay < Duration.zero) {
       throw ArgumentError('startupDelay must not be negative.');
     }
+    if (maxQueuedCommands < 0) {
+      throw ArgumentError('maxQueuedCommands must not be negative.');
+    }
   }
 
   final CompanionTransport _transport;
@@ -155,6 +195,11 @@ final class MeshCoreSession {
   final Duration requestTimeout;
   final Duration initializationTimeout;
   final Duration startupDelay;
+
+  /// Waiting commands only, excluding the one active or reserved command.
+  /// Zero permits an idle command but rejects waiting behind an active command.
+  /// This is a local resource policy, not the firmware inbox capacity.
+  final int maxQueuedCommands;
   final _events = StreamController<MeshCoreSessionEvent>.broadcast();
   MeshCoreSessionState _state = MeshCoreSessionState.idle;
   MeshCoreSessionInfo? _info;
@@ -166,6 +211,8 @@ final class MeshCoreSession {
   Timer? _initializationTimer;
   Timer? _startupTimer;
   _PendingRequest? _pending;
+  final _queuedCommands = Queue<_ReadyCommand>();
+  _ReadyCommand? _activeCommand;
   int _requestId = 0;
   DeviceInfoResponse? _deviceInfo;
 
@@ -184,6 +231,90 @@ final class MeshCoreSession {
       _state == MeshCoreSessionState.opening ||
       _state == MeshCoreSessionState.initializing ||
       _state == MeshCoreSessionState.ready;
+
+  /// Sends owned inner content using the existing codec. Success requires both
+  /// local write completion and the first OK; it proves no wireless delivery.
+  /// Parameters are validated and copied before any asynchronous waiting.
+  ///
+  /// Returned Future errors are [StateError] outside ready, codec [ArgumentError]
+  /// or [RangeError] for invalid input, [MeshCoreSessionQueueFull] on admission,
+  /// and [MeshCoreSessionCommandFailure] after an accepted command terminates.
+  Future<OkResponse> sendChannelData({
+    required int channelIndex,
+    required int dataType,
+    required int routeDescriptor,
+    required Uint8List path,
+    required Uint8List payload,
+  }) {
+    try {
+      _requireReady();
+      final content = encodeSendChannelData(
+        channelIndex: channelIndex,
+        dataType: dataType,
+        routeDescriptor: routeDescriptor,
+        path: path,
+        payload: payload,
+      );
+      return _enqueue(
+        _RequestKind.sendChannelData,
+        content,
+      ).then((response) => response as OkResponse);
+    } catch (error, stack) {
+      return Future.error(error, stack);
+    }
+  }
+
+  /// Consumes one shared device-queue entry with exactly one command.
+  /// Success returns [ChannelDataResponse], [QueuedMessageResponse] (structure
+  /// only, discarding ordinary chat text), or [NoMoreMessagesResponse]. This is
+  /// not a peek and never automatically reads again, including after 0x83.
+  /// Requires both local write completion and the first permitted result.
+  ///
+  /// Returned Future errors are [StateError] outside ready,
+  /// [MeshCoreSessionQueueFull] on admission, or [MeshCoreSessionCommandFailure]
+  /// when an accepted command is terminated. [close] cancels all accepted work.
+  Future<CompanionResponse> readNextMessage() {
+    try {
+      _requireReady();
+      return _enqueue(_RequestKind.readNextMessage, encodeSyncNextMessage());
+    } catch (error, stack) {
+      return Future.error(error, stack);
+    }
+  }
+
+  void _requireReady() {
+    if (_state != MeshCoreSessionState.ready) {
+      throw StateError('Commands require a ready session.');
+    }
+  }
+
+  Future<CompanionResponse> _enqueue(_RequestKind kind, Uint8List content) {
+    if (_activeCommand != null && _queuedCommands.length >= maxQueuedCommands) {
+      throw MeshCoreSessionQueueFull._(maxQueuedCommands);
+    }
+    final command = _ReadyCommand(kind, content);
+    if (_activeCommand == null) {
+      // Reserve immediately, including before the first dispatch microtask.
+      _scheduleCommand(command);
+    } else {
+      _queuedCommands.addLast(command);
+    }
+    return command.completed.future;
+  }
+
+  void _scheduleCommand(_ReadyCommand command) {
+    _activeCommand = command;
+    final token = _requestId;
+    scheduleMicrotask(() {
+      if (_state != MeshCoreSessionState.ready ||
+          token != _requestId ||
+          !identical(_activeCommand, command)) {
+        return;
+      }
+      // Reservation alone cannot match input. Register and send synchronously.
+      _send(command.content, command.kind, command: command);
+    });
+  }
 
   Future<MeshCoreSessionInfo> connect() {
     if (_state != MeshCoreSessionState.idle || _connecting != null) {
@@ -222,34 +353,34 @@ final class MeshCoreSession {
     if (_state != MeshCoreSessionState.opening) return;
     _setState(MeshCoreSessionState.initializing);
     if (startupDelay == Duration.zero) {
-      _send(_deviceQuery, 0x0d);
+      _send(_deviceQuery, _RequestKind.deviceQuery);
     } else {
       _startupTimer = Timer(startupDelay, () {
         if (_state == MeshCoreSessionState.initializing) {
-          _send(_deviceQuery, 0x0d);
+          _send(_deviceQuery, _RequestKind.deviceQuery);
         }
       });
     }
   }
 
-  void _send(Uint8List content, int expectedOpcode) {
-    if (_state != MeshCoreSessionState.initializing) return;
+  void _send(Uint8List content, _RequestKind kind, {_ReadyCommand? command}) {
+    if (_state != kind.stage) return;
     assert(_pending == null);
-    final pending = _pending = _PendingRequest(
-      ++_requestId,
-      content[0],
-      expectedOpcode,
-    );
+    final pending = _pending = _PendingRequest(++_requestId, kind, command);
     pending.timer = Timer(requestTimeout, () {
       if (_isCurrent(pending)) {
         _fail(_failure(MeshCoreSessionFailureKind.requestTimeout));
       }
     });
     unawaited(
-      Future.sync(() => _transport.sendFrame(content)).then<void>(
+      Future.sync(() {
+        command?.dispatched = true;
+        return _transport.sendFrame(content);
+      }).then<void>(
         (_) {
           if (!_isCurrent(pending)) return;
           pending.sent = true;
+          command?.localWriteCompleted = true;
           _completeRequest(pending);
         },
         onError: (Object error, StackTrace stack) {
@@ -262,8 +393,7 @@ final class MeshCoreSession {
   }
 
   bool _isCurrent(_PendingRequest pending) =>
-      _state == MeshCoreSessionState.initializing &&
-      identical(_pending, pending);
+      _state == pending.kind.stage && identical(_pending, pending);
 
   void _receive(Uint8List content) {
     if (!_active) return;
@@ -281,6 +411,7 @@ final class MeshCoreSession {
         pending.accepts(response) &&
         pending.response == null) {
       pending.response = response;
+      pending.command?.matchingResponseObserved = true;
       _completeRequest(pending);
     } else {
       _emit(MeshCoreSessionUnassociatedResponse._(response, _state));
@@ -292,6 +423,17 @@ final class MeshCoreSession {
       return;
     }
     pending.timer?.cancel();
+    if (pending.command case final command?) {
+      // Commit success before releasing the record: close cannot strand its
+      // Future or change an already committed result in the pump window.
+      command.completed.complete(pending.response!);
+      _pending = null;
+      _activeCommand = null;
+      if (_queuedCommands.isNotEmpty) {
+        _scheduleCommand(_queuedCommands.removeFirst());
+      }
+      return;
+    }
     _pending = null;
     // Advance outside a receive callback, including a synchronous fake stream.
     // The local token isolates continuations; it is not a wire request ID.
@@ -303,7 +445,7 @@ final class MeshCoreSession {
       final response = pending.response!;
       if (response is DeviceInfoResponse) {
         _deviceInfo = response;
-        _send(_appStart, 0x05);
+        _send(_appStart, _RequestKind.appStart);
       } else {
         _info = MeshCoreSessionInfo._(
           _deviceInfo!,
@@ -323,8 +465,8 @@ final class MeshCoreSession {
   ]) => MeshCoreSessionFailure._(
     kind,
     stage: _state,
-    commandOpcode: _pending?.commandOpcode,
-    expectedResponseOpcode: _pending?.expectedOpcode,
+    commandOpcode: _pending?.kind.commandOpcode,
+    expectedResponseOpcode: _pending?.kind.expectedOpcode,
     deviceErrorCode: cause is DeviceErrorResponse ? cause.errorCode : null,
     deviceErrorName: cause is DeviceErrorResponse ? cause.knownName : null,
     cause: cause,
@@ -335,19 +477,38 @@ final class MeshCoreSession {
     if (!_active) return;
     _lastFailure = failure;
     _setState(MeshCoreSessionState.failed);
-    _invalidate();
+    _invalidate(failure);
     _finishConnectWithError(failure);
     _emit(MeshCoreSessionFailed._(failure));
     _beginCleanup();
   }
 
-  void _invalidate() {
+  void _invalidate(MeshCoreSessionFailure failure) {
     _initializationTimer?.cancel();
     _startupTimer?.cancel();
     _pending?.timer?.cancel();
+    if (_activeCommand case final command?) {
+      _terminateCommand(command, failure);
+    }
+    for (final command in _queuedCommands) {
+      _terminateCommand(command, failure);
+    }
+    _activeCommand = null;
+    _queuedCommands.clear();
+    _pending?.response = null;
     _pending = null;
     _deviceInfo = null;
     _requestId++;
+  }
+
+  void _terminateCommand(
+    _ReadyCommand command,
+    MeshCoreSessionFailure failure,
+  ) {
+    command.completed.completeError(
+      MeshCoreSessionCommandFailure._(command, failure),
+      failure.stackTrace,
+    );
   }
 
   void _finishConnectWithError(MeshCoreSessionFailure failure) {
@@ -358,12 +519,13 @@ final class MeshCoreSession {
   }
 
   /// Shared cleanup result. This can remain pending while the transport waits
-  /// for native exit confirmation. Logical connect failure does not await it.
+  /// for native exit confirmation. Logical connect/command failure does not
+  /// await it. Accepted commands fail promptly with frozen cancellation facts.
   Future<void> close() {
     if (_closing case final closing?) return closing;
     final canceled = _failure(MeshCoreSessionFailureKind.canceled);
     _setState(MeshCoreSessionState.closing);
-    _invalidate();
+    _invalidate(canceled);
     _finishConnectWithError(canceled);
     return _beginCleanup();
   }
@@ -434,19 +596,47 @@ final class MeshCoreSession {
   }
 }
 
+enum _RequestKind {
+  deviceQuery(0x16, 0x0d, MeshCoreSessionState.initializing),
+  appStart(0x01, 0x05, MeshCoreSessionState.initializing),
+  sendChannelData(0x3e, 0x00, MeshCoreSessionState.ready),
+  readNextMessage(0x0a, null, MeshCoreSessionState.ready);
+
+  const _RequestKind(this.commandOpcode, this.expectedOpcode, this.stage);
+
+  final int commandOpcode;
+  final int? expectedOpcode;
+  final MeshCoreSessionState stage;
+}
+
+final class _ReadyCommand {
+  _ReadyCommand(this.kind, this.content);
+
+  final _RequestKind kind;
+  final Uint8List content;
+  final completed = Completer<CompanionResponse>();
+  bool dispatched = false;
+  bool localWriteCompleted = false;
+  bool matchingResponseObserved = false;
+}
+
 final class _PendingRequest {
-  _PendingRequest(this.id, this.commandOpcode, this.expectedOpcode);
+  _PendingRequest(this.id, this.kind, this.command);
 
   final int id;
-  final int commandOpcode;
-  final int expectedOpcode;
+  final _RequestKind kind;
+  final _ReadyCommand? command;
   Timer? timer;
   bool sent = false;
   CompanionResponse? response;
 
-  bool accepts(CompanionResponse response) => switch (expectedOpcode) {
-    0x0d => response is DeviceInfoResponse,
-    0x05 => response is SelfInfoResponse,
-    _ => false,
+  bool accepts(CompanionResponse response) => switch (kind) {
+    _RequestKind.deviceQuery => response is DeviceInfoResponse,
+    _RequestKind.appStart => response is SelfInfoResponse,
+    _RequestKind.sendChannelData => response is OkResponse,
+    _RequestKind.readNextMessage =>
+      response is ChannelDataResponse ||
+          response is QueuedMessageResponse ||
+          response is NoMoreMessagesResponse,
   };
 }

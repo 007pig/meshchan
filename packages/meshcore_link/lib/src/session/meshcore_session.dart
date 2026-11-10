@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import '../protocol/companion_messages.dart';
 import '../transport/companion_transport.dart';
 
+part 'meshcore_reception.dart';
+
 /// Meshchan's minimal initialization policy, not full protocol-version support.
 const meshCoreSessionAppTargetVersion = 3;
 
@@ -213,6 +215,7 @@ final class MeshCoreSession {
   _PendingRequest? _pending;
   final _queuedCommands = Queue<_ReadyCommand>();
   _ReadyCommand? _activeCommand;
+  MeshCoreReception? _reception;
   int _requestId = 0;
   DeviceInfoResponse? _deviceInfo;
 
@@ -258,7 +261,7 @@ final class MeshCoreSession {
       return _enqueue(
         _RequestKind.sendChannelData,
         content,
-      ).then((response) => response as OkResponse);
+      ).completed.future.then((response) => response as OkResponse);
     } catch (error, stack) {
       return Future.error(error, stack);
     }
@@ -270,17 +273,32 @@ final class MeshCoreSession {
   /// not a peek and never automatically reads again, including after 0x83.
   /// Requires both local write completion and the first permitted result.
   ///
-  /// Returned Future errors are [StateError] outside ready,
+  /// Returned Future errors are [StateError] outside ready or while a reception
+  /// owns the queue (including stopping),
   /// [MeshCoreSessionQueueFull] on admission, or [MeshCoreSessionCommandFailure]
   /// when an accepted command is terminated. [close] cancels all accepted work.
   Future<CompanionResponse> readNextMessage() {
     try {
       _requireReady();
-      return _enqueue(_RequestKind.readNextMessage, encodeSyncNextMessage());
+      if (_reception != null) {
+        throw StateError('A reception owns the shared queue.');
+      }
+      return _enqueue(
+        _RequestKind.readNextMessage,
+        encodeSyncNextMessage(),
+      ).completed.future;
     } catch (error, stack) {
       return Future.error(error, stack);
     }
   }
+
+  /// Creates an inert, single-use receiver. Listen to its entries before start.
+  /// Budgets are client resource policies, not firmware queue capacities.
+  MeshCoreReception createReception({
+    required Duration duration,
+    int maxEntries = 128,
+    int maxReadsPerBatch = 8,
+  }) => MeshCoreReception._(this, duration, maxEntries, maxReadsPerBatch);
 
   void _requireReady() {
     if (_state != MeshCoreSessionState.ready) {
@@ -288,7 +306,7 @@ final class MeshCoreSession {
     }
   }
 
-  Future<CompanionResponse> _enqueue(_RequestKind kind, Uint8List content) {
+  _ReadyCommand _enqueue(_RequestKind kind, Uint8List content) {
     if (_activeCommand != null && _queuedCommands.length >= maxQueuedCommands) {
       throw MeshCoreSessionQueueFull._(maxQueuedCommands);
     }
@@ -299,7 +317,33 @@ final class MeshCoreSession {
     } else {
       _queuedCommands.addLast(command);
     }
-    return command.completed.future;
+    return command;
+  }
+
+  bool get _commandIdle => _activeCommand == null && _queuedCommands.isEmpty;
+
+  void _advanceCommands() {
+    if (_queuedCommands.isNotEmpty) {
+      _scheduleCommand(_queuedCommands.removeFirst());
+    } else {
+      _reception?._wake();
+    }
+  }
+
+  // Only the lease holder can withdraw its own undispatched reservation.
+  // The private signal is observed by the receiver, never a fake wire result.
+  void _withdrawReceptionRead(MeshCoreReception owner) {
+    final command = owner._read;
+    if (!identical(_reception, owner) ||
+        command == null ||
+        !identical(_activeCommand, command) ||
+        command.dispatched ||
+        command.completed.isCompleted) {
+      return;
+    }
+    _activeCommand = null;
+    command.completed.completeError(const _ReceptionReadWithdrawn());
+    _advanceCommands();
   }
 
   void _scheduleCommand(_ReadyCommand command) {
@@ -375,6 +419,7 @@ final class MeshCoreSession {
     unawaited(
       Future.sync(() {
         command?.dispatched = true;
+        if (command != null) _reception?._readDispatched(command);
         return _transport.sendFrame(content);
       }).then<void>(
         (_) {
@@ -404,6 +449,9 @@ final class MeshCoreSession {
       _fail(_failure(MeshCoreSessionFailureKind.protocol, error, stack));
       return;
     }
+    // One observation per decoded input, independent of command matching and
+    // local write completion. Command Futures only control the drain.
+    _reception?._observe(response);
     final pending = _pending;
     if (response is DeviceErrorResponse && pending != null) {
       _fail(_failure(MeshCoreSessionFailureKind.deviceRejected, response));
@@ -429,9 +477,7 @@ final class MeshCoreSession {
       command.completed.complete(pending.response!);
       _pending = null;
       _activeCommand = null;
-      if (_queuedCommands.isNotEmpty) {
-        _scheduleCommand(_queuedCommands.removeFirst());
-      }
+      _advanceCommands();
       return;
     }
     _pending = null;
@@ -499,6 +545,7 @@ final class MeshCoreSession {
     _pending = null;
     _deviceInfo = null;
     _requestId++;
+    _reception?._sessionTerminated(failure);
   }
 
   void _terminateCommand(

@@ -13,7 +13,8 @@ remains `0.1.0-dev.1`.
 | --- | --- |
 | Implementation at the 1B.1 review | USB transport, serial framing, initialization codecs, a single-use session, and `ports`, `port-check`, `info`, and `watch`. No datagram codec, ready-state command executor, queue reader, or PING/PONG operation exists at the reviewed commit. |
 | Implementation after 1B.3 | The 1B.2 binary codecs plus ready-state send and single consuming queue-read APIs, sharing a bounded command FIFO. See the scoped records below. |
-| Remaining planned 1B behavior | Explicitly enabled automatic queue reception and typed delivery, application PING/PONG exchange, and finite CLI diagnostic tasks. |
+| Implementation after 1B.4 | Explicitly started finite reception, coalesced notices, bounded batches through the original FIFO, typed observations, and pause/stop settlement. |
+| Remaining planned 1B behavior | Application PING/PONG exchange, coordination, and finite CLI diagnostic tasks. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
 The [session contract](companion-session.md) remains authoritative for the
@@ -121,13 +122,13 @@ Command deadlines start at dispatch, cover write plus response, and terminate th
 whole session on expiration. Committed success survives later close; reserved
 and queued work remains cancelable before its dispatch microtask.
 
-Current 1B.3 reception is deliberately narrower than the full plan below:
+At the 1B.3 implementation, reception was deliberately narrower than the full
+plan below:
 `0x83` only emits a structural summary, with no receive-pending flag or drain.
 Unassociated datagrams also remain structural summaries. Typed queue results
 are delivered only by an explicit read's Future, without new event subclasses
-or a raw response stream. 1B.4 will compose these APIs for explicitly enabled,
-bounded reception, notification coalescing, fairness, and typed delivery. It must
-not subscribe to the transport again or create another send path.
+or a raw response stream. That historical boundary is extended by 1B.4 below
+without a second transport subscription or send path.
 
 Implementation is complete for this command-execution scope. Software evidence
 for this step is recorded separately in the
@@ -135,6 +136,25 @@ for this step is recorded separately in the
 Historical 1B.1/1B.2 and hardware evidence above and below retain their original
 boundaries. No new release, version change, USB repair, application protocol,
 real serial access, or LoRa acceptance is included.
+
+### 1B.4 implementation and validation
+
+1B.4 starts from clean `master` at
+`4a8ae298a85deb5812492c4e2fd5ca3d751c4805`, which merges PR #11 and includes
+its `db3bf29db2cfbeac3cbb43e6675b91666ecb082e` command implementation.
+The fixed MeshCore upstream remains
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`.
+
+`createReception(duration:, maxEntries: 128, maxReadsPerBatch: 8)` returns an
+inert `MeshCoreReception`; callers listen before `start()` and observe its
+independent `done` / idempotent `stop()` result. The scheduling, typed entry,
+pause, quota, and settlement policies below are now implemented. Existing
+session events and CLI schemas retain structural diagnostics without payload.
+See the [API and parameterized example](companion-session.md#explicit-bounded-reception-1b4)
+and [actual software checks](companion-session.md#1b4-software-verification-on-november-10-2026).
+Application layout, PING/PONG matching, coordination, and new CLI tasks remain
+pending, as do all real datagram/LoRa acceptance trials. No version, dependency,
+native serial, or CI change is included; historical evidence is retained above.
 
 ## Fixed upstream evidence
 
@@ -301,11 +321,11 @@ dispatch. This fixes semantics, not a
 general scheduling framework. Existing `info/watch` continue sending only their
 two initialization commands; observing `0x83` never enables reception for them.
 
-The following table describes the full planned 1B receive integration after
-successful initialization. In current 1B.3, all waiting notices are summaries,
-unassociated datagrams have no typed delivery, and an empty read completes only
-that read; no drain exists. The send/read matching and terminal-failure rules
-are implemented. A command result is retained on arrival but completes successfully
+The following table describes receive integration after successful
+initialization. In 1B.4, typed delivery and drain scheduling require explicit
+reception start; without it, waiting notices and unassociated data remain
+structural summaries. The send/read matching and terminal-failure rules remain
+unchanged. A command result is retained on arrival but completes successfully
 only after its local send also succeeds. Initialization keeps its existing
 type-specific matching policy; OK cannot replace DEVICE_INFO or SELF_INFO.
 
@@ -315,8 +335,8 @@ type-specific matching policy; OK cannot replace DEVICE_INFO or SELF_INFO.
 | Error `0x01` | Fail with raw code and stage; stop dispatch and clean up. | Fail with raw code and stage; stop dispatch and clean up. | Unassociated structural error; never cache for a later command. |
 | Waiting notice `0x83` | Set one receive-pending flag only if receive is enabled; never acknowledge send. | Coalesce flag; never complete this read. | Set flag only for explicitly enabled reception. |
 | Valid datagram `0x1B` | Do not acknowledge send; classify as unassociated and deliver to enabled typed reception/matcher if applicable. | Complete one read and classify/deliver the datagram. | Unassociated typed reception only if enabled; no implied push-support claim. |
-| Valid chat `0x07/0x08/0x10/0x11` | Unassociated non-test summary; do not acknowledge send. | Complete one read as non-test data; never wait for a PONG within this command. | Unassociated non-test summary. |
-| Empty queue `0x0A` | Unassociated; cannot acknowledge send. | Complete this read as empty and stop the drain. | Unassociated summary. |
+| Valid chat `0x07/0x08/0x10/0x11` | Structural summary; enabled reception also observes the summary; do not acknowledge send. | Complete one read; enabled reception observes the summary and continues without application filtering. | Structural summary; also delivered to enabled typed reception. |
+| Empty queue `0x0A` | Unassociated; cannot acknowledge send. | Complete this read; end drain only if no newer waiting notice remains. | Unassociated summary; does not clear reception demand. |
 | Other valid opcode or wrong response type | Structural summary; no completion or timer extension. | Structural summary; no completion or timer extension. | Structural summary; no response pool. |
 | Malformed Companion content | Protocol failure; stop dispatch and clean up. | Protocol failure; stop dispatch and clean up. | Protocol failure while active. |
 
@@ -340,24 +360,44 @@ time. On overflow, the implementation removes the oldest channel entry
 the new entry is dropped. Notifications therefore guarantee neither persistence
 nor a particular number of retrievable messages.
 
-Planned policy for a new diagnostic operation that explicitly enables receive:
+Implemented 1B.4 policy (see the [session API](companion-session.md#explicit-bounded-reception-1b4)):
 
-1. Permit one bounded initial queue check after ready, even without `0x83`, to
-   find data queued before subscription. Register test matching before any send.
-2. Merge repeated `0x83` into one pending flag, not parallel tasks or one job per
-   notice. Drain through the unique command scheduler, one entry per command.
-3. Limit each batch by message count or elapsed time; choose concrete finite
-   limits in the receive implementation. Yield between batches to user sends
-   and cancellation. If the batch limit is reached, retain one continuation
-   flag rather than requiring a new notification for existing queued data.
-4. An empty result stops the current drain and clears its pending work; a newly
-   observed notice can schedule another bounded batch. No default busy polling.
-   All batches remain bounded by the operation's duration/count and task deadline.
-5. Classify each consumed result promptly. Non-test data is never a PONG and
-   does not keep a queue-read command pending. The 1B diagnostic does not persist
-   ordinary chat history: consumed non-test bodies may be discarded after
-   classification. Document that loss before enabling a future `listen` task;
-   never describe it as harmless passive listening.
+1. Create a handle, install its single listener, then explicitly start on ready.
+   The handle leases the shared queue; accepted manual reads prevent start, and
+   running/stopping reception rejects new manual reads. Ordinary sends retain
+   original FIFO/capacity semantics. One initial check is retained even without
+   `0x83`; create/listen alone never enables reception.
+2. Merge notices into one demand flag and a notification sequence. Reserve one
+   read only when the original FIFO is idle, never an entire batch. Empty clears
+   only demand covered at dispatch, so a notice arriving after empty but before
+   write completion still causes a check. No polling or QueueFull retry loop.
+3. Nonempty results continue, including ordinary messages. After at most
+   `maxReadsPerBatch` completed reads (default 8, including empty), retain a
+   continuation across a real Timer event turn. Idle wakes, notices, and resume
+   cannot bypass that turn. Saturated user sends may defer reception indefinitely
+   within its finite lifetime; there is no fair bandwidth guarantee.
+4. Require positive `duration`, `maxEntries` (default 128), and batch size.
+   Duration includes queue wait, pause, and batch waits; traffic never renews it.
+   The sole decode-path hook adds only datagrams and ordinary-message summaries,
+   once per input frame, including unassociated input. Reads' Futures never add
+   entries again. Other applications' valid datagrams count normally.
+5. Count every add against the lifetime entry cap, including while paused.
+   Pause prevents new reads and can withdraw an undispatched owned reservation;
+   the transport remains unpaused and no second payload buffer is created.
+   Resume retains demand without a new initial check. Async listener callbacks
+   do not make Dart wait for business processing.
+6. Stop/cancel/duration/quota immediately disable observation and new reads.
+   Withdraw only an owned undispatched reservation, without affecting sends or
+   session failure facts. A dispatched read still matches/settles normally and
+   may consume an entry after stopping; the lease persists until its continuation
+   settles. `done` retains the first stop reason and any later command/session
+   failure independently of paused stream done or pending native cleanup.
+
+Consumed ordinary bodies are discarded; post-consumption filtering cannot put
+entries back. Already-added stream entries can still be delivered after resume.
+This is finite queue consumption, not lossless observation, chat archiving, or a
+reliable persistent message service. Application matching and PING/PONG remain
+later work; unassociated typed observation is not proof of firmware push support.
 
 Use dedicated test Companions and exclusive sessions for initial acceptance.
 Future firmware may offer other delivery modes; adopting them requires separate
@@ -496,7 +536,7 @@ No raw-message capture is needed for this step or for routine acceptance records
 
 All boxes below were **planned / not run in 1B.1**. This retained full-1B
 checklist is not a claim of passing software or device results; scoped 1B.2 and
-1B.3 implementation and validation are recorded above. Follow the existing
+1B.3/1B.4 implementation and validation are recorded above. Follow the existing
 [testing evidence boundaries](../testing.md#evidence-limits).
 
 Software acceptance should use a few representative behavior groups:
@@ -512,8 +552,9 @@ Software acceptance should use a few representative behavior groups:
   command is dispatched on that session and no response pool is reused.
 - [ ] **Bounded reception/cancellation:** initial check without a notice,
   shared chat/other-application classification, empty queue, notice coalescing,
-  batch continuation/fairness, finite queue rejection, and cancellation with
-  queued reads. Non-test traffic must finish reads without becoming PONG.
+  batch continuation/user-command priority, finite queue rejection, and
+  cancellation with queued reads. Non-test traffic must finish reads without
+  becoming PONG.
 - [ ] **Application correlation:** correct peer/run/request/content, wrong
   IDs/version/content, stale or expired entries, duplicate PING/PONG,
   unsolicited PONG, early PONG, and early PONG followed by local failure.
@@ -564,8 +605,8 @@ no hardware, captures no raw messages, and repairs no USB issue.
 1B.2 implements the fixed Companion layouts, path/byte budgets, error-code caveat,
 strict local validation policies, and binary ownership/privacy rules through
 the public codec API above. 1B.3 now uses those interfaces for serialized ready
-commands and explicit single reads. 1B.4's bounded automatic reception follows
-the remaining contracts here; 1B.5 must freeze
+commands and explicit single reads. 1B.4 now exposes `MeshCoreReception` with
+finite typed observation and owned-read settlement. 1B.5 must freeze
 application layout before PING/PONG vectors or
 round-trip implementation depend on it. CLI syntax and concrete bounded runtime
 parameters remain later implementation decisions, with radio waits selected

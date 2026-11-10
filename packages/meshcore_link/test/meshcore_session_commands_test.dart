@@ -719,63 +719,6 @@ void main() {
   );
 }
 
-final class ReadyHarness {
-  ReadyHarness(this.clock, {int capacity = 8}) {
-    session = MeshCoreSession(
-      transport: transport,
-      maxQueuedCommands: capacity,
-    );
-    final connected = Outcome(session.connect());
-    clock.flushMicrotasks();
-    transport.receive(deviceInfo());
-    clock.flushMicrotasks();
-    transport.receive(selfInfo());
-    clock.flushMicrotasks();
-    expect(connected.error, isNull);
-    expect(connected.done, isTrue);
-    expect(session.state, MeshCoreSessionState.ready);
-    expect(transport.sent, hasLength(2));
-  }
-
-  final FakeAsync clock;
-  final transport = FakeCompanionTransport();
-  late final MeshCoreSession session;
-
-  void close() {
-    final closed = Outcome(session.close());
-    clock.flushMicrotasks();
-    expect(closed.done, isTrue);
-    expect(clock.pendingTimers, isEmpty);
-  }
-}
-
-Future<OkResponse> sendData(
-  MeshCoreSession session, {
-  int channel = 2,
-  int descriptor = 0xff,
-  Uint8List? path,
-  Uint8List? payload,
-}) => session.sendChannelData(
-  channelIndex: channel,
-  dataType: 0x1234,
-  routeDescriptor: descriptor,
-  path: path ?? Uint8List(0),
-  payload: payload ?? Uint8List.fromList([1, 2]),
-);
-
-List<int> datagram(List<int> payload) => [
-  0x1b,
-  0xfc,
-  0,
-  0,
-  2,
-  0xff,
-  0x34,
-  0x12,
-  payload.length,
-  ...payload,
-];
-
 MeshCoreSessionCommandFailure commandFailure(
   Outcome<CompanionResponse> outcome,
   MeshCoreSession session, {

@@ -41,6 +41,8 @@ export 'src/session/meshcore_session.dart'
         MeshCoreSessionState,
         MeshCoreSessionFailure,
         MeshCoreSessionFailureKind,
+        MeshCoreSessionQueueFull,
+        MeshCoreSessionCommandFailure,
         MeshCoreSessionEvent,
         MeshCoreSessionStateChanged,
         MeshCoreSessionUnassociatedResponse,

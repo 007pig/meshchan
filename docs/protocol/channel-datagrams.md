@@ -12,13 +12,15 @@ remains `0.1.0-dev.1`.
 | Status | Evidence and boundary |
 | --- | --- |
 | Implementation at the 1B.1 review | USB transport, serial framing, initialization codecs, a single-use session, and `ports`, `port-check`, `info`, and `watch`. No datagram codec, ready-state command executor, queue reader, or PING/PONG operation exists at the reviewed commit. |
-| Planned 1B behavior | Binary datagram send/receive, bounded device-command execution, explicitly enabled queue consumption, one application PING/PONG exchange, and finite CLI diagnostic tasks. The contracts below do not expose those features today. |
+| Implementation after 1B.3 | The 1B.2 binary codecs plus ready-state send and single consuming queue-read APIs, sharing a bounded command FIFO. See the scoped records below. |
+| Remaining planned 1B behavior | Explicitly enabled automatic queue reception and typed delivery, application PING/PONG exchange, and finite CLI diagnostic tasks. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
-The current [session contract](companion-session.md) remains authoritative for
-1A. Its [implementation](../../packages/meshcore_link/lib/src/session/meshcore_session.dart)
-allows `_send()` only while initializing, matches DEVICE_INFO and SELF_INFO,
-and otherwise emits structural summaries. The
+The [session contract](companion-session.md) remains authoritative for the
+implemented API. At the 1B.1 review its
+[implementation](../../packages/meshcore_link/lib/src/session/meshcore_session.dart)
+allowed `_send()` only while initializing, matched DEVICE_INFO and SELF_INFO,
+and otherwise emitted structural summaries. The
 [codec](../../packages/meshcore_link/lib/src/protocol/companion_messages.dart)
 recognized those two responses and device errors at the 1B.1 review; OK and
 `0x83` were unhandled summaries. The
@@ -86,10 +88,53 @@ cannot complete initialization, renew deadlines, or cause extra sends. Malformed
 controls/datagrams exercise existing protocol failure and awaited cleanup.
 No remote CI, real port enumeration/access, device commands, or LoRa tests ran.
 
-Ready-state command execution, queue consumption, application PING/PONG, and
-device/LoRa validation remain pending later steps. Encoding `0x0A` performs no
-queue operation; parsing OK proves neither command association nor delivery.
+At completion of 1B.2, ready-state command execution, queue consumption,
+application PING/PONG, and device/LoRa validation remained pending. Encoding
+`0x0A` performs no queue operation; parsing OK proves neither command association
+nor delivery.
 The application version remains `0.1.0-dev.1`.
+
+### 1B.3 implementation and validation
+
+1B.3 starts from clean `master` at `2b9b8c2d8bba349453711f248ac65a0910ffdf05`,
+PR #10's merge of codec head `35711a7b85ed2d1ee8f218ae29727510a842fc6a`.
+It reuses those codecs and the existing session, transport subscription, pending
+slot, request budget, and cleanup path. The public session now provides:
+
+- `sendChannelData(...)`: explicitly supplied channel, type, route, path, and
+  payload are validated/copied on admission. Success returns the first
+  `OkResponse` only after local write success; this is device command acceptance,
+  not wireless delivery or application acknowledgment.
+- `readNextMessage()`: one `0x0A` returns one `ChannelDataResponse`, ordinary
+  `QueuedMessageResponse`, or `NoMoreMessagesResponse`, also requiring local write
+  success. It consumes the shared inbox, including ordinary chat whose body is
+  discarded. It never automatically reads again.
+- One strict FIFO for both operations, with `maxQueuedCommands` default 8,
+  counting waiting commands only. Zero allows an idle active command. Admission
+  errors do no I/O and leave accepted work intact. Accepted command failures
+  expose frozen per-command dispatch/write/response facts and the shared session
+  root failure; cancellation and cleanup remain separate results.
+
+The [session API contract](companion-session.md) documents local error types,
+capacity, dispatch timing, the current matching table, and close cancellation.
+Command deadlines start at dispatch, cover write plus response, and terminate the
+whole session on expiration. Committed success survives later close; reserved
+and queued work remains cancelable before its dispatch microtask.
+
+Current 1B.3 reception is deliberately narrower than the full plan below:
+`0x83` only emits a structural summary, with no receive-pending flag or drain.
+Unassociated datagrams also remain structural summaries. Typed queue results
+are delivered only by an explicit read's Future, without new event subclasses
+or a raw response stream. 1B.4 will compose these APIs for explicitly enabled,
+bounded reception, notification coalescing, fairness, and typed delivery. It must
+not subscribe to the transport again or create another send path.
+
+Implementation is complete for this command-execution scope. Software evidence
+for this step is recorded separately in the
+[session verification section](companion-session.md#software-verification-and-references).
+Historical 1B.1/1B.2 and hardware evidence above and below retain their original
+boundaries. No new release, version change, USB repair, application protocol,
+real serial access, or LoRa acceptance is included.
 
 ## Fixed upstream evidence
 
@@ -240,7 +285,7 @@ Source/prose differences to retain in later implementation reviews:
   `CMD_SYNC_NEXT_MESSAGE` removes and writes the queued entry. No unsolicited
   serial `0x1B` push capability has been established for this firmware.
 
-## Planned session ownership and response dispatch
+## Session ownership and staged response dispatch
 
 The session remains the sole owner of
 [`CompanionTransport`](../../packages/meshcore_link/lib/src/transport/companion_transport.dart):
@@ -251,13 +296,16 @@ fresh transport/session for each connection attempt; no automatic reconnect.
 
 At most one device command may be in flight, with a finite pending queue and
 explicit rejection when full. All sends and queue reads use that one scheduler.
-Queue wait is covered by the task deadline; command timeout starts only at
-dispatch. This fixes semantics, not Dart class names, method signatures, or a
+Future task deadlines must cover queue wait; command timeout starts only at
+dispatch. This fixes semantics, not a
 general scheduling framework. Existing `info/watch` continue sending only their
 two initialization commands; observing `0x83` never enables reception for them.
 
-The following table applies after successful initialization, for planned 1B
-operations. A command result is retained on arrival but completes successfully
+The following table describes the full planned 1B receive integration after
+successful initialization. In current 1B.3, all waiting notices are summaries,
+unassociated datagrams have no typed delivery, and an empty read completes only
+that read; no drain exists. The send/read matching and terminal-failure rules
+are implemented. A command result is retained on arrival but completes successfully
 only after its local send also succeeds. Initialization keeps its existing
 type-specific matching policy; OK cannot replace DEVICE_INFO or SELF_INFO.
 
@@ -427,7 +475,8 @@ Plan typed results with independent local-write/device-acceptance status,
 matching-PONG observation, content validation, application RTT, failure stage,
 raw device error code when present, and cleanup status (`pending`, `succeeded`,
 or `failed`). An unattempted or unconfirmed stage must remain distinguishable
-from success. Exact Dart API and new CLI field/command names remain later work.
+from success. The task-result Dart API and new CLI field/command names remain
+later work; the current command API is documented above.
 
 Preserve the [CLI conventions](../cli.md): results on stdout, diagnostics on
 stderr, one JSON object for finite result commands and NDJSON for event tasks,
@@ -446,8 +495,8 @@ No raw-message capture is needed for this step or for routine acceptance records
 ## Acceptance to execute later
 
 All boxes below were **planned / not run in 1B.1**. This retained full-1B
-checklist is not a claim of passing software or device results; the scoped 1B.2
-implementation and validation are recorded above. Follow the existing
+checklist is not a claim of passing software or device results; scoped 1B.2 and
+1B.3 implementation and validation are recorded above. Follow the existing
 [testing evidence boundaries](../testing.md#evidence-limits).
 
 Software acceptance should use a few representative behavior groups:
@@ -514,8 +563,9 @@ no hardware, captures no raw messages, and repairs no USB issue.
 
 1B.2 implements the fixed Companion layouts, path/byte budgets, error-code caveat,
 strict local validation policies, and binary ownership/privacy rules through
-the public codec API above. 1B.3 can call those interfaces for later session
-scheduling. Bounded reception then follows the contracts here; 1B.5 must freeze
+the public codec API above. 1B.3 now uses those interfaces for serialized ready
+commands and explicit single reads. 1B.4's bounded automatic reception follows
+the remaining contracts here; 1B.5 must freeze
 application layout before PING/PONG vectors or
 round-trip implementation depend on it. CLI syntax and concrete bounded runtime
 parameters remain later implementation decisions, with radio waits selected

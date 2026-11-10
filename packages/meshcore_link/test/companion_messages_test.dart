@@ -254,25 +254,24 @@ void main() {
     );
   });
 
-  test('OK, pushes, unimplemented and unknown codes remain unhandled', () {
-    for (final opcode in [0x00, 0x83, 0x0f, 0x0e, 0xfe]) {
-      final content = Uint8List.fromList([
-        opcode,
-        ...utf8.encode('hidden-tail'),
-      ]);
-      final response = decodeCompanionResponse(content);
-      expect(response, isA<UnhandledCompanionResponse>());
-      expect(response.opcode, opcode);
-      expect(response.contentLength, 12);
-      content.fillRange(0, content.length, 0);
-      expect(response.toString(), isNot(contains('hidden-tail')));
-      expect(response.opcode, opcode);
-    }
-    expect(
-      decodeCompanionResponse(Uint8List.fromList([0x00])),
-      isA<UnhandledCompanionResponse>(),
-    );
-  });
+  test(
+    'unimplemented and unknown codes remain private structural summaries',
+    () {
+      for (final opcode in [0x0f, 0x0e, 0xfe]) {
+        final content = Uint8List.fromList([
+          opcode,
+          ...utf8.encode('hidden-tail'),
+        ]);
+        final response = decodeCompanionResponse(content);
+        expect(response, isA<UnhandledCompanionResponse>());
+        expect(response.opcode, opcode);
+        expect(response.contentLength, 12);
+        content.fillRange(0, content.length, 0);
+        expect(response.toString(), isNot(contains('hidden-tail')));
+        expect(response.opcode, opcode);
+      }
+    },
+  );
 
   test(
     'display text honors field boundaries, first NUL, and replacement UTF-8',

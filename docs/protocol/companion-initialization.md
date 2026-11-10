@@ -91,10 +91,13 @@ every feature of any protocol version.
   `knownName` covers 1..6 (unsupported command, not found, table full, bad state,
   file I/O error, illegal argument), and is null for other valid codes. A lone
   `01` is truncated. Extra bytes are ignored; no previous command is inferred.
-- Every other code returns `UnhandledCompanionResponse` with only opcode and
-  complete content length. This includes OK (`00`), notifications such as `83`,
-  unimplemented responses such as `0F`, and future codes. It is neither a parsing
-  failure nor evidence of initialization success, and triggers no queue polling.
+- The [1B.2 datagram codec](channel-datagrams.md#1b2-implementation-and-validation)
+  also recognizes OK (`00`), waiting (`83`), empty queue (`0A`), channel datagrams,
+  and ordinary queue messages. They do not satisfy initialization or trigger
+  queue polling. Other codes return `UnhandledCompanionResponse` with only
+  opcode and complete content length, including unimplemented responses such
+  as `0F` and future codes. They are neither parsing failures nor evidence of
+  initialization success.
 - Empty or oversized input throws `invalidContentLength`; a short known prefix
   throws `truncatedResponse`. These and the unsupported-layout kind are exposed
   through `CompanionProtocolExceptionKind`. `CompanionProtocolException` retains
@@ -118,10 +121,11 @@ preserving useful device information. This is a display policy, not lossless
 recovery. No trimming, normalization, placeholder values, date parsing, or semver
 validation is applied. Fixed prefixes must still be structurally complete.
 
-Logical Uint8List offset views are supported. Public-key bytes are copied into
-independent storage before exposing a read-only view; later input mutation cannot
-change the parsed object. Other retained data consists of required scalar values
-and decoded strings. Neither response models nor exceptions retain whole input
+Logical Uint8List offset views are supported. In initialization responses,
+public-key bytes are copied into independent storage before exposing a read-only
+view; later input mutation cannot change the parsed object. Other retained
+initialization data consists of required scalar values and decoded strings.
+Neither response models nor exceptions retain whole input
 buffers. Unhandled messages retain no payload, since it may contain keys,
 positions, or messages. BLE PIN and coordinates are skipped entirely in ordinary
 models. Default response summaries and exceptions contain only structural data,

@@ -89,12 +89,20 @@ void main() {
         clock.flushMicrotasks();
         for (final content in [
           [0x00],
-          [0x83, 0x42],
+          [0x83],
+          [0x0a],
+          [0x1b, 0xf2, 0xa5, 0x5a, 5, 0xff, 0x34, 0x12, 0],
+          [0x07, ...List.filled(12, 0xff)],
+          [0x10, ...List.filled(15, 0xff)],
+          [0x08, ...List.filled(7, 0xff)],
+          [0x11, ...List.filled(10, 0xff)],
           [0xfe, 0x55],
           selfInfo(name: 'too-early'),
         ]) {
           transport.receive(content);
         }
+        expect(session.state, MeshCoreSessionState.initializing);
+        expect(result.done, isFalse);
         transport.receive(deviceInfo(model: 'first-model'));
         transport.receive(deviceInfo(model: 'duplicate-model'));
         clock.flushMicrotasks();
@@ -111,7 +119,7 @@ void main() {
         expect(result.value!.deviceInfo.hardwareModel, 'first-model');
         expect(
           events.whereType<MeshCoreSessionUnassociatedResponse>(),
-          hasLength(6),
+          hasLength(12),
         );
         session.close();
         clock.flushMicrotasks();
@@ -182,6 +190,10 @@ void main() {
             }
             clock.elapse(const Duration(seconds: 4));
             transport.receive([0x83]);
+            transport.receive([0x00]);
+            transport.receive([0x0a]);
+            transport.receive([0x1b, 0, 0, 0, 0, 0xff, 0, 0, 0]);
+            transport.receive([0x08, ...List.filled(7, 0xff)]);
             transport.receive(step == 0 ? selfInfo() : deviceInfo());
             clock.elapse(second);
             expectFailure(
@@ -352,6 +364,8 @@ void main() {
         <int>[],
         [0x05],
         [0x0d, 2],
+        [0x83, 0x42], // Known controls reject unexpected tails.
+        [0x1b, 0, 0, 0, 0, 0xff, 0, 0, 1], // Missing declared payload.
       ]) {
         fakeAsync((clock) {
           final transport = FakeCompanionTransport();
@@ -363,6 +377,13 @@ void main() {
           expectFailure(result, MeshCoreSessionFailureKind.protocol, session);
           expect(session.lastFailure!.cause, isA<CompanionProtocolException>());
           expect(session.lastFailure!.stackTrace, isA<StackTrace>());
+          final closed = Outcome(session.close());
+          clock.flushMicrotasks();
+          expect(closed.done, isTrue);
+          expect(transport.closeCount, 1);
+          expect(transport.calls.last, 'cancel');
+          expect(transport.sent, hasLength(1));
+          expect(clock.pendingTimers, isEmpty);
         });
       }
     },

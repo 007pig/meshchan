@@ -67,6 +67,55 @@ void main() {
       );
     });
 
+    test('shared route capacity uses the sender validation and budgets', () {
+      expect(maxChannelDataPayloadLength, 165);
+      for (final (descriptor, length, capacity) in [
+        (0xff, 0, 165),
+        (0, 0, 165),
+        (0x60, 64, 107),
+      ]) {
+        expect(
+          maxChannelDataPayloadLengthForRoute(
+            routeDescriptor: descriptor,
+            path: Uint8List(length),
+          ),
+          capacity,
+        );
+        expect(
+          send(
+            descriptor: descriptor,
+            pathLength: length,
+            payloadLength: capacity,
+          ).length,
+          5 + length + capacity,
+        );
+        expect(
+          () => send(
+            descriptor: descriptor,
+            pathLength: length,
+            payloadLength: capacity + 1,
+          ),
+          throwsArgumentError,
+        );
+      }
+      for (final (descriptor, length) in [
+        (-1, 0),
+        (256, 0),
+        (0xff, 1),
+        (0xc0, 0),
+        (0x61, 66),
+        (0x42, 3),
+      ]) {
+        expect(
+          () => maxChannelDataPayloadLengthForRoute(
+            routeDescriptor: descriptor,
+            path: Uint8List(length),
+          ),
+          throwsArgumentError,
+        );
+      }
+    });
+
     test(
       'validates scalars, reserved hashes, path size, and exact path bytes',
       () {

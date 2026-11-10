@@ -3,10 +3,41 @@ import 'dart:typed_data';
 
 import 'serial_framing.dart' show maxSerialFrameContentLength;
 
-const _maxChannelDataPayloadLength = 165;
+/// Global channel-data payload limit at the pinned MeshCore baseline.
+/// A send route can impose a smaller limit; use
+/// [maxChannelDataPayloadLengthForRoute] before choosing application content.
+const int maxChannelDataPayloadLength = 165;
 const _maxPathByteLength = 64;
 const _sendChannelDataPrefixLength = 5;
 const _channelDataResponsePrefixLength = 9;
+
+/// Returns the payload byte capacity after validating the complete send route.
+///
+/// Flood (0xFF) requires an empty [path]. Direct descriptors require exactly
+/// their encoded path length, 1..3-byte hashes, and at most 64 path bytes.
+/// Invalid arguments throw [ArgumentError] or [RangeError] without retaining
+/// path storage. Receive-only route metadata cannot supply a return path.
+int maxChannelDataPayloadLengthForRoute({
+  required int routeDescriptor,
+  required Uint8List path,
+}) {
+  RangeError.checkValueInInterval(routeDescriptor, 0, 255, 'routeDescriptor');
+  // Handle the Flood sentinel before applying the Direct descriptor formula.
+  final pathBytes = routeDescriptor == 0xff
+      ? 0
+      : _directPathByteLength(routeDescriptor);
+  if (pathBytes == null) {
+    throw ArgumentError('routeDescriptor has a reserved or oversized path.');
+  }
+  if (path.length != pathBytes) {
+    throw ArgumentError('path must contain exactly $pathBytes bytes.');
+  }
+  final serialBudget =
+      maxSerialFrameContentLength - _sendChannelDataPrefixLength - pathBytes;
+  return serialBudget < maxChannelDataPayloadLength
+      ? serialBudget
+      : maxChannelDataPayloadLength;
+}
 
 /// Encodes APP_START inner content, without a serial header or I/O.
 ///
@@ -59,22 +90,10 @@ Uint8List encodeSendChannelData({
 }) {
   RangeError.checkValueInInterval(channelIndex, 0, 255, 'channelIndex');
   RangeError.checkValueInInterval(dataType, 1, 65535, 'dataType');
-  RangeError.checkValueInInterval(routeDescriptor, 0, 255, 'routeDescriptor');
-  // Handle the Flood sentinel before applying the Direct descriptor formula.
-  final pathBytes = routeDescriptor == 0xff
-      ? 0
-      : _directPathByteLength(routeDescriptor);
-  if (pathBytes == null) {
-    throw ArgumentError('routeDescriptor has a reserved or oversized path.');
-  }
-  if (path.length != pathBytes) {
-    throw ArgumentError('path must contain exactly $pathBytes bytes.');
-  }
-  final serialBudget =
-      maxSerialFrameContentLength - _sendChannelDataPrefixLength - pathBytes;
-  final maxPayload = serialBudget < _maxChannelDataPayloadLength
-      ? serialBudget
-      : _maxChannelDataPayloadLength;
+  final maxPayload = maxChannelDataPayloadLengthForRoute(
+    routeDescriptor: routeDescriptor,
+    path: path,
+  );
   RangeError.checkValueInInterval(
     payload.length,
     0,
@@ -82,7 +101,7 @@ Uint8List encodeSendChannelData({
     'payload.length',
   );
 
-  final typeOffset = 3 + pathBytes;
+  final typeOffset = 3 + path.length;
   final content = Uint8List(typeOffset + 2 + payload.length);
   content[0] = 0x3e;
   content[1] = channelIndex;
@@ -382,7 +401,7 @@ void _requireExactLength(Uint8List content, int expected) {
 ChannelDataResponse _decodeChannelData(Uint8List content) {
   _requireLength(content, _channelDataResponsePrefixLength);
   final payloadLength = content[8];
-  if (payloadLength > _maxChannelDataPayloadLength) {
+  if (payloadLength > maxChannelDataPayloadLength) {
     throw CompanionProtocolException._(
       CompanionProtocolExceptionKind.invalidPayloadLength,
       contentLength: content.length,

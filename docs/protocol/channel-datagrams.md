@@ -14,7 +14,8 @@ remains `0.1.0-dev.1`.
 | Implementation at the 1B.1 review | USB transport, serial framing, initialization codecs, a single-use session, and `ports`, `port-check`, `info`, and `watch`. No datagram codec, ready-state command executor, queue reader, or PING/PONG operation exists at the reviewed commit. |
 | Implementation after 1B.3 | The 1B.2 binary codecs plus ready-state send and single consuming queue-read APIs, sharing a bounded command FIFO. See the scoped records below. |
 | Implementation after 1B.4 | Explicitly started finite reception, coalesced notices, bounded batches through the original FIFO, typed observations, and pause/stop settlement. |
-| Remaining planned 1B behavior | Application PING/PONG exchange, coordination, and finite CLI diagnostic tasks. |
+| Implementation after 1B.5 | Frozen diagnostic v1 payload, pure Dart message codec/classification, targeted PONG construction, exact field matching, and shared send-route capacities. |
+| Remaining planned 1B behavior | Runtime PING/PONG coordination, finite responder tasks, nonce/request lifecycle, deduplication, deadlines, RTT, and CLI integration. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
 The [session contract](companion-session.md) remains authoritative for the
@@ -153,8 +154,56 @@ session events and CLI schemas retain structural diagnostics without payload.
 See the [API and parameterized example](companion-session.md#explicit-bounded-reception-1b4)
 and [actual software checks](companion-session.md#1b4-software-verification-on-november-10-2026).
 Application layout, PING/PONG matching, coordination, and new CLI tasks remain
-pending, as do all real datagram/LoRa acceptance trials. No version, dependency,
-native serial, or CI change is included; historical evidence is retained above.
+pending at the end of 1B.4, as do all real datagram/LoRa acceptance trials. No
+version, dependency, native serial, or CI change is included; historical evidence
+is retained above.
+
+### 1B.5 implementation and validation
+
+1B.5 starts from clean `master` at
+`4f6171962ced32f5fe1cc6a0ea38b64e49bea51c`, the actual PR #12 merge,
+including reception head `f99278b86360c84b0e3c1ae92941834a0e25d489`.
+The PR page was rechecked on November 10, 2026, and showed merged status.
+The pinned MeshCore upstream remains unchanged. The new
+[`diagnostics/ping_pong.dart`](../../packages/meshcore_link/lib/src/diagnostics/ping_pong.dart)
+is independent of session state and does no I/O. Its explicit root exports and
+the shared Companion route-budget helper are documented below.
+
+The implementation freezes the v1 format and default runtime deduplication
+policy. Only codec, classification, construction, and field equality are
+implemented; allocation of runs/requests, actual sending/responding, deduplication
+state, timeout, and RTT remain 1B.6. The application remains `0.1.0-dev.1`.
+
+Actual software checks on November 10, 2026, used
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` 3.13.7 stable,
+`macos_arm64`, with process PATH
+`/opt/homebrew/share/flutter/bin:/usr/bin:$PATH` and Apple Clang 21.0.0.
+`flutter --version` failed because the sandbox denied SDK cache engine-stamp
+and `engine.realm` writes. Existing SDK metadata reports Flutter 3.47.9 stable,
+revision `c197ca5199e9ee5661e865596c9c07294dfab51c`; that is not a successful
+fresh Flutter CLI check. No SDK, cache sources, permissions, or global settings
+were changed, and no alternate SDK was installed.
+
+| Check (using that bundled Dart) | Actual result |
+| --- | --- |
+| `dart --version`; `dart pub get --enforce-lockfile` | Dart 3.13.7; locked resolution passed with no dependency/lockfile changes. |
+| `dart format` on the five changed Dart files, then `dart format --output=none --set-exit-if-changed .` | Passed; final workspace check covered 32 files with zero changes. |
+| `dart analyze --fatal-infos` | Passed; no issues. |
+| Core `dart test test/ping_pong_test.dart test/channel_datagrams_test.dart test/companion_messages_test.dart --reporter expanded` | Passed; 39 tests, including 17 new diagnostic groups and one shared-capacity regression. |
+| Complete core `dart test --reporter expanded`, then complete CLI `dart test --reporter expanded` | Passed sequentially; 138 and 27 tests. |
+| CLI `dart build cli --target=bin/meshctl.dart --output=/tmp/meshchan-1b5.8gyMU6/meshctl`, then core `dart build cli --target=example/serial_transport_check.dart --output=/tmp/meshchan-1b5.8gyMU6/observation` | Both passed once, sequentially, in fresh temporary output. |
+| `python3 tool/smoke_cli.py --dart /opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --cli-bundle /tmp/meshchan-1b5.8gyMU6/meshctl/bundle --observation-bundle /tmp/meshchan-1b5.8gyMU6/observation/bundle` | Passed; all 46 macOS process checks, both native asset checks, and bundle relocation. Linux-only enumeration refusal was not applicable. |
+| `git diff --check`, new/changed-file encoding, exports, relative links, and scope review | Passed; UTF-8 without BOM, LF, final newlines; version, dependencies, lockfile, CI, target 3, and session/reception/native behavior unchanged. |
+
+The focused tests separately assert independent fixed encode/decode vectors,
+ordered malformed/unsupported classification, uint32 and content boundaries,
+route capacities, exact peer/slot/content matching, ordinary-message summaries,
+offset views, ownership, and safe default output. No new runtime dependency,
+fake clock, sleep, hardware fixture, or repeated attempt around failing tests
+was needed. Native builds/smoke are existing-product regressions; they do not
+establish diagnostic AOT execution, actual USB exchange, or LoRa round trips.
+No remote CI, real serial enumeration/access, device command, or radio trial ran.
+Historical 1B.1–1B.4 and hardware records retain their separate dates and limits.
 
 ## Fixed upstream evidence
 
@@ -266,7 +315,7 @@ radio datagram payload limit = 184 - 16 - 3 = 165 bytes
 send content length          = 5 + pathBytes + payloadBytes
 maxPayload                   = min(165, 176 - 5 - pathBytes)
 receive content length       = 9 + payloadBytes
-test content budget          = maxPayload - testHeaderBytes
+diagnostic v1 content budget = maxPayload - 34
 ```
 
 `pathBytes` is `P` above, not the descriptor's integer value. For example, Direct
@@ -282,9 +331,28 @@ rejects oversize input locally, before I/O. The receiver checks fields and decla
 length before slicing/copying payload. There is no fragmentation or truncation.
 Encoded output and received payloads must own their bytes rather than alias
 caller buffers or reusable decoder storage.
-165 is an application datagram limit, not an article limit or an unconditional
-PING/PONG test-content budget. The exact test header size is deferred to 1B.5;
-both outbound and return-route capacities must accommodate the chosen content.
+The public `maxChannelDataPayloadLength` is the single global payload constant.
+`maxChannelDataPayloadLengthForRoute(routeDescriptor:, path:)` validates the
+send descriptor and exact path with the same checks used by
+`encodeSendChannelData()`, then computes the smaller radio/serial capacity.
+`maxDiagnosticContentLengthForRoute(routeDescriptor:, path:)` subtracts the
+34-byte diagnostic header without duplicating the route formula.
+
+| Validated send route | Maximum payload | Maximum diagnostic content |
+| --- | ---: | ---: |
+| Flood, empty path | 165 bytes | 131 bytes |
+| Zero-hop Direct, empty path | 165 bytes | 131 bytes |
+| Direct with a legal 64-byte path (for example, descriptor `0x60`) | 107 bytes | 73 bytes |
+
+Application construction/encoding enforces the global 165-byte limit; successful
+encoding does not mean the payload fits an arbitrary route. The caller must
+check its actual route, and the send encoder enforces that capacity again.
+PING and PONG have equal header lengths and must carry identical content.
+When both routes are known, the round-trip content capacity is the smaller
+direction's payload capacity minus 34. When only the local route is known, check
+only that route; do not infer remote capacity or silently shorten a response.
+Receive metadata has no complete path and cannot construct the return route.
+These limits do not define article size or a future BBS content format.
 
 Source/prose differences to retain in later implementation reviews:
 
@@ -396,8 +464,9 @@ Implemented 1B.4 policy (see the [session API](companion-session.md#explicit-bou
 Consumed ordinary bodies are discarded; post-consumption filtering cannot put
 entries back. Already-added stream entries can still be delivered after resume.
 This is finite queue consumption, not lossless observation, chat archiving, or a
-reliable persistent message service. Application matching and PING/PONG remain
-later work; unassociated typed observation is not proof of firmware push support.
+reliable persistent message service. 1B.5's pure application helpers consume
+these typed datagrams; runtime PING/PONG coordination remains later work.
+Unassociated typed observation is not proof of firmware push support.
 
 Use dedicated test Companions and exclusive sessions for initial acceptance.
 Future firmware may offer other delivery modes; adopting them requires separate
@@ -456,36 +525,192 @@ events. Late open/send completions cannot revive work. Logical deadlines do not
 preempt blocking native calls or prove resource release. Cleanup can remain
 pending; do not invent a forced-free deadline or report pending cleanup as success.
 
-## PING/PONG semantics; layout deferred to 1B.5
+## Meshchan diagnostic PING/PONG v1
 
-Use experimental `data_type = 0xFFFF` for 1B, with a Meshchan test-protocol
-identifier inside the payload to distinguish other development traffic. This
-does not allocate a production application number. Necessary application fields
-are protocol identifier, version, message kind (PING/PONG), request ID,
-sender test ID, target test ID, and test content. Run correlation must include
-a fresh run nonce (or an equivalently unique request namespace), so a previous
-run cannot supply the current response. Session-local request counters are not
-application IDs and never substitute for this wire correlation.
+The outer experimental `data_type = 0xFFFF` is exported as
+`diagnosticDataType`. This is a Meshchan diagnostic application protocol, not
+MeshCore built-in fields, a production type allocation, or a BBS content format.
+Offsets below start at application payload byte zero, excluding all Companion
+and serial fields. `diagnosticHeaderLength` is **34 bytes**.
 
-Only the explicitly targeted responder may answer a matching supported PING.
-Its PONG preserves the run/request correlation, names the responder as sender
-and initiator as target, and echoes the test content byte for byte. The initiator
-checks protocol/version/type, run/request, both test IDs, selected receive
-channel, and exact expected content. A PONG never triggers another response.
-Other IDs, stale runs, mismatched contents, and unknown application formats are
-nonmatching data; they cannot extend the deadline.
+| Offset | Bytes | Field | v1 value or encoding |
+| --- | ---: | --- | --- |
+| 0..3 | 4 | Magic | ASCII `MCHP`, `4D 43 48 50` |
+| 4 | 1 | Version | `01` |
+| 5 | 1 | Kind | `01` PING, `02` PONG |
+| 6..21 | 16 | Run nonce | Raw bytes, never an integer or UUID |
+| 22..25 | 4 | Request ID | Nonzero uint32, little-endian |
+| 26..29 | 4 | Sender test ID | Nonzero uint32, little-endian |
+| 30..33 | 4 | Target test ID | Nonzero uint32, little-endian |
+| 34 onward | Remaining | Test content | Exact binary bytes, possibly empty |
 
-Default to one PING without automatic resend. Responder/listen tasks need an
-explicit finite response count or duration. Duplicate suppression uses a bounded,
-expiring cache keyed by run/request and test peers: a duplicate PING cannot
-cause repeated PONGs within that window, and duplicate PONGs cannot replace the
-first observation or RTT. Test IDs and nonces provide correlation, not formal
-identity authentication or replay-proof security.
+All multibyte fields explicitly use `Endian.little` with
+`ByteData.sublistView` and uint32 reads/writes. The three IDs range from
+`1..0xFFFFFFFF`; sender and target must differ. These are Meshchan diagnostic
+policies, not MeshCore restrictions. Test IDs are user-configured local labels;
+avoid duplicate labels in a test environment. They are not public keys, authors,
+accounts, or authentication results.
 
-**1B.5 owns** the exact protocol identifier value, field widths, application
-endianness, nonce encoding, diagnostic header size, fixed test vectors, and
-concrete duplicate-cache capacity/expiry. The Companion uint16 endianness above
-is already fixed; it does not decide these application-layout choices.
+Nonce validation checks only the 16-byte length; all-zero and fixed test nonces
+are valid. The codec accepts an explicit nonce and never reads a clock, generates
+randomness, or allocates IDs. For each new runtime run, 1B.6 must use
+[`Random.secure()`](https://api.dart.dev/dart-math/Random/Random.secure.html)
+and `nextInt(256)` to generate 16 fresh bytes. Fail if a secure source is
+unavailable; do not fall back to ordinary `Random()`, timestamps, or session
+counters. Never reuse or silently wrap a request ID under the same run nonce;
+exhaustion requires a new run. Store/compare nonces as bytes, never uint64, one
+Dart `int`, or decimal text. Uint32 IDs avoid large-integer representation
+differences described in the [Dart number guide](https://dart.dev/resources/language/number-representation).
+Nonce/ID correlation supplies no formal authentication, forgery resistance, or
+persistent replay protection.
+
+Content extends to the outer datagram boundary. There is no content-length
+field, timestamp, checksum, terminator, or reserved tail. Preserve NUL, high
+bytes, and invalid UTF-8 without truncation, transcoding, compression, or base64.
+Budgets count bytes, never string length. Appending bytes within capacity yields
+longer valid content; it can fail exact PONG matching without failing decoding.
+
+### Public API and classification
+
+The existing `package:meshcore_link/meshcore_link.dart` entry explicitly exports:
+
+- `MeshchanDiagnosticMessage(kind:, runNonce:, requestId:, senderTestId:,
+  targetTestId:, content:)`, with `DiagnosticKind.ping` / `.pong`, the fixed
+  `version` getter, and read-only nonce/content. The factory checks all fields
+  and global content capacity before copying bytes. Invalid parameters throw
+  `ArgumentError` / `RangeError` without retaining private byte/ID values.
+- `encodeDiagnosticPayload(message)`, returning independently owned bytes;
+  `decodeDiagnosticPayload(payload)`, accepting logical offset views.
+- `classifyDiagnosticDatagram(ChannelDataResponse)`, checking the outer data
+  type before application parsing. `QueuedMessageResponse` is filtered by the
+  caller's type check; its discarded chat body is neither restored nor parsed.
+- `DiagnosticDecodeResult`, with `status`, nullable `reason`, and nullable
+  `message`; `DiagnosticDecodeStatus` and `DiagnosticDecodeReason` describe
+  nonmatching traffic without exceptions. Exactly a valid result has a message
+  and no reason; every other result has a reason and no message/input storage.
+- `createDiagnosticPong(datagram:, expectedReceiveChannelIndex:, localTestId:,
+  peerTestId:)` and `matchesDiagnosticPong(expectedPing:, datagram:,
+  expectedReceiveChannelIndex:)`, described below.
+- `diagnosticDataType`, `diagnosticHeaderLength`,
+  `maxChannelDataPayloadLength`, `maxChannelDataPayloadLengthForRoute`, and
+  `maxDiagnosticContentLengthForRoute`, described in the capacity section.
+
+Classification is ordered; check lengths before reading fields:
+
+1. The datagram entry rejects other data types as `unrelated/differentDataType`,
+   even when their bytes look like MCHP. The raw payload API starts at step 2
+   and cannot establish the correct outer type or channel.
+2. Fewer than four bytes or different magic gives `unrelated/differentMagic`.
+3. Complete magic without a version gives `malformed/truncated`.
+4. A version other than 1 gives `unsupported/unsupportedVersion`, without
+   applying the v1 header length, capacity, or field layout to future versions.
+5. Version 1 without kind gives `malformed/truncated`; unknown kind gives
+   `unsupported/unsupportedKind` before any v1 body interpretation.
+6. A known v1/kind requires at least 34 bytes and at most
+   `maxChannelDataPayloadLength`, otherwise `malformed/truncated` or
+   `malformed/payloadTooLong`. Zero IDs give `malformed/invalidId`; equal
+   sender/target gives `malformed/identicalEndpoints`.
+7. Only after validation, copy the nonce and all remaining content into a
+   valid model and return `valid`.
+
+An unknown, unsupported, or malformed application is expected nonmatching
+traffic, not `CompanionProtocolException`. Parsing does not throw an out-of-range
+read, retain failed inputs, close a session, or catch all programming errors.
+Malformed Companion envelopes still use their existing protocol failure path.
+The final application model does not extend sealed `CompanionResponse`; there
+are no new transport subscriptions or session event types. All new application
+code is pure Dart without Flutter, session, database, or clock dependencies.
+The package's existing native serial code still means this step makes no
+whole-package Flutter Web support claim.
+
+### Pure response construction and field matching
+
+`createDiagnosticPong()` validates the configured, distinct, nonzero uint32
+local/peer labels and expected local uint8 receive slot (`0..255`). It returns
+a PONG only when the actual slot matches, the outer type and application are
+valid PING, target equals the local label, and sender equals the configured peer.
+It swaps sender/target, preserves nonce/request, and echoes content byte for byte.
+Other slots/peers/targets, PONG, unknown formats, and malformed applications yield
+null. It does not send, count, reserve a deduplication entry, or check a selected
+return route's capacity. A PONG never triggers another response.
+
+`matchesDiagnosticPong()` requires a valid model whose kind is PING; passing a
+PONG as the expected request or an invalid receive slot is a local argument
+error. It checks the actual local slot, outer type, magic/version/PONG kind,
+nonce by byte value, request ID, swapped sender/target, and both content length
+and byte values. Independently allocated equal byte arrays match; `Uint8List ==`
+identity is never the comparison. The local channel is absent from the payload:
+A may send/receive in slot 2 and B in slot 5 on the same actual channel. B checks
+5 for its received PING; A checks 2 for its received PONG. Slot configuration
+itself is the caller's responsibility.
+
+True means **field equality only**. It establishes neither an active/unexpired
+request, uniqueness, local send success, nor a completed round trip. Reception's
+typed entry may arrive before send-Future/local-OK settlement, and the local
+write may subsequently fail. First-result commitment, early PONG retention,
+failure precedence, remote deadlines, and RTT remain 1B.6 responsibilities.
+Unrelated traffic cannot renew runtime deadlines. Default summaries/errors expose
+only kind/version/length/reason, never content, full nonces/test IDs, paths,
+raw frames, or channel keys. Constructed/decoded bytes are independently owned
+and read-only; encoded output is independently mutable.
+
+### Independent fixed application vectors
+
+Both vectors are 38-byte payloads only. They use nonce
+`00112233445566778899AABBCCDDEEFF`, request `0x12345678`, A test ID
+`0x89ABCDEF`, B test ID `0xF1020304`, and content `00 3C 80 FF`.
+Outer type and local channel/receive metadata are explicitly supplied separately
+in Companion fixtures. Expected bytes are fixed constants, not encoder output.
+
+PING, A to B:
+
+```text
+4D 43 48 50 01 01
+00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF
+78 56 34 12
+EF CD AB 89
+04 03 02 F1
+00 3C 80 FF
+```
+
+PONG, B to A:
+
+```text
+4D 43 48 50 01 02
+00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF
+78 56 34 12
+04 03 02 F1
+EF CD AB 89
+00 3C 80 FF
+```
+
+### Frozen runtime deduplication policy (implementation in 1B.6)
+
+Default to one PING without automatic resend. Each finite responder task must
+have an explicit response count or duration and use this default policy:
+
+- At most **128 entries**, with a **two-minute** window measured by monotonic
+  time from first acceptance for settled records. Key by local receive channel,
+  nonce bytes, request ID, sender test ID, and target test ID. Fixed channel/local
+  values may be explicit task/cache scope instead of repeated entry fields.
+- Content is excluded from the key. The same key with different content is a
+  conflict: do not replace the original record or schedule an extra PONG.
+- Reserve the first valid, configured-peer/target PING **before** asynchronously
+  queuing its response. Duplicates neither send again nor refresh expiry.
+  A failed send does not permit automatic retry on a later duplicate; schedule
+  at most one response attempt per request by default.
+- Remove expired, settled entries first. If 128 entries still remain, ignore
+  new unique requests and record a structured runtime capacity reason. Do not
+  evict unexpired records to admit more responses and break the window contract.
+- An unsettled response remains recorded even beyond two minutes until it
+  settles. Existing command/whole-task deadlines bound its lifecycle.
+- Two minutes is neither a response timeout, radio delay bound, nor reliability
+  promise. There is no persistent replay protection after task end/restart or
+  outside the window. Duplicate initiator PONGs cannot replace the first committed
+  observation/RTT; active-request checks and commitment belong to 1B.6.
+
+1B.5 implements no cache, Map/LRU, timer, background task, or responder state
+machine. Pure matching tests do not establish deduplication or round-trip success.
 
 ## Device, channel, and route inputs
 
@@ -536,7 +761,7 @@ No raw-message capture is needed for this step or for routine acceptance records
 
 All boxes below were **planned / not run in 1B.1**. This retained full-1B
 checklist is not a claim of passing software or device results; scoped 1B.2 and
-1B.3/1B.4 implementation and validation are recorded above. Follow the existing
+1B.3/1B.4/1B.5 implementation and validation are recorded above. Follow the existing
 [testing evidence boundaries](../testing.md#evidence-limits).
 
 Software acceptance should use a few representative behavior groups:
@@ -558,7 +783,8 @@ Software acceptance should use a few representative behavior groups:
 - [ ] **Application correlation:** correct peer/run/request/content, wrong
   IDs/version/content, stale or expired entries, duplicate PING/PONG,
   unsolicited PONG, early PONG, and early PONG followed by local failure.
-  Add fixed application vectors only after 1B.5 freezes the layout.
+  1B.5 now supplies the fixed application vectors and pure field matching;
+  active-request, deduplication, timeout, and early-failure tests remain 1B.6.
 - [ ] **Timeout/disconnect/cleanup:** separate initialization, command,
   remote-response, and whole-task deadlines; unrelated traffic cannot renew
   them. Cover cancellation, stream error/done after ready, late callbacks,
@@ -606,11 +832,15 @@ no hardware, captures no raw messages, and repairs no USB issue.
 strict local validation policies, and binary ownership/privacy rules through
 the public codec API above. 1B.3 now uses those interfaces for serialized ready
 commands and explicit single reads. 1B.4 now exposes `MeshCoreReception` with
-finite typed observation and owned-read settlement. 1B.5 must freeze
-application layout before PING/PONG vectors or
-round-trip implementation depend on it. CLI syntax and concrete bounded runtime
-parameters remain later implementation decisions, with radio waits selected
-from measurements. The codec does not implement those subsequent steps.
+finite typed observation and owned-read settlement. 1B.5 now freezes diagnostic
+v1 and supplies pure codec/classification, targeted PONG construction, exact
+matching, shared route capacities, and the default deduplication policy above.
+1B.6 must combine these helpers with the existing receiver/FIFO to coordinate one
+request and finite responses, secure nonce/request lifecycles, runtime
+deduplication, deadlines, failure commitment, and RTT. 1B.7 then integrates those
+operations into the CLI. Concrete runtime/CLI parameters remain later decisions,
+with radio waits selected from measurements. None of those runtime operations
+or hardware acceptance is implemented by the application codec.
 
 1B.1 review is limited to current-code/source comparisons, table/formula
 consistency, relative and fixed-commit links, UTF-8/LF/whitespace checks, and

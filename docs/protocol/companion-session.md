@@ -12,7 +12,8 @@ and awaits the shared cleanup result before returning.
 
 Phase 1B.3 adds ready-state `sendChannelData()` and explicit `readNextMessage()`
 through this same session. They share its single pending slot and one bounded
-FIFO. Automatic reception, application PING/PONG, and new CLI commands remain
+FIFO. Phase 1B.4 adds explicitly enabled, finite reception through a separate
+single-subscription stream. Application PING/PONG and new CLI commands remain
 later work; existing `info/watch` still send only the initialization pair.
 
 ## API and ownership
@@ -63,6 +64,8 @@ Future<CompanionResponse> readNextMessage();
 ```
 
 Both methods accept new work only in `ready`, without connecting implicitly.
+Manual reads also return `StateError` while a reception owns the queue, including
+its stopping phase.
 Admission errors are delivered through the returned Future: `StateError` outside
 ready, codec `ArgumentError` / `RangeError` for invalid send parameters, and
 `MeshCoreSessionQueueFull` when waiting capacity is exhausted. These errors do
@@ -95,6 +98,115 @@ dispatch in a microtask. Reservation does not register a matching request or
 start its timer. Input in that gap remains unassociated and cannot supply the
 later command. On completion, the next waiting command is reserved before other
 calls can enter, so neither FIFO nor capacity can be bypassed between microtasks.
+
+## Explicit bounded reception (1B.4)
+
+```dart
+MeshCoreReception createReception({
+  required Duration duration,
+  int maxEntries = 128,
+  int maxReadsPerBatch = 8,
+});
+// Members of MeshCoreReception:
+Stream<CompanionResponse> get entries;
+Future<void> start();
+Future<MeshCoreReceptionResult> get done;
+Future<MeshCoreReceptionResult> stop();
+```
+
+Create, listen, then explicitly `start()`. Creation, stream access, and subscribing
+do no I/O. All three budgets must be positive; invalid configuration throws
+`ArgumentError`. These are client resource policies, not MeshCore constants.
+`start()` requires ready, an active entries listener (which may be paused), no
+running/stopping receiver, and no accepted manual read in the reserved, queued,
+or dispatched position. Rejection returns `StateError`, closes that handle's
+stream, and settles its `done` as `startRejected` with `startError`, without a
+lease, timer, or I/O. A handle permits one start attempt; repeated starts fail
+locally without changing the original reception. Stop before start is also safe.
+
+Successful start atomically installs the session lease, typed observation gate,
+and duration timer before scheduling one initial check, even without `0x83`.
+Its Future means activation is complete, not that reception has finished.
+Duration includes FIFO waiting, pauses, and batch waits; input never renews it.
+Resume and batch continuation do not create new initial checks.
+
+Automatic reads have low priority: one demand flag is retained while the original
+FIFO is busy. Only an idle FIFO can synchronously reserve one automatic read
+through the original command executor. No automatic read enters the waiting
+queue, and a receiver owns at most one unsettled read. All accepted user sends
+retain FIFO order and capacity rules; even `maxQueuedCommands: 0` supports
+reception, but a user send arriving while a read is active can still be rejected.
+Continuously accepted sends can postpone reception until its duration expires;
+there is no bandwidth or delivery guarantee under send saturation.
+
+Every valid waiting notice updates one demand bit and a notification sequence;
+the existing structural `events` notice is still emitted for each input. A
+nonempty read, including ordinary chat, continues draining. Only the first
+matching empty for the owned read can end its drain, and only for notices covered
+by that read's dispatch sequence. A newer waiting notice survives even if empty
+arrives first and the local write completes later. Duplicated/unassociated empty
+input cannot clear demand. At most `maxReadsPerBatch` completed reads, including
+empty results, form a batch. Pending continuation crosses a zero-duration Timer
+event turn; notices, resume, and FIFO idle wakeups cannot bypass that wait.
+
+`entries` is a standard asynchronous single-subscription stream. Its sole
+publication point is the real session decoder/dispatcher: every valid datagram or
+ordinary-message frame observed while running is added at most once, whether
+matching a read, arriving during a send, or arriving without pending work. A
+read's Future drives settlement/continuation only. Two equal input frames are
+two observations; there is no application deduplication or `dataType` filter.
+`ChannelDataResponse` retains the existing independent read-only payload;
+`QueuedMessageResponse` retains only kind, opcode, and content length. Empty,
+waiting, OK, device errors, and unknown opcodes are not entries. Early typed
+observation does not prove local write success; a later write failure still
+terminates the original command and session.
+
+The entire lifetime adds at most `maxEntries` entries, counted before each add,
+including unassociated input and input arriving while paused. The final permitted
+add immediately stops observation and new reads. There is no additional payload
+queue. Pausing the listener prevents new automatic reads and can withdraw its
+undispatched reservation; dispatched work settles normally. Resume preserves
+existing demand and the original deadline. Neither pause nor cancel propagates
+to the session's transport subscription. `listen((entry) async { ... })` does
+not make the producer await business processing; callers manage that concurrency
+using subscription pause/resume and the hard total entry limit. The old broadcast
+diagnostic stream retains its separate per-observer buffering behavior.
+
+**Each `0x0A` consumes a shared device entry**, possibly ordinary chat or another
+application's datagram. Ordinary bodies are discarded and cannot be restored by
+later filtering. This API is not a chat archive or reliable persistent service,
+and observing unassociated datagrams is not evidence of firmware push support.
+
+Stop, listener cancel, duration, entry limit, or session termination immediately
+forbid further typed adds and automatic reads. Stop is idempotent and shares
+`done`. An undispatched owned reservation is withdrawn using a private local
+signal, without changing `lastFailure` or canceling sends. A dispatched read
+keeps its first response, write result, matcher, and original request timer.
+The lease stays held until that read's logical result and continuation settle,
+including when success was already committed before stop. Input after stopping
+is not published to that receiver but can still settle the read and consume a
+device entry. Healthy reception stop/cancel leaves the session usable. A command
+timeout still fails the whole session under the original rules.
+
+`MeshCoreReceptionResult` separates the first `reason` (`startRejected`, `stopped`,
+`subscriptionCanceled`, `durationElapsed`, `entryLimit`, `sessionClosed`, or
+`sessionFailed`) from subsequent `commandFailure` / `sessionFailure`, preserving
+original failure objects, causes, stacks, and device codes. For example, duration
+followed by an in-flight timeout keeps both facts. `publishedEntries` counts adds,
+not listener processing or persistence. `dispatchedReads` counts actual automatic
+dispatches; `completedReads` counts those settled with success or failure,
+excluding withdrawn reservations. Default summaries contain structure only.
+Expected termination uses result values, not stream errors.
+
+`done` represents logical receiver/owned-command settlement and lease release.
+It neither awaits native cleanup nor the controller's close Future, which is
+observed independently. Cancel's Future can await this logical stop without a
+close/onCancel cycle. Paused or never-listened streams cannot block it or session
+cleanup. Entries added before stopping can still reach a listener after resume;
+stop does not retract Dart's queued events. Duration bounds new work/observation,
+while settlement can take the remaining request budget. A Timer cannot preempt a
+blocking native call. Await `session.close()` separately according to ownership;
+the result is not a native cleanup certificate.
 
 ## States and initialization policy
 
@@ -180,9 +292,10 @@ Every retained success also requires local write completion. ERROR still
 terminates a command whose result arrived while its write remains pending.
 `readNextMessage` has multiple permitted response types, so its session failure's
 `expectedResponseOpcode` is null, while `commandOpcode` remains `0x0A`.
-Unassociated datagrams are structural events without typed payload delivery;
-there is no raw response stream or response pool. `0x83` never sets a drain flag
-or schedules work. Explicit typed automatic reception belongs to 1B.4.
+Unassociated datagrams remain structural events without payload; there is no raw
+response stream or response pool. Without enabled reception, `0x83` never sets a
+drain flag or schedules work. An enabled reception adds the independent typed
+observation and scheduling below without changing matching or event classes.
 
 A ready command commits success by completing its internal Future before
 releasing pending state and reserving its successor. Dispatch of the successor
@@ -236,8 +349,9 @@ actual pending/timer registration immediately before `sendFrame()`. Queue wait
 does not consume it. An early result with an unfinished write still times out.
 **A device-command timeout terminates the entire session** and all accepted work;
 it never frees the slot to send another command. Task-wide and remote-response
-deadlines and application RTT are not implemented here. Future task callers must
-include queue waiting in their total budget and close the session to stop work.
+deadlines and application RTT are not implemented here. Reception's separate
+duration includes queue waiting and can stop its own work without closing a
+healthy session. Future whole-task callers must still manage their total budget.
 
 On fault or cancellation, the session invalidates pending work and cancels all
 session timers immediately. It completes an unfinished `connect()` and every
@@ -357,6 +471,62 @@ one-second sessions also passed. Increasing startup delay is not an established
 fix. There is no automatic extra query, retry, flush, or device-name change to
 force delivery. The Step 5 temporary probe remains a separate historical result.
 
+## Finite reception example
+
+This parameterized example owns a fresh session/transport and closes it in
+`finally`. A caller using an already-owned session should stop/cancel only its
+receiver and leave session cleanup to that owner. The callback below should
+handle entries synchronously or arrange its own bounded business processing.
+Reading this example performs no hardware operations.
+
+```dart
+import 'dart:async';
+
+import 'package:meshcore_link/meshcore_link.dart';
+
+Future<MeshCoreReceptionResult> receiveFor({
+  required CompanionTransport transport,
+  required Duration duration,
+  required void Function(CompanionResponse) onEntry,
+  int maxEntries = 128,
+  int maxReadsPerBatch = 8,
+}) async {
+  final session = MeshCoreSession(transport: transport);
+  MeshCoreReception? receiver;
+  StreamSubscription<CompanionResponse>? subscription;
+  var operationFailed = false;
+  try {
+    await session.connect();
+    final active = receiver = session.createReception(
+      duration: duration,
+      maxEntries: maxEntries,
+      maxReadsPerBatch: maxReadsPerBatch,
+    );
+    subscription = active.entries.listen(onEntry); // Install before start.
+    final settled = active.done; // Independent of stream done and native close.
+    await active.start();
+    final result = await settled;
+    if (result.sessionFailure case final failure?) {
+      Error.throwWithStackTrace(failure, failure.stackTrace);
+    }
+    return result;
+  } catch (_) {
+    operationFailed = true;
+    rethrow;
+  } finally {
+    await receiver?.stop(); // May wait for the dispatched read's request budget.
+    await subscription?.cancel();
+    try {
+      await session.close(); // Caller owns this session; await actual cleanup.
+    } catch (_) {
+      if (!operationFailed) rethrow;
+      // Keep the primary exception; inspect session.cleanupFailures separately.
+      print('Cleanup also failed; inspect session.cleanupFailures.');
+    }
+  }
+}
+```
+
 ## Software verification and references
 
 Run `dart test test/meshcore_session_test.dart` from `packages/meshcore_link`.
@@ -409,7 +579,56 @@ existing products, not ready-command AOT execution or hardware behavior. No real
 port enumeration/access, LoRa operation, or remote CI run was performed. The
 application remains `0.1.0-dev.1`.
 
-The Dart asynchronous semantics were rechecked against the actual SDK and these
+### 1B.4 software verification on November 10, 2026
+
+The clean baseline was `master` at
+`4a8ae298a85deb5812492c4e2fd5ca3d751c4805`, containing PR #11's
+`db3bf29db2cfbeac3cbb43e6675b91666ecb082e`. Reception is implemented in a
+small part of the session library, using the original queue, decoder, pending
+slot, request deadlines, and transport subscription. The existing ready harness
+and two synthetic frame helpers were moved unchanged into session test support.
+
+`test/meshcore_reception_test.dart` adds 27 behavior groups with the real codec,
+synchronous fake transport, controlled Completers, and virtual time. They cover
+explicit activation/admission, reserved/queued/dispatched manual reads, notice
+coalescing and empty/write races, true batch event turns, send priority/capacity
+zero, typed observations before write success, ordinary-message summaries,
+paused quotas, every read stop position, cancel/close cycles, failure precedence,
+pending cleanup, and stale callbacks. No hardware boundary is invoked.
+
+Checks used the same bundled Dart 3.13.7 and process PATH described for 1B.3;
+the Flutter wrapper was not invoked, and SDK/dependency versions were unchanged.
+
+| Check | Actual result |
+| --- | --- |
+| `dart --version`; `dart pub get --enforce-lockfile` | Dart 3.13.7 macOS arm64; locked resolution passed without changes. |
+| Format and final format check of the six changed Dart files | Passed; final check made zero changes. |
+| `dart analyze --fatal-infos` | Passed; no issues. |
+| Reception, command, and initialization focused suites | Passed; 59 tests, including the 27 reception groups. |
+| Complete core suite, then complete CLI suite | Passed sequentially; 120 and 27 tests, including CLI/cross-layer regressions. |
+| Parameterized reception example | Extracted into an ignored core-package Dart file; analysis passed. Never executed. |
+| Existing CLI and observation native bundle builds | Passed once each, sequentially, in fresh `/tmp/meshchan-1b4.nteChb` output. |
+| Existing `python3 tool/smoke_cli.py` | Passed once; 46 macOS process checks, native assets, and relocation. Linux-only enumeration refusal was not applicable. |
+| Patch/new-file hygiene and scope checks | Passed; UTF-8 without BOM, LF, final newlines, no trailing whitespace; no codec, native transport, dependency, lockfile, SDK, version, or CI changes. |
+
+An initial formatting command used a root-relative path from the package
+directory and found no file; the corrected root invocation and final check
+passed. The temporary example initially produced a root-package dependency lint;
+moving it into the core package resolved that context issue without dependency
+changes. There were no failing product tests or retry-until-green runs. No remote
+CI, real serial enumeration/access, device commands, or LoRa trial ran. Builds
+and smoke are existing-product regressions, not reception AOT execution or proof
+of USB repair, firmware push support, or wireless reliability.
+
+The single-subscription asynchronous controller, pause/cancel hooks, and
+independent close settlement were checked against the installed SDK and the
+[StreamController constructor](https://api.dart.dev/dart-async/StreamController/StreamController.html),
+[close contract](https://api.dart.dev/dart-async/StreamController/close.html), and
+[listen contract](https://api.dart.dev/dart-async/Stream/listen.html) on
+November 10, 2026. In particular, paused delivery can defer stream close while
+the receiver's logical `done` settles independently.
+
+The earlier Dart asynchronous semantics were rechecked against the actual SDK and these
 primary references on November 9, 2026:
 
 - [Future.timeout](https://api.dart.dev/dart-async/Future/timeout.html): a timed-out

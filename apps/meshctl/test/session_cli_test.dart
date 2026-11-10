@@ -778,6 +778,7 @@ final class FakeCompanionTransport implements CompanionTransport {
   int protocol = 14;
   String nodeName = 'synthetic-node';
   String model = 'synthetic-model';
+  Future<void> Function(Uint8List)? sending;
   Future<void> Function()? opening;
   Future<void> Function()? closing;
   @override
@@ -791,6 +792,7 @@ final class FakeCompanionTransport implements CompanionTransport {
   @override
   Future<void> sendFrame(Uint8List content) {
     sent.add(Uint8List.fromList(content));
+    if (sending != null) return sending!(content);
     if (autoRespond) {
       receive(
         content[0] == 0x16

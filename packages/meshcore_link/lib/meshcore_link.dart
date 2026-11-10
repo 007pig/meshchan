@@ -3,6 +3,21 @@
 /// Serial diagnostics do not identify devices or establish protocol sessions.
 library;
 
+export 'src/diagnostics/diagnostic_results.dart'
+    show
+        DiagnosticTaskReason,
+        DiagnosticTaskStage,
+        DiagnosticListenStopReason,
+        DiagnosticCleanupState,
+        DiagnosticTaskStartError,
+        DiagnosticTaskFailure,
+        DiagnosticSendFacts,
+        DiagnosticCleanupResult,
+        DiagnosticTaskResult,
+        DiagnosticPingResult,
+        DiagnosticResponderResult;
+export 'src/diagnostics/diagnostic_tasks.dart'
+    show DiagnosticTaskOptions, MeshchanPingTask, MeshchanResponderTask;
 export 'src/diagnostics/ping_pong.dart'
     show
         diagnosticDataType,

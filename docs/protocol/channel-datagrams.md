@@ -15,7 +15,8 @@ remains `0.1.0-dev.1`.
 | Implementation after 1B.3 | The 1B.2 binary codecs plus ready-state send and single consuming queue-read APIs, sharing a bounded command FIFO. See the scoped records below. |
 | Implementation after 1B.4 | Explicitly started finite reception, coalesced notices, bounded batches through the original FIFO, typed observations, and pause/stop settlement. |
 | Implementation after 1B.5 | Frozen diagnostic v1 payload, pure Dart message codec/classification, targeted PONG construction, exact field matching, and shared send-route capacities. |
-| Remaining planned 1B behavior | Runtime PING/PONG coordination, finite responder tasks, nonce/request lifecycle, deduplication, deadlines, RTT, and CLI integration. |
+| Implementation after 1B.6 | Single-run PING and finite responder tasks, secure nonce lifecycle, runtime deduplication, monotonic deadlines/RTT, and independent actual cleanup. See [task API](diagnostic-tasks.md). |
+| Remaining planned 1B behavior | 1B.7 CLI integration and later explicit device/LoRa acceptance. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
 The [session contract](companion-session.md) remains authoritative for the
@@ -204,6 +205,100 @@ was needed. Native builds/smoke are existing-product regressions; they do not
 establish diagnostic AOT execution, actual USB exchange, or LoRa round trips.
 No remote CI, real serial enumeration/access, device command, or radio trial ran.
 Historical 1B.1–1B.4 and hardware records retain their separate dates and limits.
+
+### 1B.6 implementation and validation
+
+On November 10, 2026, this step starts from clean `master` at
+`87ca356a5a4cfb1dd71216ffe02f818ca3288732`, the PR #13 merge, with
+`582069faded3e6710e235326b1e6b5b4b9d26d27` included. A fresh read-only GitHub
+API check reports PR #13 `MERGED` at `2026-11-10T10:03:25Z`, with the expected
+head and `master` base. No remote merge, push, workflow, or publication ran.
+The fixed MeshCore upstream and diagnostic v1 wire format remain unchanged.
+
+The new [task API and caller example](diagnostic-tasks.md) document actual
+ownership, validation, nonce/elapsed test seams, deadlines, early PONG retention,
+entry-delivery barriers, bounded responder pause/yield/settlement, value-key cache,
+structural results, and separate actual cleanup. Public exports are in
+`meshcore_link.dart`; implementation stays in `src/diagnostics/`. No session,
+reception, FIFO, native transport, CLI, dependency, lockfile, version, or CI
+behavior changed. The application remains `0.1.0-dev.1`.
+
+Actual validation uses the existing Homebrew SDK's bundled Dart 3.13.7 stable
+(`macos_arm64`), process PATH `/opt/homebrew/share/flutter/bin:/usr/bin:$PATH`,
+Apple Clang 21.0.0, Python 3.15.2, and macOS 27.2.1 (26B131), arm64.
+`flutter --version` was attempted and denied SDK engine-stamp/realm writes;
+existing metadata reports Flutter 3.47.9 stable, revision
+`c197ca5199e9ee5661e865596c9c07294dfab51c`. That metadata is not a new Flutter
+CLI success. No SDK, pub-cache source, global setting, permission, or alternate
+SDK was changed/installed.
+
+The focused task/cache tests use real session/reception/codec and fake transport,
+controlled write/close Futures, and `fakeAsync.elapsed` with virtual timers.
+Cleanup checks cross one zero-duration event turn for the SDK's shared
+cancellation Future, then flush the owning virtual zones; they do not sleep
+through budgets or retry failed cases. Initial test failures prompted corrections
+to local rejection consistency, simultaneous entry/response admission limits,
+and retention of entry-limit stop reasons during read failure; assertions also
+now observe actual cross-zone cleanup completion.
+
+The final software gate used that bundled Dart, with test processes and native
+builds strictly sequential:
+
+| Check | Actual result |
+| --- | --- |
+| `dart --version`; `dart pub get --enforce-lockfile` | Dart 3.13.7; locked resolution passed, with no dependency/lockfile changes. |
+| Changed-file `dart format`; workspace `dart format --output=none --set-exit-if-changed .` | Passed; final workspace check covered 39 Dart files, zero changes. |
+| `dart analyze --fatal-infos` | Passed; no issues. |
+| Focused `diagnostic_cache_test.dart`, `diagnostic_tasks_test.dart`, `ping_pong_test.dart`, `meshcore_reception_test.dart`, and `meshcore_session_commands_test.dart` | Passed; 98 tests, including 38 new task/cache groups. |
+| Complete core suite, then complete CLI suite (`dart test --reporter expanded`) | Passed; 176 core tests and 27 CLI tests on the final Dart candidate. |
+| CLI `dart build cli --target=bin/meshctl.dart --output=/tmp/meshchan-1b6.SbwYx1/final-meshctl`, then core `dart build cli --target=example/serial_transport_check.dart --output=/tmp/meshchan-1b6.SbwYx1/final-observation` | Both passed sequentially in fresh final output. |
+| Shared `tool/smoke_cli.py`, using those final bundles and the bundled Dart | Passed; all 46 macOS process cases, both native asset checks, and bundle relocation. Linux enumeration refusal was not applicable. |
+| `git diff --check`, all changed/new-file encoding/whitespace, exports, relative links and anchors | Passed; UTF-8 without BOM, LF, final newlines; scoped API and documentation only. |
+
+The first smoke invocation omitted the documented process PATH and selected
+Homebrew Clang 18; its source build hook failed with `library 'System' not found`.
+Restoring `/opt/homebrew/share/flutter/bin:/usr/bin:$PATH` selected the existing
+Apple compiler, and all 46 checks then passed. No dependency/cache/permission
+workaround was used. After the last task guards/test were added, the final suites
+and fresh bundle gate were run again for the delivered candidate.
+
+These software checks do not establish diagnostic task AOT execution, actual USB
+exchange, device/firmware compatibility, a USB fix, or LoRa success. No real port
+was enumerated/opened and no device/radio command ran. Historical records above
+and the [hardware evidence](../hardware-validation.md) keep their separate limits.
+
+#### Review follow-up: fractional diagnostic deadlines
+
+Review identified that positive sub-millisecond task/response budgets could lose
+their only timer callback: the installed Dart VM converts Timer delays through
+`Duration.inMilliseconds`, while the task checks the finer Stopwatch elapsed
+deadline. An early callback could therefore observe an unexpired budget and
+leave no later check. The same truncation could stop responder listening early.
+
+Task, response, listen, and task-owned reception scheduling delays now round up
+to whole milliseconds. Absolute elapsed deadlines, earliest-deadline precedence,
+and exact PONG/admission cutoffs retain their original precision. Zero-duration
+fairness turns and existing session/reception implementations are unchanged.
+See the [timing API contract](diagnostic-tasks.md#observation-time-and-settlement).
+
+Four additional deterministic test groups use a narrow Zone timer adapter to
+reproduce the VM's millisecond truncation, with `fakeAsync.elapsed` in the same
+virtual time domain. The task/response/listen regressions failed before the fix.
+Cases cover 999- and 1,999-microsecond budgets, both task types during pending
+open, independent pending cleanup, and the exact PONG boundary: 998 microseconds
+remains eligible for later local settlement, while 999 microseconds is rejected
+for a 999-microsecond response budget. No real sleep or hardware is used.
+
+Using the same bundled Dart 3.13.7 and process compiler PATH, locked dependency
+resolution, formatting (39 files), and fatal-info analysis passed. Focused
+task/cache/protocol/reception/FIFO regression passed 102 tests; the full core and
+CLI suites passed 180 and 27 tests sequentially. This follow-up's native build
+gate also passed: CLI and serial-observation bundles were freshly built, in
+sequence, under `/tmp/meshchan-1b6-timer.XWdUrT/`, and the shared smoke script
+passed all 46 macOS process checks, native asset checks, and relocation. Linux
+checks were not applicable on this host. Whitespace, UTF-8/LF/newline, and
+documentation-link checks passed. Earlier 1B.6 counts above remain the initial
+candidate's evidence; no hardware or remote publication ran during this review.
 
 ## Fixed upstream evidence
 
@@ -465,7 +560,8 @@ Consumed ordinary bodies are discarded; post-consumption filtering cannot put
 entries back. Already-added stream entries can still be delivered after resume.
 This is finite queue consumption, not lossless observation, chat archiving, or a
 reliable persistent message service. 1B.5's pure application helpers consume
-these typed datagrams; runtime PING/PONG coordination remains later work.
+these typed datagrams; 1B.6 now coordinates runtime PING/PONG through the
+[finite tasks](diagnostic-tasks.md).
 Unassociated typed observation is not proof of firmware push support.
 
 Use dedicated test Companions and exclusive sessions for initial acceptance.
@@ -553,10 +649,10 @@ accounts, or authentication results.
 
 Nonce validation checks only the 16-byte length; all-zero and fixed test nonces
 are valid. The codec accepts an explicit nonce and never reads a clock, generates
-randomness, or allocates IDs. For each new runtime run, 1B.6 must use
+randomness, or allocates IDs. For each new PING run, 1B.6 uses
 [`Random.secure()`](https://api.dart.dev/dart-math/Random/Random.secure.html)
-and `nextInt(256)` to generate 16 fresh bytes. Fail if a secure source is
-unavailable; do not fall back to ordinary `Random()`, timestamps, or session
+and `nextInt(256)` to generate 16 fresh bytes, with request ID 1. Fail if a
+secure source is unavailable; do not fall back to ordinary `Random()`, timestamps, or session
 counters. Never reuse or silently wrap a request ID under the same run nonce;
 exhaustion requires a new run. Store/compare nonces as bytes, never uint64, one
 Dart `int`, or decimal text. Uint32 IDs avoid large-integer representation
@@ -648,7 +744,8 @@ True means **field equality only**. It establishes neither an active/unexpired
 request, uniqueness, local send success, nor a completed round trip. Reception's
 typed entry may arrive before send-Future/local-OK settlement, and the local
 write may subsequently fail. First-result commitment, early PONG retention,
-failure precedence, remote deadlines, and RTT remain 1B.6 responsibilities.
+failure precedence, remote deadlines, and RTT are implemented by the separate
+[1B.6 task coordinator](diagnostic-tasks.md).
 Unrelated traffic cannot renew runtime deadlines. Default summaries/errors expose
 only kind/version/length/reason, never content, full nonces/test IDs, paths,
 raw frames, or channel keys. Constructed/decoded bytes are independently owned
@@ -684,7 +781,7 @@ EF CD AB 89
 00 3C 80 FF
 ```
 
-### Frozen runtime deduplication policy (implementation in 1B.6)
+### Frozen runtime deduplication policy (implemented in 1B.6)
 
 Default to one PING without automatic resend. Each finite responder task must
 have an explicit response count or duration and use this default policy:
@@ -709,8 +806,10 @@ have an explicit response count or duration and use this default policy:
   outside the window. Duplicate initiator PONGs cannot replace the first committed
   observation/RTT; active-request checks and commitment belong to 1B.6.
 
-1B.5 implements no cache, Map/LRU, timer, background task, or responder state
-machine. Pure matching tests do not establish deduplication or round-trip success.
+1B.5 supplied the pure codec without a runtime cache or task. 1B.6 now
+implements this policy in a task-scoped value-key cache and finite responder;
+see [runtime API and settlement](diagnostic-tasks.md#finite-responder-and-deduplication).
+Pure matching tests alone do not establish deduplication or round-trip success.
 
 ## Device, channel, and route inputs
 
@@ -736,12 +835,14 @@ do not guess a compatibility fix by changing handshake order or target.
 
 ## Diagnostics and privacy
 
-Plan typed results with independent local-write/device-acceptance status,
+Typed task results record independent local-write/device-acceptance status,
 matching-PONG observation, content validation, application RTT, failure stage,
 raw device error code when present, and cleanup status (`pending`, `succeeded`,
 or `failed`). An unattempted or unconfirmed stage must remain distinguishable
-from success. The task-result Dart API and new CLI field/command names remain
-later work; the current command API is documented above.
+from success. The
+[task-result Dart API](diagnostic-tasks.md#results-and-actual-cleanup) is
+implemented in 1B.6; CLI field/command names remain 1B.7 work. The current
+command API is documented above.
 
 Preserve the [CLI conventions](../cli.md): results on stdout, diagnostics on
 stderr, one JSON object for finite result commands and NDJSON for event tasks,
@@ -761,8 +862,8 @@ No raw-message capture is needed for this step or for routine acceptance records
 
 All boxes below were **planned / not run in 1B.1**. This retained full-1B
 checklist is not a claim of passing software or device results; scoped 1B.2 and
-1B.3/1B.4/1B.5 implementation and validation are recorded above. Follow the existing
-[testing evidence boundaries](../testing.md#evidence-limits).
+1B.3/1B.4/1B.5/1B.6 implementation and validation are recorded above. Follow
+the existing [testing evidence boundaries](../testing.md#evidence-limits).
 
 Software acceptance should use a few representative behavior groups:
 
@@ -784,7 +885,8 @@ Software acceptance should use a few representative behavior groups:
   IDs/version/content, stale or expired entries, duplicate PING/PONG,
   unsolicited PONG, early PONG, and early PONG followed by local failure.
   1B.5 now supplies the fixed application vectors and pure field matching;
-  active-request, deduplication, timeout, and early-failure tests remain 1B.6.
+  1B.6 adds active-request, deduplication, timeout, and early-failure tests
+  through the real core wiring. CLI and hardware acceptance remain separate.
 - [ ] **Timeout/disconnect/cleanup:** separate initialization, command,
   remote-response, and whole-task deadlines; unrelated traffic cannot renew
   them. Cover cancellation, stream error/done after ready, late callbacks,
@@ -835,12 +937,15 @@ commands and explicit single reads. 1B.4 now exposes `MeshCoreReception` with
 finite typed observation and owned-read settlement. 1B.5 now freezes diagnostic
 v1 and supplies pure codec/classification, targeted PONG construction, exact
 matching, shared route capacities, and the default deduplication policy above.
-1B.6 must combine these helpers with the existing receiver/FIFO to coordinate one
-request and finite responses, secure nonce/request lifecycles, runtime
-deduplication, deadlines, failure commitment, and RTT. 1B.7 then integrates those
-operations into the CLI. Concrete runtime/CLI parameters remain later decisions,
-with radio waits selected from measurements. None of those runtime operations
-or hardware acceptance is implemented by the application codec.
+1B.6 now combines these helpers with the existing receiver/FIFO in
+[`MeshchanPingTask` and `MeshchanResponderTask`](diagnostic-tasks.md), including
+secure nonce/request lifecycles, finite runtime deduplication, monotonic deadlines,
+failure commitment, and application RTT. 1B.7 integrates these operations into
+the CLI: parse explicit device/channel/route/peer/content/budget inputs, create a
+fresh session, connect cancellation signals, map structural results, and await
+both `done` and actual `cleanupDone` plus output settlement. It must not duplicate
+the coordination logic. Radio waits still need measured operator inputs. No CLI
+schema, command spelling, exit-code change, or hardware acceptance is added here.
 
 1B.1 review is limited to current-code/source comparisons, table/formula
 consistency, relative and fixed-commit links, UTF-8/LF/whitespace checks, and

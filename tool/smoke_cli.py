@@ -140,6 +140,30 @@ class Checks:
         usage = f"Usage: meshctl {command} " if command else "Usage: meshctl [options]"
         self.check(name, prefix + arguments, cwd, out=usage, options=expected)
 
+    def datagram_help(self, name, prefix, cwd, operation=None):
+        arguments = ["datagram"] + ([operation] if operation else []) + ["--help"]
+        expected = {"help"}
+        if operation:
+            expected.update(("json", "verbose", "port", "timeout", "init-timeout",
+                             "startup-delay", "task-timeout"))
+            if operation != "listen":
+                expected.update(("send-channel", "route-descriptor", "path-hex"))
+            if operation != "send":
+                expected.update(("receive-channel", "max-entries"))
+            if operation in ("ping", "respond"):
+                expected.update(("local-id", "peer-id"))
+            else:
+                expected.add("data-type")
+            if operation in ("send", "ping"):
+                expected.update(("text", "payload-hex" if operation == "send" else "content-hex"))
+            if operation == "ping":
+                expected.add("response-timeout")
+            if operation in ("listen", "respond"):
+                expected.add("duration")
+            if operation == "respond":
+                expected.add("max-responses")
+        self.check(name, prefix + arguments, cwd, out="Usage: meshctl datagram ", options=expected)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -172,6 +196,10 @@ def main():
             (["port-check", "--port", " \t "], "--port"),
             (["unknown-command"], "Unknown command"),
             (["--unknown-option"], "unknown-option"),
+            (["datagram", "send"], "--port"),
+            (["datagram", "unknown"], "Invalid datagram command syntax"),
+            (["datagram", "listen", "--help", "extra"], "Invalid datagram command syntax"),
+            (["datagram", "ping", "--port=unused", "--task-timeout=0"], "--task-timeout"),
         ]
         for label, prefix in (
             ("source", [str(args.dart), "run", "bin/meshctl.dart"]),
@@ -182,6 +210,10 @@ def main():
             checks.check(f"{label}: version", prefix + ["--version"], CLI, out=expected_version)
             for command in ("ports", "port-check", "info", "watch"):
                 checks.help(f"{label}: {command} help", prefix, CLI, command)
+            checks.check(f"{label}: datagram group", prefix + ["datagram"], CLI,
+                         out="Usage: meshctl datagram <operation>")
+            for operation in (None, "send", "listen", "ping", "respond"):
+                checks.datagram_help(f"{label}: datagram {operation or 'group'} help", prefix, CLI, operation)
             for arguments, diagnostic in rejections:
                 checks.check(
                     f"{label}: reject {arguments!r}", prefix + arguments, CLI,
@@ -218,6 +250,7 @@ def main():
             relocated = [str(bundle_executable(moved, "meshctl"))]
             checks.check("relocated: version", relocated + ["--version"], destination, out=expected_version)
             checks.help("relocated: info help", relocated, destination, "info")
+            checks.datagram_help("relocated: ping help", relocated, destination, "ping")
             checks.check(
                 "relocated: missing port", relocated + ["info"], destination,
                 code=64, err=("Error:", "--port", "meshctl --help"),

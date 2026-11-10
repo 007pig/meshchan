@@ -204,3 +204,255 @@ with an empty tty input queue and no bytes available to direct reads at the
 deadline. It establishes that those components are not required for the stall;
 the specific device/USB/driver cause is still unproven. Linux-host execution and
 remote Actions remain unverified.
+
+## Finite datagram commands (1B.7)
+
+The nested commands below use a new transport/session for each invocation. They
+keep the existing initialization order, app target 3, version, dependencies,
+and the four older command schemas. Put business options after the leaf name:
+
+```text
+meshctl datagram send [options]
+meshctl datagram listen [options]
+meshctl datagram ping [options]
+meshctl datagram respond [options]
+meshctl datagram --help
+meshctl datagram <operation> --help
+```
+
+`datagram` without an operation shows group help. Syntax and unexpected
+positionals are checked along the entire command chain before any help/version
+short circuit. Top-level help wins, followed by group help, leaf help, then
+top-level version. Help remains text with `--json` and requires no business
+options. Invalid syntax returns 64 even with help/version. Content-command
+syntax errors use a generic safe summary rather than quoting parser input.
+All semantic validation precedes transport construction and signal registration.
+
+| Operation | Behavior | `--json` stdout |
+| --- | --- | --- |
+| `send` | Initialize, send one raw payload, close | One final object, including expected failure/signal outcomes |
+| `listen` | Initialize, consume one finite reception, summarize matching datagrams, close | NDJSON `datagram`, optional primary `failure`, and one final `end` |
+| `ping` | Run `MeshchanPingTask` once; exact diagnostic PONG validation | One final object, including expected failure/signal outcomes |
+| `respond` | Run `MeshchanResponderTask` for a finite window/attempt limit | One final summary object, including expected failure/signal outcomes |
+
+Send success means **local write completed and device accepted**, without proof
+of radio delivery. Raw type `0xFFFF` stays raw: the CLI never adds a diagnostic
+header to `send`. Ping content excludes the diagnostic header; the task adds it
+once and owns nonce generation and application RTT. Responder confirms local
+PONG writes/OKs only; even normal completion with zero responses returns 0 and
+establishes no wireless validation. Task start acceptance is not readiness.
+
+### Inputs and budgets
+
+These common options apply to all four new leaves:
+
+| Option | Policy |
+| --- | --- |
+| `--port` | Required, nonblank exact path; forwarded unchanged, including leading/trailing whitespace in a nonblank value. No discovery or fallback. |
+| `--json` | Off by default; output types above. |
+| `--verbose`, `-v` | Off; safe structural stderr diagnostics, same stdout schema. |
+| `--timeout` | Default 5 seconds; decimal 1..86400 for each initialization **and ready-state send/read** command. |
+| `--init-timeout` | Default 15 seconds; decimal 1..86400 for the whole initialization. |
+| `--startup-delay` | Default 0 milliseconds; decimal 0..86399999 and strictly less than init-timeout in milliseconds. |
+| `--task-timeout` | Required decimal 1..86400 seconds, starting at business execution and covering connection and logical operations; excludes actual cleanup and output flush. |
+
+Task timeout may be shorter than another budget. Earlier overall expiration
+stops new work and starts cancellation/close; it does not force native release.
+No production cleanup or output timeout is added. A pending close or blocked
+flush can keep the process pending past the application budget. Old info/watch
+timeout behavior remains as documented above.
+
+| Option | send | listen | ping | respond |
+| --- | --- | --- | --- | --- |
+| `--send-channel` | Required | Rejected | Required | Required |
+| `--receive-channel` | Rejected | Required | Required | Required |
+| `--data-type` | Required 1..65535 | Optional filter 0..65535; omitted means all | Rejected; fixed diagnostic type | Rejected; fixed diagnostic type |
+| `--route-descriptor` | Required | Rejected | Required | Required local return route |
+| `--path-hex` | Default empty | Rejected | Default empty | Default empty |
+| `--local-id`, `--peer-id` | Rejected | Rejected | Both required | Both required |
+| `--payload-hex` or `--text` | Exactly one | Rejected | payload-hex rejected | Rejected |
+| `--content-hex` or `--text` | content-hex rejected | Rejected | Exactly one | Rejected |
+| `--response-timeout` | Rejected | Rejected | Required decimal 1..86400 seconds | Rejected |
+| `--duration` | Rejected | Required decimal 1..86400 seconds after ready | Rejected | Required decimal 1..86400 seconds after ready |
+| `--max-entries` | Rejected | Default 128 | Default 128 | Default 128 |
+| `--max-responses` | Rejected | Rejected | Rejected | Default 1; counts attempts |
+
+Protocol integers accept strict ASCII decimal or `0x`/`0X` prefixed hexadecimal:
+channels and route descriptors are uint8 (0..255), IDs are distinct nonzero
+uint32 (1..4294967295), and data types follow the table. Leading decimal zeros
+still mean decimal. Signs, whitespace, fractions, underscores, and overflow are
+rejected. Times/counts accept decimal only. Both max-entries and max-responses
+are restricted to 1..4096 as a CLI resource policy. Session FIFO and reception
+batch defaults remain 8; no tuning flags are exposed.
+
+HEX bytes require even-length ASCII `0-9a-fA-F`, without prefixes, separators,
+spaces, or half bytes. Explicit empty `--payload-hex=`, `--content-hex=`, or
+`--text=` is valid; omitting both content options is invalid. Text is exact UTF-8,
+with no Unicode normalization, truncation, newline, or NUL appended. Length
+checks use encoded bytes, including multibyte characters.
+
+Route/path validation and capacity use the existing core helpers before I/O.
+For operator-confirmed configurations, send descriptor `0xFF` means Flood with
+an empty path; `0x00` is zero-hop Direct with an empty path. Other Direct routes
+require their exact encoded path length; reserved/oversize routes are rejected.
+Raw capacity uses `maxChannelDataPayloadLengthForRoute`; diagnostic content uses
+`maxDiagnosticContentLengthForRoute`. The latter is 131 bytes for Flood/zero-hop,
+but smaller for longer paths. For example, valid descriptor `0x3F` with 63 path
+bytes allows 108 raw bytes or 74 diagnostic content bytes. Respond validates its
+local return configuration first, then leaves per-PING return-capacity rejection
+and counting to the task. Receive route metadata cannot supply a return path.
+
+### Consumption and cancellation
+
+Listen only subscribes to one reception's entries and never responds. Its
+matching channel/type filter runs **after shared inbox consumption**. Other
+channels, ordinary chat, and other applications can be consumed and count toward
+the same max-entries, including by ping/respond. Chat bodies are discarded by
+the codec. A filter cannot protect other consumers' messages. Do not share an
+active device inbox with another application expecting those entries.
+
+Listen duration starts when reception is activated after ready; silence ends
+normally. Duration/entry-limit success waits for both reception settlement and
+entries delivery, including the last published item and read outcome. Failure,
+overall timeout, signal, or output failure seals processing immediately and
+closes without draining remaining buffered entries or creating a new reception.
+
+Ping/respond exclusively own their session after task acceptance. Signals and
+output failure call task cancellation; the CLI never independently closes or
+reads their session. Logical task `done` is separate from `cleanupDone`.
+A logical failure is diagnosed immediately when observable, while final output
+waits for actual native cleanup and all CLI subscription cancellations. No ready
+or per-response event is fabricated from start acceptance.
+
+### New machine schema and exit precedence
+
+All four leaves use explicit whitelist projection:
+
+```text
+schemaVersion: 1
+command: "datagram"
+operation: "send" | "listen" | "ping" | "respond"
+reason: "completed" | "task_failure" | "sigint" | "sigterm" |
+        "output_failure" | "cleanup_failure"
+exitCode: integer
+cleanup: {state: "notRequired" | "succeeded" | "failed",
+          failureCount: integer, failures: [safe failure summaries]}
+failure: null | safe failure summary
+result: null | operation result
+```
+
+Unstarted/unclaimed operations can have null results and `notRequired` cleanup.
+A final record never reports pending cleanup as success. Every actual cleanup
+failure is counted separately, including CLI signal/observation subscription
+cancellation errors. Cleanup failure does not replace an earlier primary cause.
+Failures have `{domain, kind, stage, session}`: domain is `task`, `session`,
+`cleanup`, or `cli`; kind/stage are controlled classifications or null. Session
+is null or the existing `failureFields` whitelist: kind, stage, commandOpcode,
+expectedResponseOpcode, deviceErrorCode, deviceErrorName. No recursive cause or
+stack is serialized. A task's null failure object does not imply success.
+
+| Result | Fields |
+| --- | --- |
+| send | `send` facts |
+| ping | Core `reason`, `stage`, `send`, `matchingPongObserved`, `exactContentValidated`, `roundTripSucceeded`, `firstMatchingPongElapsedUs`, `applicationRttUs`, `matchingPongDuplicates`, `publishedEntries`, `processedEntries`, `reception` |
+| respond | Core `reason`, `stage`, `listenStopReason`, `lastSend`, `responseAttempts`, `localResponsesConfirmed`, `duplicates`, `conflicts`, `cacheCapacityRejections`, `returnCapacityRejections`, `publishedEntries`, `processedEntries`, `reception` |
+
+Send/lastSend facts are `attempted`, `pendingAtTermination`, nullable `dispatched`,
+`localWriteCompleted`, `localOkObserved`, and `deviceAcceptanceConfirmed`.
+Missing facts remain null. Responder `lastSend` describes only its last send;
+responseAttempts/localResponsesConfirmed are the cumulative facts. Reception is
+null or `{reason, publishedEntries, dispatchedReads, completedReads}`.
+Core responder reason `completed` has a separate listenStopReason of
+`durationElapsed`, `responseLimit`, or `entryLimit`.
+
+All elapsed fields ending in `Us` are integer microseconds from core getters.
+Application RTT exists only for a successful round trip. An early exact PONG
+followed by local send failure retains firstMatchingPongElapsedUs and observation
+flags while applicationRttUs is null. This metric includes host scheduling and
+FIFO waits; it is not airtime. CLI reason remains separate from core result reason.
+
+Listen emits independently parseable NDJSON lines, each with schemaVersion,
+command, operation, and event:
+
+- `datagram`: channelIndex, dataType, payloadLength, snrDb, routeMetadata,
+  isDirect. No payload or invented RSSI.
+- `failure`: one primary `failure` safe summary; may precede cleanup completion.
+- `end`: the final envelope above, with result `{receptionReason,
+  publishedEntries, processedEntries, matchingDatagrams, filteredDatagrams,
+  ordinaryMessages}`. Without reception, reason is null and counts are zero.
+
+Processed entries include ordinary messages and filtered datagrams. Published
+entries can exceed processed entries on immediate termination. Output uses the
+existing 128-record per-channel queue, without an unbounded event list.
+
+Exit codes are 0 for the operation's normal finite success plus successful
+cleanup/output; 64 for input errors before side effects; 69 for expected
+session/task failure or cleanup failure without an earlier primary cause; 74 for
+output failure without an earlier primary failure/signal; 130/143 for the first
+effective SIGINT/SIGTERM; and 70 at the process boundary for unexpected errors
+after safe cleanup. Windows still registers SIGINT only. A core non-canceled
+failure already locked before a later signal/output callback keeps 69 even when
+`done` is delivered later. A genuinely externally canceled task uses the first
+CLI external cause. A core completed result remains completed even if a later
+signal/output/cleanup problem changes CLI exit intent.
+
+Expected failures and signals still produce one final finite JSON object (or
+listen end). Usage errors leave stdout empty. Damaged output may have no final
+record. Final records capture the exit intent before their own write/flush; a
+subsequent output failure can change the process code. **The process exit code
+is authoritative.** No second final object/end is appended to revise it. The
+older info failure policy remains empty stdout.
+
+Text output uses the same facts/units, escaping terminal controls with safeText.
+Default and verbose output omit inline payload/content, full nonce/test IDs,
+path bytes, channel keys, coordinates, ordinary chat, raw frames, argv, sessionInfo
+object graphs, and recursive exceptions. Exact selected ports, if displayed,
+are escaped for display without changing OS paths.
+
+### Operator-supplied templates (not executed in this step)
+
+The following are shell templates: the operator supplies and confirms every
+variable, authorization, radio/channel configuration, route, and budget.
+`meshctl` denotes the source entry or the executable from its complete bundle.
+Two devices may use different local channel slots. Configure A's forward and
+B's return routes independently; do not copy receive metadata or the remote slot.
+
+Terminal B, start the finite responder first:
+
+```bash
+meshctl datagram respond --port "$B_PORT" --json \
+  --send-channel "$B_SEND_SLOT" --receive-channel "$B_RECEIVE_SLOT" \
+  --local-id "$B_TEST_ID" --peer-id "$A_TEST_ID" \
+  --route-descriptor "$B_RETURN_DESCRIPTOR" --path-hex "$B_RETURN_PATH_HEX" \
+  --timeout "$COMMAND_SECONDS" --init-timeout "$INIT_SECONDS" \
+  --task-timeout "$B_TASK_SECONDS" --duration "$B_LISTEN_SECONDS" \
+  --max-entries "$B_ENTRY_LIMIT" --max-responses "$B_ATTEMPT_LIMIT"
+```
+
+Terminal A, after B is ready for the operator's trial:
+
+```bash
+meshctl datagram ping --port "$A_PORT" --json \
+  --send-channel "$A_SEND_SLOT" --receive-channel "$A_RECEIVE_SLOT" \
+  --local-id "$A_TEST_ID" --peer-id "$B_TEST_ID" \
+  --route-descriptor "$A_FORWARD_DESCRIPTOR" --path-hex "$A_FORWARD_PATH_HEX" \
+  --content-hex "$TEST_CONTENT_HEX" --response-timeout "$PONG_SECONDS" \
+  --timeout "$COMMAND_SECONDS" --init-timeout "$INIT_SECONDS" \
+  --task-timeout "$A_TASK_SECONDS" --max-entries "$A_ENTRY_LIMIT"
+```
+
+The CLI has no readiness event; process start alone does not establish B is
+listening. The operator must account for initialization and the finite window.
+Use `--text "$TEST_TEXT"` instead of content-hex if desired, supplying exactly
+one. Single-operation raw examples:
+
+```bash
+meshctl datagram send --port "$PORT" --json --send-channel "$SEND_SLOT" \
+  --data-type "$DATA_TYPE" --route-descriptor "$ROUTE_DESCRIPTOR" \
+  --path-hex "$PATH_HEX" --payload-hex "$PAYLOAD_HEX" --task-timeout "$TASK_SECONDS"
+meshctl datagram listen --port "$PORT" --json --receive-channel "$RECEIVE_SLOT" \
+  --duration "$LISTEN_SECONDS" --max-entries "$ENTRY_LIMIT" --task-timeout "$TASK_SECONDS"
+```
+
+This software integration does not perform real serial/LoRa acceptance or
+complete 1B.8/1B.9 delivery. Historical hardware/USB findings above remain unchanged.

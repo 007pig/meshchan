@@ -77,14 +77,16 @@ packages, and rejects missing/empty executables or native libraries. It does not
 install dependencies, build artifacts, accept arbitrary commands, or contact
 GitHub. Prepare both bundles before calling it.
 
-On macOS, 46 process cases cover source/native no-argument help, help/version,
-all four command help option sets, 12 invalid argument cases per CLI entry,
+On macOS, 67 process cases cover source/native no-argument help, help/version,
+all four original command help option sets, datagram group/four leaf help,
+group-without-operation help, 16 invalid argument cases per CLI entry,
 source/native observation usage with absent/blank input, a native broken pipe,
-and three relocated entry checks. The version expectation comes from the existing
-`lib/src/version.dart` constant. Linux adds four actual `ports` / `ports --json`
-source/native refusal cases (50 total): exit 69, empty stdout, the exact pinned
-backend safety diagnostic, and no unhandled exception/application stack. macOS
-prints an explicit Linux-only non-applicability notice and never runs `ports`.
+and four relocated entry checks. No new command is run with valid hardware
+arguments. The version expectation comes from the existing `lib/src/version.dart`
+constant. Linux adds four actual `ports` / `ports --json` source/native refusal
+cases (71 total): exit 69, empty stdout, the exact pinned backend safety
+diagnostic, and no unhandled exception/application stack. macOS prints an
+explicit Linux-only non-applicability notice and never runs `ports`.
 
 Every child runs serially with closed stdin, captured/drained output, and a
 60-second watchdog. A timeout fails the script and kills/reaps only the child's
@@ -99,8 +101,8 @@ sleep, shell pipeline, live watch, or simulated production dependency. Existing
 sink tests separately prove session cleanup on output failure.
 
 Relocation copies the **whole** CLI bundle into a temporary directory outside the
-checkout, uses that directory as cwd, and checks version, info help, and missing
-port rejection. Executables and `lib/liblibserialport_plus.dylib` (macOS) or
+checkout, uses that directory as cwd, and checks version, info help, datagram ping
+help, and missing port rejection. Executables and `lib/liblibserialport_plus.dylib` (macOS) or
 `lib/liblibserialport_plus.so` (Linux) must be nonempty in both original bundles;
 the relocated CLI assets are checked again. No library path is redirected to a
 pub cache. Only the script-owned relocation copy is removed automatically.
@@ -110,6 +112,27 @@ format/analyze, both full suites, and both native builds. It invokes this same
 script after builds and has a 20-minute job limit for resource protection. Child
 watchdogs also apply to Linux refusal and broken pipes. Failures are propagated;
 there are no retries, skipped failed cases, or `continue-on-error`.
+
+## Finite datagram CLI regression (1B.7)
+
+`apps/meshctl/test/datagram_cli_test.dart` uses real codec/session/reception/tasks
+and the existing fake transport/sink, with a narrow elapsed/nonce injection in
+`runCli`. Production omits both seams. Table-driven pure validation asserts no
+transport/enumeration/signal side effects. Wiring tests cover all four leaves,
+post-consumption filtering and final-entry/read settlement, early PONG with
+failed local send, nullable facts/microseconds, finite zero-response completion,
+signal/output/core-failure races, cleanup pending/failure, and private-data
+omission. The existing serial cross-layer matrix is retained unchanged.
+
+After locked resolution, format, and analysis, run the focused CLI file before
+the complete core and CLI suites; keep every test process/build serial:
+
+```bash
+(cd apps/meshctl && "$MESHCHAN_DART" test test/datagram_cli_test.dart)
+```
+
+This software validation does not select a port, run a wireless command, or
+replace later 1B.8/1B.9 delivery and device acceptance.
 
 ## Evidence limits
 

@@ -16,7 +16,8 @@ remains `0.1.0-dev.1`.
 | Implementation after 1B.4 | Explicitly started finite reception, coalesced notices, bounded batches through the original FIFO, typed observations, and pause/stop settlement. |
 | Implementation after 1B.5 | Frozen diagnostic v1 payload, pure Dart message codec/classification, targeted PONG construction, exact field matching, and shared send-route capacities. |
 | Implementation after 1B.6 | Single-run PING and finite responder tasks, secure nonce lifecycle, runtime deduplication, monotonic deadlines/RTT, and independent actual cleanup. See [task API](diagnostic-tasks.md). |
-| Remaining planned 1B behavior | 1B.7 CLI integration and later explicit device/LoRa acceptance. |
+| Implementation after 1B.7 | Nested `datagram send/listen/ping/respond`, pure CLI input/budget validation, safe JSON/NDJSON projections, signal/output cancellation, and awaited actual cleanup. See [CLI contract](../cli.md#finite-datagram-commands-1b7). |
+| Remaining planned 1B behavior | Separate 1B.8/1B.9 delivery and explicit device/LoRa acceptance. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
 The [session contract](companion-session.md) remains authoritative for the
@@ -841,7 +842,8 @@ raw device error code when present, and cleanup status (`pending`, `succeeded`,
 or `failed`). An unattempted or unconfirmed stage must remain distinguishable
 from success. The
 [task-result Dart API](diagnostic-tasks.md#results-and-actual-cleanup) is
-implemented in 1B.6; CLI field/command names remain 1B.7 work. The current
+implemented in 1B.6; the [1B.7 CLI contract](../cli.md#finite-datagram-commands-1b7)
+now defines command names and field projections. The current
 command API is documented above.
 
 Preserve the [CLI conventions](../cli.md): results on stdout, diagnostics on
@@ -943,9 +945,12 @@ secure nonce/request lifecycles, finite runtime deduplication, monotonic deadlin
 failure commitment, and application RTT. 1B.7 integrates these operations into
 the CLI: parse explicit device/channel/route/peer/content/budget inputs, create a
 fresh session, connect cancellation signals, map structural results, and await
-both `done` and actual `cleanupDone` plus output settlement. It must not duplicate
-the coordination logic. Radio waits still need measured operator inputs. No CLI
-schema, command spelling, exit-code change, or hardware acceptance is added here.
+both `done` and actual `cleanupDone` plus output settlement. This adapter is now
+implemented as `datagram send/listen/ping/respond`; it retains the coordination
+logic above and adds only CLI validation, lifecycle wiring, and safe projections.
+Radio waits still need measured operator inputs. See the
+[1B.7 command contract](../cli.md#finite-datagram-commands-1b7) and separate
+[software validation record](../development.md#1b7-software-validation-on-november-10-2026). No hardware acceptance or full-1B release is implied.
 
 1B.1 review is limited to current-code/source comparisons, table/formula
 consistency, relative and fixed-commit links, UTF-8/LF/whitespace checks, and

@@ -6,7 +6,8 @@ reason, stage, send-fact, failure, and cleanup types. The
 [diagnostic v1 contract](channel-datagrams.md#meshchan-diagnostic-pingpong-v1)
 remains unchanged. These are pure Dart operations through the existing session,
 FIFO, and `MeshCoreReception`; there is no extra transport listener, raw-response
-stream, direct read loop, command retraction API, or CLI command.
+stream, direct read loop, or command retraction API. The separate 1B.7 CLI
+adapter is documented in the handoff below.
 
 ## Configuration and ownership
 
@@ -207,7 +208,7 @@ Future<bool> runPing({
     content: content,
     responseTimeout: responseTimeout,
   );
-  // A future CLI signal handler may call task.cancel(), observing its Future.
+  // A CLI signal handler may call task.cancel(), observing its Future.
   // The caller still waits for both logical settlement and actual cleanup.
   try {
     await task.start();
@@ -223,12 +224,17 @@ Future<bool> runPing({
 ```
 
 A responder uses the same start/done/cleanup flow with `listenDuration` and
-`maxResponses`. 1B.7 must parse explicit device, local channels, route/path,
-peer labels, content and budgets; create a new transport/session; connect signal
-cancellation; map structural results; and await real cleanup and output. No CLI
-subcommand spelling, JSON schema, or exit-code changes are introduced here.
-Software validation is recorded in the
+`maxResponses`. The [1B.7 CLI adapter](../cli.md#finite-datagram-commands-1b7)
+now parses explicit device, local channels, route/path, peer labels, content and
+budgets before transport construction; connects signals through task cancellation;
+projects whitelisted structural results; and awaits both real cleanup and CLI
+output/subscription settlement. It adds no task readiness or per-response stream
+and does not independently operate the task-owned session. The core API and
+state machines above remain unchanged.
+Core task validation is recorded in the
 [1B.6 dated record](channel-datagrams.md#1b6-implementation-and-validation).
+CLI integration has its own
+[1B.7 validation record](../development.md#1b7-software-validation-on-november-10-2026).
 Historical 1B.1–1B.5 and hardware evidence retain their original scope. These
 operations have not established device compatibility, repaired USB delivery,
 or demonstrated a real LoRa round trip.

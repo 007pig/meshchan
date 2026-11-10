@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:args/args.dart';
 import 'package:meshcore_link/meshcore_link.dart';
 
 import 'src/cli_display.dart';
 import 'src/cli_output.dart';
+import 'src/datagram_command.dart';
+import 'src/datagram_options.dart';
 import 'src/session_command.dart';
 import 'src/version.dart';
 
@@ -19,6 +22,8 @@ Future<int> runCli(
   SerialPorts? serialPorts,
   CompanionTransport Function(String path)? createTransport,
   Stream<CliStopRequest>? stopRequests,
+  Duration Function()? diagnosticElapsed,
+  Uint8List Function()? diagnosticNonceFactory,
 }) async {
   final io = CliOutput(output, error);
   try {
@@ -28,6 +33,8 @@ Future<int> runCli(
       serialPorts,
       createTransport,
       stopRequests,
+      diagnosticElapsed,
+      diagnosticNonceFactory,
     );
     await io.drain();
     return code == 0 && io.failed ? 74 : code;
@@ -42,6 +49,8 @@ Future<int> _run(
   SerialPorts? serialPorts,
   CompanionTransport Function(String)? createTransport,
   Stream<CliStopRequest>? stopRequests,
+  Duration Function()? diagnosticElapsed,
+  Uint8List Function()? diagnosticNonceFactory,
 ) async {
   final parser = _helpParser()
     ..addFlag(
@@ -64,23 +73,43 @@ Future<int> _run(
     ),
   );
 
+  parser.addCommand('datagram', datagramParser());
+
   final ArgResults options;
   final ArgResults? command;
   try {
     options = parser.parse(arguments);
     command = options.command;
-    final rest = [...options.rest, ...?command?.rest];
+    final rest = <String>[];
+    for (ArgResults? level = options; level != null; level = level.command) {
+      rest.addAll(level.rest);
+    }
     if (rest.isNotEmpty) {
       throw FormatException(
         'Unknown command or unexpected positional arguments: ${safeText(rest.join(' '))}',
       );
     }
   } on FormatException catch (exception) {
-    return _usageError(io, exception.message);
+    return _usageError(
+      io,
+      arguments.contains('datagram')
+          ? 'Invalid datagram command syntax or unexpected positional arguments.'
+          : exception.message,
+    );
   }
 
   if (options.flag('help')) {
     _writeHelp(io, parser);
+    return 0;
+  }
+  if (command?.name == 'datagram' &&
+      (command!.flag('help') || (command.command?.flag('help') ?? false))) {
+    io.out(
+      datagramHelp(
+        parser.commands['datagram']!,
+        command.flag('help') ? null : command.command?.name,
+      ),
+    );
     return 0;
   }
   if (command?.flag('help') ?? false) {
@@ -109,6 +138,27 @@ Future<int> _run(
   }
 
   final name = command.name!;
+  if (name == 'datagram') {
+    final leaf = command.command;
+    if (leaf == null) {
+      io.out(datagramHelp(parser.commands['datagram']!));
+      return 0;
+    }
+    final DatagramOptions datagram;
+    try {
+      datagram = DatagramOptions(leaf);
+    } on FormatException catch (exception) {
+      return _usageError(io, exception.message);
+    }
+    return runDatagramCommand(
+      datagram,
+      io,
+      createTransport ?? (path) => SerialTransport(portPath: path),
+      stopRequests,
+      elapsed: diagnosticElapsed,
+      nonceFactory: diagnosticNonceFactory,
+    );
+  }
   SessionOptions? sessionOptions;
   try {
     if (name == 'port-check' &&
@@ -282,7 +332,8 @@ void _writeHelp(CliOutput io, ArgParser parser) {
     '  ports       List serial port paths and available metadata.\n'
     '  port-check  Open and close one explicitly specified port.\n'
     '  info        Initialize once, close, and print a device snapshot.\n'
-    '  watch       Initialize once and observe session summaries.\n\n'
+    '  watch       Initialize once and observe session summaries.\n'
+    '  datagram    Finite raw or diagnostic datagram operations.\n\n'
     'info/watch send two initialization commands and may change device session state.\n'
     'Run "meshctl <command> --help" for command usage.',
   );

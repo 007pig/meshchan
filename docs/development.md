@@ -1052,3 +1052,57 @@ all failed/successful observations remain intact. Software/build inputs and the
 original software gate are unchanged. Recommendation remains development with
 known limitations; H10 disconnect/recovery is still unexecuted. No remote or
 product change was performed.
+
+## 1B.7 software validation on November 10, 2026
+
+The starting worktree was clean on `master` at
+`7443d7466e482e2b9191108e2bc196a6e40e6512`. Local ancestry includes PR #14's
+`eebffe94ddc18d44603e78e63d9c68767a18ade3`; the public PR page was rechecked and
+showed merged status (the prompt's earlier open status was historical). No remote
+PR was merged or published by this work. Changes are local and reviewable.
+The application remains `0.1.0-dev.1`, MeshCore remains pinned to
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`, and core protocol/tasks, native
+serial, dependencies/lockfile, and CI platforms remain unchanged.
+
+The installed Flutter wrapper was attempted and denied writes to
+`bin/cache/engine.stamp.tmp.*` and `engine.realm` under the sandbox. Existing SDK
+metadata reports Flutter 3.47.9 stable at
+`c197ca5199e9ee5661e865596c9c07294dfab51c`; this is not a fresh successful
+Flutter CLI version check. Direct execution of the same SDK's
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --version` reported
+Dart 3.13.7 stable on `macos_arm64`. Apple Clang 21.0.0
+(`clang-2100.4.1.1`), the existing Xcode developer directory, and macOS 27.2 SDK
+were observed. All native commands used process-only PATH
+`/opt/homebrew/share/flutter/bin:/usr/bin:$PATH`. No alternate SDK, upgrade,
+channel switch, permission/cache modification, or global configuration change
+was used.
+
+All Dart commands used that direct bundled binary. Test processes and native
+builds ran sequentially, following [the testing procedure](testing.md):
+
+| Check | Actual result |
+| --- | --- |
+| Root `dart pub get --enforce-lockfile` | Passed; lockfile unchanged. |
+| `dart format --output=none --set-exit-if-changed .` | Passed; 43 Dart files, zero changes. |
+| `dart analyze --fatal-infos` | Passed; no issues. |
+| CLI `dart test --reporter expanded test/datagram_cli_test.dart` | Passed; 25 focused groups using the real session/reception/tasks and existing fake native boundary/output facilities. |
+| Complete core `dart test --reporter expanded` | Passed; 180 tests. |
+| Complete CLI `dart test --reporter expanded` | Passed; 52 tests, retaining the existing serial cross-layer matrix. |
+| CLI `dart build cli --target=bin/meshctl.dart --output=/tmp/meshchan-1b7.Xi6p87/final-meshctl` | Passed; fresh final native bundle after the listen failure-event review. |
+| Core `dart build cli --target=example/serial_transport_check.dart --output=/tmp/meshchan-1b7.Xi6p87/observation` | Passed after the initial CLI build; fresh native bundle (core sources unchanged during the CLI review). |
+| Shared `tool/smoke_cli.py` with those two bundles and the bundled Dart | Passed; 67 macOS process cases, both native assets, broken pipe, and complete-bundle relocation. Linux-only enumeration refusal was not applicable on this host. |
+| `git diff --check`, changed/new UTF-8/LF/final-newline checks, documentation relative links/anchors | Passed. |
+
+The focused tests cover pure validation before factories/signals, explicit empty
+and UTF-8 inputs, route-dependent full-frame boundaries, all four real command
+paths, one-object/NDJSON projections, final-entry/read settlement, early PONG
+with failed local send, nullable microsecond RTT, responder zero/cumulative
+response facts, task/command deadlines, pre-start cancellation, locked failure
+versus external stop, completed-core/pending-cleanup races, cleanup errors,
+output cancellation/final-flush authority, privacy, and late callbacks.
+
+No actual port enumeration/open, device command, radio traffic, or LoRa trial
+was performed. Native builds and synthetic tests do not establish device
+compatibility or diagnostic AOT execution against hardware. No remote CI run
+was dispatched or observed. The previous USB evidence remains unresolved;
+1B.8/1B.9 delivery and explicitly authorized two-device acceptance remain separate.

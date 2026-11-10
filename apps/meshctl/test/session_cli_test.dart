@@ -245,6 +245,7 @@ void main() {
         'total',
         'rejected',
         'protocol',
+        'malformed-control',
         'transport',
       ]) {
         fakeAsync((clock) {
@@ -265,6 +266,7 @@ void main() {
           if (mode == 'total') clock.elapse(second);
           if (mode == 'rejected') h.transport.receive([1, 4]);
           if (mode == 'protocol') h.transport.receive([5]);
+          if (mode == 'malformed-control') h.transport.receive([0x83, 0x42]);
           clock.flushMicrotasks();
           expect(h.result.done, false);
           expect(h.out.toString(), isEmpty);
@@ -327,7 +329,27 @@ void main() {
         '--duration=1',
       ]);
       clock.flushMicrotasks();
-      h.transport.receive([0x83, ...utf8.encode('PAYLOAD_SECRET')]);
+      h.transport.receive([0xfe, ...utf8.encode('PAYLOAD_SECRET')]);
+      h.transport.receive([0x83]);
+      h.transport.receive([0x00]);
+      h.transport.receive([0x0a]);
+      h.transport.receive([
+        0x1b,
+        0xf2,
+        0xa5,
+        0x5a,
+        5,
+        0xff,
+        0x34,
+        0x12,
+        14,
+        ...utf8.encode('PAYLOAD_SECRET'),
+      ]);
+      h.transport.receive([
+        0x11,
+        ...List.filled(10, 0xff),
+        ...utf8.encode('CHAT_SECRET'),
+      ]);
       h.transport.receive([1, 254]);
       h.transport.receive(selfInfo());
       clock.flushMicrotasks();
@@ -344,14 +366,17 @@ void main() {
       );
       expect(
         lines.where((e) => e['event'] == 'unassociated_response'),
-        hasLength(3),
+        hasLength(8),
       );
-      expect(lines.firstWhere((e) => e['opcode'] == 0x83)['contentLength'], 15);
+      expect(lines.firstWhere((e) => e['opcode'] == 0xfe)['contentLength'], 15);
+      expect(lines.firstWhere((e) => e['opcode'] == 0x83)['contentLength'], 1);
+      expect(lines.firstWhere((e) => e['opcode'] == 0x1b)['contentLength'], 23);
       expect(
         lines.firstWhere((e) => e['deviceErrorCode'] == 254)['deviceErrorName'],
         isNull,
       );
       expect(h.out.toString(), isNot(contains('PAYLOAD_SECRET')));
+      expect(h.out.toString(), isNot(contains('CHAT_SECRET')));
       expect(h.transport.sent, hasLength(2));
       clock.elapse(second);
       expect(h.result.value, 0);
@@ -574,7 +599,8 @@ void main() {
         h.transport.nodeName = 'node\n\r\x1b[31m\x07';
         h.transport.model = 'model\n\x1b';
         clock.flushMicrotasks();
-        h.transport.receive([0x83, ...utf8.encode('PAYLOAD_SECRET')]);
+        h.transport.receive([0xfe, ...utf8.encode('PAYLOAD_SECRET')]);
+        h.transport.receive([0x83]);
         h.transport.receiveError(StateError('NATIVE_SECRET'));
         clock.flushMicrotasks();
         final text = '${h.out}${h.err}';

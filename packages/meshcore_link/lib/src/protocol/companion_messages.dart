@@ -3,6 +3,11 @@ import 'dart:typed_data';
 
 import 'serial_framing.dart' show maxSerialFrameContentLength;
 
+const _maxChannelDataPayloadLength = 165;
+const _maxPathByteLength = 64;
+const _sendChannelDataPrefixLength = 5;
+const _channelDataResponsePrefixLength = 9;
+
 /// Encodes APP_START inner content, without a serial header or I/O.
 ///
 /// The name is preserved verbatim as UTF-8. Meshchan rejects NUL and names over
@@ -31,6 +36,73 @@ Uint8List encodeAppStart({String appName = 'Meshchan'}) {
 Uint8List encodeDeviceQuery({required int appTargetVersion}) {
   RangeError.checkValueInInterval(appTargetVersion, 0, 255, 'appTargetVersion');
   return Uint8List.fromList([0x16, appTargetVersion]);
+}
+
+/// Encodes SEND_CHANNEL_DATA inner content, with independently owned bytes.
+///
+/// [channelIndex] is a local uint8 slot; configured channels are not checked.
+/// [dataType] must be 1..65535. [routeDescriptor] is a uint8: 0xFF selects
+/// Flood with an empty [path]; other values encode a Direct hash count/size.
+/// Direct paths must match the descriptor, use 1..3-byte hashes, and fit 64
+/// bytes. Zero-count descriptors 0x00, 0x40, and 0x80 are preserved verbatim.
+///
+/// [payload] is opaque binary, including empty content. Its limit is the smaller
+/// of 165 and `maxSerialFrameContentLength - 5 - path.length`. Invalid arguments
+/// throw [ArgumentError] or [RangeError] without retaining path/payload storage.
+/// No serial header, length byte, terminator, or application header is added.
+Uint8List encodeSendChannelData({
+  required int channelIndex,
+  required int dataType,
+  required int routeDescriptor,
+  required Uint8List path,
+  required Uint8List payload,
+}) {
+  RangeError.checkValueInInterval(channelIndex, 0, 255, 'channelIndex');
+  RangeError.checkValueInInterval(dataType, 1, 65535, 'dataType');
+  RangeError.checkValueInInterval(routeDescriptor, 0, 255, 'routeDescriptor');
+  // Handle the Flood sentinel before applying the Direct descriptor formula.
+  final pathBytes = routeDescriptor == 0xff
+      ? 0
+      : _directPathByteLength(routeDescriptor);
+  if (pathBytes == null) {
+    throw ArgumentError('routeDescriptor has a reserved or oversized path.');
+  }
+  if (path.length != pathBytes) {
+    throw ArgumentError('path must contain exactly $pathBytes bytes.');
+  }
+  final serialBudget =
+      maxSerialFrameContentLength - _sendChannelDataPrefixLength - pathBytes;
+  final maxPayload = serialBudget < _maxChannelDataPayloadLength
+      ? serialBudget
+      : _maxChannelDataPayloadLength;
+  RangeError.checkValueInInterval(
+    payload.length,
+    0,
+    maxPayload,
+    'payload.length',
+  );
+
+  final typeOffset = 3 + pathBytes;
+  final content = Uint8List(typeOffset + 2 + payload.length);
+  content[0] = 0x3e;
+  content[1] = channelIndex;
+  content[2] = routeDescriptor;
+  content.setRange(3, typeOffset, path);
+  ByteData.sublistView(content).setUint16(typeOffset, dataType, Endian.little);
+  content.setRange(typeOffset + 2, content.length, payload);
+  return content;
+}
+
+/// Encodes a fresh SYNC_NEXT_MESSAGE command without reading or performing I/O.
+Uint8List encodeSyncNextMessage() => Uint8List.fromList([0x0a]);
+
+// Callers handle direction-specific 0xFF semantics and uint8 validation first.
+// A null result lets receive parsing report a protocol exception, never an
+// argument exception or a retained input buffer.
+int? _directPathByteLength(int descriptor) {
+  final hashSize = (descriptor >> 6) + 1;
+  final pathBytes = (descriptor & 0x3f) * hashSize;
+  return hashSize > 3 || pathBytes > _maxPathByteLength ? null : pathBytes;
 }
 
 /// The small response family recognized by this codec, without request matching.
@@ -145,7 +217,70 @@ final class DeviceErrorResponse extends CompanionResponse {
   };
 }
 
-/// An unimplemented response or push, including ordinary OK (0x00).
+/// Local OK only; no command association or remote delivery is implied.
+final class OkResponse extends CompanionResponse {
+  const OkResponse._() : super._(opcode: 0x00, contentLength: 1);
+}
+
+/// Queue waiting notice only; this performs no read and acknowledges no send.
+final class MessageWaitingResponse extends CompanionResponse {
+  const MessageWaitingResponse._() : super._(opcode: 0x83, contentLength: 1);
+}
+
+/// Empty-queue result, distinct from the host command with the same opcode.
+final class NoMoreMessagesResponse extends CompanionResponse {
+  const NoMoreMessagesResponse._() : super._(opcode: 0x0a, contentLength: 1);
+}
+
+/// One structurally valid channel datagram, without application filtering.
+final class ChannelDataResponse extends CompanionResponse {
+  ChannelDataResponse._({
+    required super.contentLength,
+    required this.snrQuarterDb,
+    required this.channelIndex,
+    required this.routeMetadata,
+    required this.dataType,
+    required Uint8List payload,
+  }) : payload = Uint8List.fromList(payload).asUnmodifiableView(),
+       super._(opcode: 0x1b);
+
+  /// Signed int8, in quarter-dB units.
+  final int snrQuarterDb;
+  double get snrDb => snrQuarterDb / 4.0;
+  final int channelIndex;
+
+  /// Receive-only metadata: 0xFF means Direct arrival; otherwise an observed
+  /// Flood path descriptor. No path bytes are present or inferred from it.
+  final int routeMetadata;
+  bool get isDirect => routeMetadata == 0xff;
+
+  /// Raw uint16, including zero and types unknown to this application.
+  final int dataType;
+
+  /// Independently owned, read-only bytes, available for explicit caller use.
+  final Uint8List payload;
+}
+
+enum QueuedMessageKind {
+  legacyContact,
+  contactV3,
+  legacyChannelText,
+  channelTextV3,
+}
+
+/// An ordinary shared-queue entry. Only its prefix is checked; no body,
+/// contact extras, or other input storage is parsed or retained.
+final class QueuedMessageResponse extends CompanionResponse {
+  const QueuedMessageResponse._({
+    required super.opcode,
+    required super.contentLength,
+    required this.kind,
+  }) : super._();
+
+  final QueuedMessageKind kind;
+}
+
+/// An unimplemented response or push.
 /// This retains only opcode and content length, and implies no startup success.
 final class UnhandledCompanionResponse extends CompanionResponse {
   const UnhandledCompanionResponse._({
@@ -158,6 +293,9 @@ enum CompanionProtocolExceptionKind {
   invalidContentLength,
   truncatedResponse,
   unsupportedDeviceInfoVersion,
+  unexpectedResponseLength,
+  invalidPayloadLength,
+  invalidRouteDescriptor,
 }
 
 /// Parsing failure containing only structural metadata, never input storage,
@@ -200,6 +338,18 @@ CompanionResponse decodeCompanionResponse(Uint8List content) {
     );
   }
   return switch (content[0]) {
+    0x00 => _decodeControl(content, const OkResponse._()),
+    0x83 => _decodeControl(content, const MessageWaitingResponse._()),
+    0x0a => _decodeControl(content, const NoMoreMessagesResponse._()),
+    0x1b => _decodeChannelData(content),
+    0x07 => _decodeQueuedMessage(content, QueuedMessageKind.legacyContact, 13),
+    0x10 => _decodeQueuedMessage(content, QueuedMessageKind.contactV3, 16),
+    0x08 => _decodeQueuedMessage(
+      content,
+      QueuedMessageKind.legacyChannelText,
+      8,
+    ),
+    0x11 => _decodeQueuedMessage(content, QueuedMessageKind.channelTextV3, 11),
     0x05 => _decodeSelfInfo(content),
     0x0d => _decodeDeviceInfo(content),
     0x01 => _decodeDeviceError(content),
@@ -208,6 +358,71 @@ CompanionResponse decodeCompanionResponse(Uint8List content) {
       contentLength: content.length,
     ),
   };
+}
+
+CompanionResponse _decodeControl(
+  Uint8List content,
+  CompanionResponse response,
+) {
+  _requireExactLength(content, 1);
+  return response;
+}
+
+void _requireExactLength(Uint8List content, int expected) {
+  if (content.length != expected) {
+    throw CompanionProtocolException._(
+      CompanionProtocolExceptionKind.unexpectedResponseLength,
+      contentLength: content.length,
+      opcode: content[0],
+      requiredLength: expected,
+    );
+  }
+}
+
+ChannelDataResponse _decodeChannelData(Uint8List content) {
+  _requireLength(content, _channelDataResponsePrefixLength);
+  final payloadLength = content[8];
+  if (payloadLength > _maxChannelDataPayloadLength) {
+    throw CompanionProtocolException._(
+      CompanionProtocolExceptionKind.invalidPayloadLength,
+      contentLength: content.length,
+      opcode: content[0],
+    );
+  }
+  _requireExactLength(
+    content,
+    _channelDataResponsePrefixLength + payloadLength,
+  );
+  final routeMetadata = content[5];
+  if (routeMetadata != 0xff && _directPathByteLength(routeMetadata) == null) {
+    throw CompanionProtocolException._(
+      CompanionProtocolExceptionKind.invalidRouteDescriptor,
+      contentLength: content.length,
+      opcode: content[0],
+    );
+  }
+  final data = ByteData.sublistView(content);
+  return ChannelDataResponse._(
+    contentLength: content.length,
+    snrQuarterDb: data.getInt8(1),
+    channelIndex: content[4],
+    routeMetadata: routeMetadata,
+    dataType: data.getUint16(6, Endian.little),
+    payload: Uint8List.sublistView(content, _channelDataResponsePrefixLength),
+  );
+}
+
+QueuedMessageResponse _decodeQueuedMessage(
+  Uint8List content,
+  QueuedMessageKind kind,
+  int minimum,
+) {
+  _requireLength(content, minimum);
+  return QueuedMessageResponse._(
+    opcode: content[0],
+    contentLength: content.length,
+    kind: kind,
+  );
 }
 
 void _requireLength(Uint8List content, int minimum, {int? protocolVersion}) {

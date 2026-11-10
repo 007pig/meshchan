@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Phase 1 / 1B / Step 1 (1B.1) fixes the protocol, ownership, and acceptance
+Phase 1 / 1B / Step 1 (1B.1) fixed the protocol, ownership, and acceptance
 contract only. Review date: November 9, 2026. The reviewed Meshchan checkout was
 clean on `master` at `98a50a3d5e9c8a1c843f3552ca0263a2c73a4369`, the same
 commit as the task's historical reference. No hardware was accessed for this
@@ -11,7 +11,7 @@ remains `0.1.0-dev.1`.
 
 | Status | Evidence and boundary |
 | --- | --- |
-| Current implementation | USB transport, serial framing, initialization codecs, a single-use session, and `ports`, `port-check`, `info`, and `watch`. No datagram codec, ready-state command executor, queue reader, or PING/PONG operation exists at the reviewed commit. |
+| Implementation at the 1B.1 review | USB transport, serial framing, initialization codecs, a single-use session, and `ports`, `port-check`, `info`, and `watch`. No datagram codec, ready-state command executor, queue reader, or PING/PONG operation exists at the reviewed commit. |
 | Planned 1B behavior | Binary datagram send/receive, bounded device-command execution, explicitly enabled queue consumption, one application PING/PONG exchange, and finite CLI diagnostic tasks. The contracts below do not expose those features today. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
@@ -20,8 +20,8 @@ The current [session contract](companion-session.md) remains authoritative for
 allows `_send()` only while initializing, matches DEVICE_INFO and SELF_INFO,
 and otherwise emits structural summaries. The
 [codec](../../packages/meshcore_link/lib/src/protocol/companion_messages.dart)
-recognizes those two responses and device errors; even OK and `0x83` are currently
-unhandled summaries. The
+recognized those two responses and device errors at the 1B.1 review; OK and
+`0x83` were unhandled summaries. The
 [CLI session runner](../../apps/meshctl/lib/src/session_command.dart) owns a fresh
 session per invocation and awaits cleanup. Preserve those behaviors for existing
 commands; readiness alone proves no LoRa exchange.
@@ -30,6 +30,66 @@ commands; readiness alone proves no LoRa exchange.
 session ownership. It excludes long-content chunking/retransmission, persistence
 or databases, Flutter UI, BLE/TCP, new author identities, automatic discovery,
 complete route learning, infinite reconnection, and a long-running message service.
+
+### 1B.2 implementation and validation
+
+On November 10, 2026, 1B.2 extends the existing synchronous codec from `master`
+at `abbab6803faecee119f8ec3057c8b7315aadd722`, which includes PR #9's contract
+commit `5e1b9153e02da34edf31f3eb6832e41cda2228bf`. The historical 1B.1 review
+and upstream evidence below remain separate from this implementation.
+
+The public `package:meshcore_link/meshcore_link.dart` entry exports:
+
+- `encodeSendChannelData`, requiring `channelIndex`, `dataType`,
+  `routeDescriptor`, `path`, and `payload`. It validates numeric ranges, the
+  exact Direct path length or empty Flood path, and both capacity limits before
+  allocating a complete inner command. It does not check configured channels.
+- `encodeSyncNextMessage`, returning a fresh one-byte command without a read.
+- The existing `decodeCompanionResponse`, now also returning `OkResponse`,
+  `MessageWaitingResponse`, `NoMoreMessagesResponse`, `ChannelDataResponse`, and
+  `QueuedMessageResponse` / `QueuedMessageKind`. Datagram fields include
+  `snrQuarterDb` / `snrDb`, `channelIndex`, receive-only `routeMetadata` /
+  `isDirect`, raw `dataType`, and explicitly accessible `payload`.
+
+Encoded commands copy the supplied path and payload. Received datagrams copy
+only their payload into independent read-only storage; offset views are accepted.
+Ordinary messages retain only kind, opcode, and content length. Default summaries
+and exceptions omit body/path bytes. Malformed recognized responses use
+`CompanionProtocolException`; unknown opcodes and device error tails keep their
+existing compatibility policies. No session or CLI scheduling behavior changes.
+
+Implementation is complete for the in-memory codec scope. Focused tests are
+`packages/meshcore_link/test/channel_datagrams_test.dart` and the existing
+`companion_messages_test.dart`; session and CLI regressions use their existing
+fake transports. Run the focused files with core `dart test`, followed by the
+complete core and CLI suites, using the installed SDK and locked dependencies
+from the [testing guide](../testing.md).
+
+Actual local software validation used the existing Flutter SDK's bundled Dart
+3.13.7 on macOS arm64, with Apple tools preferred through the process PATH.
+Installed SDK metadata reports Flutter 3.47.9 stable; the Flutter wrapper was
+not run. Checks completed on November 10, 2026:
+
+| Check | Result |
+| --- | --- |
+| `dart pub get --enforce-lockfile` | Passed; root lockfile unchanged, no dependencies added. |
+| Format and format check of the six changed Dart files | Passed; final check made zero changes. |
+| `dart analyze --fatal-infos` | Passed; no issues. |
+| Focused datagram and initialization codec tests | Passed; 21 tests. |
+| Complete core suite, then complete CLI suite | Passed sequentially; 77 and 27 tests, respectively. |
+| Existing CLI and observation native bundle builds, then `tool/smoke_cli.py` | Passed once sequentially in fresh temporary output; all 46 macOS process checks and both native asset checks passed. Linux-only enumeration refusal was not applicable. |
+| Patch and new-file hygiene | Passed whitespace checks, UTF-8 without BOM, LF, and final newline checks. |
+
+The original notification-interleaving and privacy tests remain: legal `83`
+uses one byte, private unknown tails use `FE`, and newly recognized responses
+cannot complete initialization, renew deadlines, or cause extra sends. Malformed
+controls/datagrams exercise existing protocol failure and awaited cleanup.
+No remote CI, real port enumeration/access, device commands, or LoRa tests ran.
+
+Ready-state command execution, queue consumption, application PING/PONG, and
+device/LoRa validation remain pending later steps. Encoding `0x0A` performs no
+queue operation; parsing OK proves neither command association nor delivery.
+The application version remains `0.1.0-dev.1`.
 
 ## Fixed upstream evidence
 
@@ -81,6 +141,11 @@ at offset 0 and excluding the serial header. Directions disambiguate reused code
 | Device → host | `0x0A` / `RESP_CODE_NO_MORE_MESSAGES` | One-byte empty-queue result, distinct from the host command with the same value. |
 | Device → host | `0x07` / `0x10` contact message; `0x08` / `0x11` channel text | Another possible result of one queue read. Target 3 selects the V3 forms `0x10` / `0x11`; legacy forms remain identifiable as non-test queue entries. |
 
+For the fixed one-byte device responses `0x00`, `0x83`, and `0x0A`, Meshchan
+requires exactly one content byte. Any tail is a protocol error; it is not
+treated as an unknown extension. This does not tighten the error response's
+existing at-least-two-byte policy.
+
 For sending, let `P` be the actual encoded path byte count:
 
 | Offset | `0x3E` field |
@@ -111,7 +176,7 @@ path truncation, inference, or fallback to Flood.
 | 8 | uint8 declared payload length `N`. |
 | 9 onward | `N` binary payload bytes. |
 
-Meshchan will require at least nine bytes before reading fields, `N <= 165`,
+Meshchan requires at least nine bytes before reading fields, `N <= 165`,
 and exactly `9 + N` content bytes for this fixed layout. A short body or an
 unexpected tail is a protocol error, not a truncated successful datagram. This
 exact-length policy is stricter than the upstream prose's sample parser, which
@@ -380,8 +445,9 @@ No raw-message capture is needed for this step or for routine acceptance records
 
 ## Acceptance to execute later
 
-All boxes below are **planned / not run in 1B.1**. They specify future evidence,
-not passing software or device results. Follow the existing
+All boxes below were **planned / not run in 1B.1**. This retained full-1B
+checklist is not a claim of passing software or device results; the scoped 1B.2
+implementation and validation are recorded above. Follow the existing
 [testing evidence boundaries](../testing.md#evidence-limits).
 
 Software acceptance should use a few representative behavior groups:
@@ -446,14 +512,14 @@ no hardware, captures no raw messages, and repairs no USB issue.
 
 ## Handoff and document review
 
-1B.2 can take the fixed Companion layouts, path/byte budgets, error-code caveat,
-strict local validation policies, binary ownership/privacy rules, and codec
-acceptance group as its direct inputs. Implementing those codecs/tests is a
-separate step. Session scheduling and bounded reception then follow the
-contracts here; 1B.5 must freeze application layout before PING/PONG vectors or
+1B.2 implements the fixed Companion layouts, path/byte budgets, error-code caveat,
+strict local validation policies, and binary ownership/privacy rules through
+the public codec API above. 1B.3 can call those interfaces for later session
+scheduling. Bounded reception then follows the contracts here; 1B.5 must freeze
+application layout before PING/PONG vectors or
 round-trip implementation depend on it. CLI syntax and concrete bounded runtime
 parameters remain later implementation decisions, with radio waits selected
-from measurements. No subsequent step is implemented by this document.
+from measurements. The codec does not implement those subsequent steps.
 
 1B.1 review is limited to current-code/source comparisons, table/formula
 consistency, relative and fixed-commit links, UTF-8/LF/whitespace checks, and

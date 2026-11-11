@@ -32,6 +32,15 @@ jobs:
       - name: Get locked workspace dependencies
         run: dart pub get --enforce-lockfile
 
+      - name: Generate offline core dependency probe
+        working-directory: packages/meshchan_core
+        run: dart run build_runner build
+
+      - name: Check tracked dependency probe generation
+        run: |
+          git ls-files --error-unmatch packages/meshchan_core/test/support/dependency_probe_database.g.dart
+          git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
+
       - name: Check formatting
         run: dart format --output=none --set-exit-if-changed .
 
@@ -40,6 +49,10 @@ jobs:
 
       - name: Test finite acceptance plan validation without hardware
         run: python3 -m unittest discover -s tool -p '*_test.py'
+
+      - name: Test offline business values and in-memory SQLite probe
+        working-directory: packages/meshchan_core
+        run: dart test
 
       - name: Test CLI
         working-directory: apps/meshctl

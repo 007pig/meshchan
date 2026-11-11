@@ -4,14 +4,15 @@
 
 Use American English for project documentation, code comments, CLI output, and configuration text. Keep identifiers in English.
 
-The root `pubspec.yaml` lists `packages/meshcore_link` and `apps/meshctl`. Both members use `resolution: workspace`; all packages use `publish_to: none` and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`. Do not create member lockfiles or add Flutter SDK dependencies. The CLI resolves `meshcore_link` to the local workspace member without overrides. Check membership with `dart pub workspace list`.
+The root `pubspec.yaml` lists `packages/meshcore_link`, `packages/meshchan_core`, and `apps/meshctl`. All three members use `resolution: workspace`; all packages use `publish_to: none` and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`. Do not create member lockfiles or add Flutter SDK dependencies. The CLI resolves `meshcore_link` to the local workspace member without overrides. Check membership with `dart pub workspace list` (which also displays the root package).
 
-The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. No Flutter engine or platform project is involved.
+The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the communication core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. The offline business package declares `drift`/`sqlite3`, plus `drift_dev`, `build_runner`, and `test` for development. No Flutter engine or platform project is involved.
 
 The [offline core and persistence contract (1C.1)](architecture/offline-core.md)
-defines the planned `meshchan_core` boundary, local business objects, diagnostic
+defines the `meshchan_core` boundary, local business objects, diagnostic
 recording/recovery rules, and acceptance requirements for subsequent 1C steps.
-It does not add a workspace member or change the current implementation status.
+1C.2 adds only the package, values/interfaces, and dependency probe described
+below; persistence, recording, and CLI business behavior remain future work.
 
 ## SDK and native toolchain baseline
 
@@ -112,8 +113,13 @@ From the repository root, using the session PATH above:
 ```bash
 dart pub get
 dart pub get --enforce-lockfile
+dart pub workspace list
+(cd packages/meshchan_core && dart run build_runner build)
+git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
 dart format --output=none --set-exit-if-changed .
 dart analyze --fatal-infos
+python3 -m unittest discover -s tool -p '*_test.py'
+(cd packages/meshchan_core && dart test)
 (cd packages/meshcore_link && dart test)
 (cd apps/meshctl && dart test)
 ```
@@ -121,6 +127,128 @@ dart analyze --fatal-infos
 For a clone with an unchanged lockfile, start with `dart pub get --enforce-lockfile`. After intentional dependency changes, let pub resolve and update the root lockfile, review the diff, then enforce it. Do not perform unrelated workspace upgrades. Format only files involved in a change when fixing formatting.
 
 Tests inject a small serial service, handle adapter, or native operation callbacks and never enumerate or open actual hardware. CLI tests check output, warnings, exit codes, exact-path forwarding, and that help/version/invalid arguments do not invoke diagnostics. Core tests check metadata failures, close/dispose behavior, open/state/close/dispose failures, and primary-error preservation. Regressions also cover false open-state reports, partial acquisition before an open failure, already-closed recovery, and USB serial numbers embedded in full or truncated Linux descriptions. Platform tests verify that blocked backends never execute their native callbacks. Invalid UTF-8 decoding tests retain the affected path, continue other records, and dispose every metadata handle; errors outside that decoding boundary still propagate. Build hooks compiling native assets are expected during tests.
+
+## Offline core package and dependency baseline (1C.2)
+
+The public entry is `package:meshchan_core/meshchan_core.dart`; see the
+[package README](../packages/meshchan_core/README.md). Immutable values cover
+draft content/revision metadata, operation-specific profile parameters, the two
+settings, and safe diagnostic configuration/result/cleanup/recovery snapshots.
+IDs accept only 32 lowercase hexadecimal digits. UTC instants, explicit stable
+codes, named microsecond fields, bounded page sizes/cursors, and independent
+nullable facts follow the [1C.1 contract](architecture/offline-core.md).
+`DraftRepository`, `ProfileRepository`, `SettingsRepository`, and read-only
+`DiagnosticHistory` describe asynchronous committed-save/query contracts.
+There are no service implementations. Profile constructors are typed input
+values with only local checks; complete operation/route/capacity validation is
+required at the later save/merge boundary. Neither communication nor CLI code
+depends on this package, and these types do not yet reference `meshcore_link`.
+
+Dependency selection on November 11, 2026, used the official
+[pure Dart setup](https://drift.simonbinder.eu/setup/),
+[native backend](https://drift.simonbinder.eu/platforms/vm/),
+[testing](https://drift.simonbinder.eu/testing/),
+[empty database annotation API](https://pub.dev/documentation/drift/latest/drift/DriftDatabase-class.html),
+[Pub workspaces](https://dart.dev/tools/pub/workspaces), and
+[pub get](https://dart.dev/tools/pub/cmd/pub-get) documentation, then actual
+resolution on the installed SDK. Manifests use compatible caret constraints;
+the single root lockfile fixes these direct package dependencies:
+
+| Role | Resolved version | License evidence in installed archive |
+| --- | --- | --- |
+| `drift` | 2.35.4 | MIT, root `LICENSE` |
+| `sqlite3` | 3.9.1 | MIT Dart wrapper, root `LICENSE`; default SQLite itself is [public domain](https://sqlite.org/copyright.html) |
+| `drift_dev` | 2.35.3 | MIT, root `LICENSE` |
+| `build_runner` | 2.17.1 | BSD-3-Clause, root `LICENSE` |
+| `test` | 1.33.0 (already locked) | BSD-3-Clause, root `LICENSE` |
+
+Normal `pub get` added 21 packages and changed no preexisting locked version.
+New MIT transitive dependency: `sqlparser` 0.45.1. New BSD-2-Clause dependency:
+`recase` 4.1.0. New BSD-3-Clause dependencies: `build` 5.0.0, `build_config`
+1.4.0, `build_daemon` 4.1.7, `built_collection` 5.1.2, `built_value` 8.13.0,
+`charcode` 1.4.0, `checked_yaml` 2.0.4, `dart_style` 3.1.14, `fixnum` 1.1.1,
+`graphs` 2.3.2, `json_annotation` 4.12.0, `pubspec_parse` 1.7.0, `source_gen`
+4.3.1, `stream_transform` 2.1.2, and `yaml_edit` 2.2.4. These classifications
+were checked against installed root license texts. `json_annotation` is a
+generator dependency; no model/JSON generator was added to business code.
+Existing analyzer 14.7.0, native hook/toolchain packages, test packages, and
+`libserialport_plus` 1.0.5 remain locked. No override or full upgrade was used.
+This records dependency findings without choosing Meshchan's license or
+completing redistribution work.
+
+The selected sqlite3 package's default hook downloads its own versioned native
+asset and verifies its expected hash. Let that hook manage the asset; do not
+redirect it to a system library or manually install a SQLite dylib. Network
+access to the upstream GitHub release is needed on a cold hook cache. Existing
+serial build hooks still require the installed compiler/platform SDK. Keep
+independent test processes, code generation, and native builds sequential.
+
+Run code generation **from `packages/meshchan_core`** with
+`dart run build_runner build`, after locked root resolution. The tracked
+`test/support/dependency_probe_database.g.dart` is generated, never hand-edited.
+The minimal `build.yaml` preserves the default source set (including `test/`)
+and disables managers: the selected generator's default empty manager contained
+an unused private `_db` field, which failed analysis. This is not a production
+schema choice. After generation, use the root `git diff --exit-code` command
+above to reject stale tracked output; CI also verifies that the file is tracked.
+When initially adding the fixture, compare hashes across two successive builds.
+
+The empty test-only database receives a `QueryExecutor`; its test supplies
+`NativeDatabase.memory()`, executes `SELECT 1 AS value`, checks one integer row,
+and awaits close in `finally`. The fixture's version 1 is only an in-memory test
+version. No product `databaseSchemaVersion`, tables, migration/snapshot, file
+factory, default directory, or lock is introduced. It is not evidence of
+restart persistence or SQLite product AOT/relocation compatibility.
+
+1C.3 starts from these public types and repository declarations and the proven
+executor/generator seam. It must implement real schema 1 and its snapshot,
+directory identity/exclusive ownership, host-supplied path/executor lifecycle,
+supported/corrupt/newer-version failures, and the migration baseline. Repositories
+remain for 1C.4–1C.5; mapping/coordinated writes/recovery/history/export and CLI
+composition remain for 1C.6–1C.9. Package and application versions stay
+`0.1.0-dev.2`. No device operation is required by this step.
+
+### 1C.2 local validation on November 11, 2026
+
+The worktree started clean on `master` at
+`3e9eb0a6f5aa851be289290149e393bc54ac06ca`, the merged 1C.1 reference.
+No existing partial business package or later implementation was present.
+Checks used macOS **27.2.1 (26B131), arm64**, and the existing SDK's direct
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart`: **3.13.7 stable**.
+Flutter cache metadata reports **3.47.9 stable**, revision
+`c197ca5199e9ee5661e865596c9c07294dfab51c`; no fresh Flutter CLI result is
+claimed. The process-only PATH preferred the existing **Apple Clang 21.0.0**
+(`clang-2100.4.1.1`). Python ran through `/opt/homebrew/bin/python3`, **3.15.2**,
+with `sys.executable` = `/opt/homebrew/opt/python@3.15/bin/python3.15`.
+No SDK/global configuration or upstream package source was changed.
+
+| Check | Actual local result |
+| --- | --- |
+| Normal `dart pub get`, root lockfile review, then `dart pub get --enforce-lockfile` | Passed; 21 additions, no existing locked version changes. The initial sandboxed get could not reach pub.dev; the authorized network-enabled get succeeded. |
+| `dart pub workspace list` and member lockfile checks | Passed; three members plus the root package displayed, with no member lockfile. |
+| Member-directory `dart run build_runner build` | Passed with the minimal manager option; successive builds preserved the generated fixture's SHA-256 `7162ad177089ef3bbd6a7e19cd4bca59214e21b002d35b17e7bb0b6f08e977a7`. |
+| Root format check and `dart analyze --fatal-infos` | Passed; 71 Dart files, zero formatting changes, no analysis issues. Initial empty-manager warning and super-parameter lint were fixed through generator configuration/source, without editing generated output or suppressing analysis. |
+| `meshchan_core` full suite | **12 passed**, including the real in-memory SQLite query. The first sandboxed test could not reach GitHub for the default hook asset; the authorized network-enabled rerun passed with awaited database close. |
+| `meshcore_link` full suite | **180 passed**. |
+| `meshctl` full suite | **97 passed**, including local loopback sockets with the required execution access. |
+| Python discovery, `python3 -m unittest discover -s tool -p '*_test.py' -v` | **46 passed**, using the explicit Homebrew interpreter above. |
+| Three existing native bundle targets, sequential fresh output | Passed: product CLI, serial observation example, and development datagram acceptance. Output: `/private/tmp/meshchan-1c2.j73InL/{meshctl,observation,datagram-acceptance}`. Each build copied the existing serial native asset. |
+| Shared `tool/smoke_cli.py` with those three bundles and the direct Dart SDK | **69 macOS process checks passed**, including broken pipe, complete CLI bundle relocation, and all five source/AOT synthetic datagram scenarios. Linux enumeration refusal was not applicable on this host. |
+| Final patch/new-file review | Tracked and new-file whitespace, conflict markers, generated-file presence, local documentation targets/anchors, and unique root lockfile checked. Existing CLI/communication sources and versions are unchanged. |
+
+Existing-suite, Python, native-build, and smoke logs remain in the ignored
+`build/1c2-validation/` directory. The generated fixture is delivered as a new
+source file, not an ignored build artifact; initial-addition reproducibility was
+checked by hashes rather than pretending an untracked file appears in a tracked
+`git diff`. CI verifies tracked generation after the files are committed.
+
+The CI workflow now generates/checks the fixture after dependency resolution and
+tests the new member before the retained CLI/communication/native gates. No
+remote Actions result for these working-tree changes was dispatched or observed.
+No real port enumeration/open, hardware command, deployment connection, or RF
+operation was run. These CLI builds and smoke cases do not call SQLite and do
+not validate its product AOT distribution. Real-file restart persistence,
+migrations, directory ownership, and recovery remain unimplemented.
 
 ## Serial framing (Step 3)
 

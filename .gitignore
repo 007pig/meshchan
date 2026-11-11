@@ -4,6 +4,9 @@
 .packages
 build/
 coverage/
+# Python development-tool test imports.
+__pycache__/
+*.py[cod]
 *.dart.js
 *.dart.js.deps
 *.dart.js.map

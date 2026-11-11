@@ -2,7 +2,7 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
-The current implementation covers **Phase 1 / 1B / Step 8: datagram software regression and source/AOT synthetic acceptance**. The core now includes serialized ready commands, bounded shared-inbox reception, diagnostic PING/PONG v1, and finite PING/responder tasks. The CLI exposes `datagram send`, `listen`, `ping`, and `respond`. See the [1B.8 coverage audit and reproduction guide](docs/testing.md#datagram-cross-layer-coverage-audit-1b8) and [dated execution record](docs/development.md#1b8-software-validation-on-november-10-2026). Application version stays `0.1.0-dev.1`; real datagram USB/LoRa acceptance and the final candidate remain 1B.9 work.
+The current implementation covers **Phase 1 / 1B / Step 9: finite USB/openHop development acceptance and a local `0.1.0-dev.2` candidate**. The product remains USB-only. A source-only [openHop peer](docs/openhop-acceptance.md) reuses Meshchan's existing core for a selected virtual Companion over binary WebSocket. It is excluded from the product bundle and is not an independent application-protocol oracle. The fresh [software gate](docs/development.md#1b9-software-validation-on-november-10-2026) and source/AOT synthetic checks passed. [Real Direct acceptance](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) established exact round trips in both directions, the binary boundary, and no-responder timeout. A later [authorized H2/H7 comparison](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026) passed local acceptance and active cancellation with B command=15 s/A=5 s. Every basic case now has a passing record, with all earlier failures retained; relay paths and physical unplug remain untested. See the [dev.2 local delivery record](docs/releases/phase-1b-dev2.md).
 
 Historical 1A evidence remains separate. On November 9, 2026, a fresh software gate and the fixed H2–H7 USB hardware matrix passed on one macOS 27.2 arm64 host and one explicitly authorized Companion USB device. H1 enumeration, H8 nonexistent-port handling and H9 initialization cancellation passed. Later H10 startups failed three times before ready, with confirmed cleanup; a separate manual replug/info sequence had one timeout and one success. Ready-state disconnect detection and a complete H10 recovery cycle remain untested. See the [1A delivery record](docs/releases/phase-1a-dev1.md) and [latest H10 attempt](docs/hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).
 
@@ -20,6 +20,11 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | --- | --- |
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
 | `apps/meshctl` | Asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
+
+Local Python scripts and tests use the latest installed stable Python **3.15 or
+newer**. On this Mac, `/opt/homebrew/bin/python3` is the verified 3.15.2 entry;
+see [toolchain selection](docs/development.md#local-python-toolchain) to keep it
+selected alongside Apple Clang. Python is not required by the product bundle.
 
 ## Quick start
 
@@ -42,7 +47,7 @@ dart run bin/meshctl.dart datagram ping --help
 dart run bin/meshctl.dart datagram respond --help
 ```
 
-Running without arguments or with `-h` also displays help. The application version remains `0.1.0-dev.1`. Help and version do not access hardware. Select and authorize a port explicitly before device commands; old selections do not carry over. `ports` lists exact system paths, descriptions, transport types, and USB VID/PID when available. It does not open ports or send probes. Missing metadata appears as `-`; a per-port metadata failure retains the path and writes a warning to stderr.
+Running without arguments or with `-h` also displays help. The application version is `0.1.0-dev.2`. Help and version do not access hardware. Select and authorize a port explicitly before device commands; old selections do not carry over. `ports` lists exact system paths, descriptions, transport types, and USB VID/PID when available. It does not open ports or send probes. Missing metadata appears as `-`; a per-port metadata failure retains the path and writes a warning to stderr.
 
 **Current native platform limits:** macOS is locally validated. With the pinned `libserialport_plus` 1.0.5, native `ports` is blocked on Linux, Android, and Windows before enumeration because the backend can open unselected ports. Windows `port-check` is also blocked before native handle creation because the wrapper's handle state check is unsafe on 64-bit Windows. These operations return `69` with an explanation. Explicit-port checking on Linux/Android remains unverified. Malformed UTF-8 metadata on an enabled backend produces a warning for that path while other records remain available.
 
@@ -76,3 +81,11 @@ build/dist/bundle/bin/meshctl watch --help
 Move or copy the entire `apps/meshctl/build/dist/bundle/` directory, including `bin/meshctl` and `lib/liblibserialport_plus.dylib` on macOS. Do not distribute the executable alone. Build output is ignored by Git. This bundle was checked on local macOS arm64, including after moving it outside the repository; clean-machine compatibility and other platforms remain unverified, with the runtime restrictions described above.
 
 See the [Developer Guide](docs/development.md) for toolchain requirements, reproducible checks, dependency sources and licenses, and CI details. The [Validation Record](docs/hardware-validation.md) separates verified software and selected-port checks from remaining validation.
+
+
+A later [read-only channel audit](docs/hardware-validation.md#read-only-channel-audit-on-november-10-2026)
+found eight matching A/B 16-byte key representations without consuming the inbox
+or sending RF data. Its two initial USB timeouts remain recorded. The separate
+development WS adapter cleanup correction waits for receive EOF; the later CLI
+suite passed 84 tests. The original dev.2 binary/archive remain unchanged, and
+Direct RF acceptance still needs a selected pair and confirmed deployment path/window.

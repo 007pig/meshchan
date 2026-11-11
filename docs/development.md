@@ -51,6 +51,38 @@ clang --version
 
 If SDK cache initialization or pub downloads are restricted by the execution environment, request the appropriate execution access. Do not use sudo or change global configuration to bypass restrictions. Even source help/version invocations can run build hooks before CLI argument handling; avoiding hardware access does not remove native build requirements.
 
+## Local Python toolchain
+
+Use the latest installed stable **Python 3.15 or newer** for subsequent local
+project scripts and tests. On November 11, 2026, `/opt/homebrew/bin/python3`
+reported **Python 3.15.2** and `sys.executable` resolved to
+`/opt/homebrew/opt/python@3.15/bin/python3.15`. Use `python3`, never `python`.
+Do not install or upgrade another interpreter automatically. A later installed
+stable version may replace this selection after checking its actual version.
+The persistent [agent guidance](../AGENTS.md) records this local policy.
+
+Preferring Apple Clang by putting `/usr/bin` first can also select its older
+Python 3.9. Call `/opt/homebrew/bin/python3` explicitly when keeping that compiler
+PATH, or insert only the selected Python directory ahead of `/usr/bin`:
+
+```bash
+export PATH="/opt/homebrew/share/flutter/bin:/opt/homebrew/opt/python@3.15/bin:/usr/bin:$PATH"
+python3 --version
+python3 -c 'import sys; assert sys.version_info >= (3, 15); print(sys.executable)'
+clang --version
+python3 -m unittest discover -s tool -p '*_test.py' -v
+```
+
+This keeps the installed Apple compiler selected and uses the requested Python
+without changing system settings. Record the actual interpreter path and version
+with new software/provenance checks. Earlier Python 3.9 records retain their
+original dates and facts; rerunning with 3.15 produces a separate record.
+
+When Python tests or tools launch another Python script, use `sys.executable`
+for the child. A bare `python3` in subprocess arguments independently resolves
+PATH and can undo an explicit parent-interpreter selection. New provenance
+checks should retain the parent and child executable paths.
+
 ## Dependencies and licenses
 
 The [published package](https://pub.dev/packages/libserialport_plus) and its [changelog](https://pub.dev/packages/libserialport_plus/changelog) were checked on November 8, 2026. Pub selected 1.0.5 with Dart 3.13.7. Version 1.0.0 removed the Flutter SDK/plugin dependency and introduced Dart native asset build hooks. The installed 1.0.5 archive's `hook/build.dart`, `lib/src/serial_port.dart`, `serial_port_info.dart`, and exception implementation were reviewed. `open()` returns `void` and defaults to read/write; `isOpen()` is a method. The Dart metadata API does not require an explicit `open()`, but native internals on some platforms open ports, so platform guards are required.
@@ -1208,3 +1240,623 @@ historical intermittent USB partial-body problem. H10 ready-state unplug and a
 complete recovery cycle remain open. 1B.9 still needs explicit device/firmware,
 channel/radio, forward/return routes, peer labels, binary content and measured
 budgets before authorized device trials and final candidate handling.
+
+
+## 1B.9 software validation on November 10, 2026
+
+Started with clean `master` at `40ab5bcd5638751f4b2362b05792e0de74c92f62`;
+PR #16 head `bbe2efbd34aa52d3d25bf7c5106e17ae1609cc32` is an ancestor.
+No reset, merge, remote publication or user-edit removal occurred. Updated
+workspace package versions, CLI version constant/assertion and core constraint
+to `0.1.0-dev.2`; `publish_to: none`, external constraints and the single root
+lockfile remain unchanged. Historical dev.1 evidence was not rewritten.
+
+Added a tool-local WS transport, finite source peer, 15 focused CLI-suite
+boundary tests, configuration templates, an offline matrix generator and a
+local archive/extraction verifier. The peer uses Dart HttpClient/WebSocket and
+existing args/core/projections. No production state machine or USB defaults
+changed; no production defect fix, new transport export or product flag was added.
+
+Actual host: macOS **27.2.1 (26B131)**, arm64; Apple Clang 21.0.0. Direct bundled
+Dart **3.13.7** at `/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart`.
+Flutter cache metadata says **3.47.9 stable**, revision
+`c197ca5199e9ee5661e865596c9c07294dfab51c`; the Flutter wrapper was not run.
+Python3 used for this gate was **3.9.6** through the Apple-first process PATH;
+the normal terminal's Python3 reported 3.15.2. No SDK/cache/global toolchain
+change or second SDK installation occurred.
+
+The full gate ran serially in the fresh ignored directory
+`build/phase-1b9/20261110T193252Z/` with process PATH prefix
+`/opt/homebrew/share/flutter/bin:/usr/bin`. Actual argv, cwd, UTC start/end and
+exit code are in `software-gate.json`; each step has a separate retained log.
+
+| Check | Actual result |
+| --- | --- |
+| `dart pub get --enforce-lockfile` | PASS; lock SHA-256 `9d31c319b24e72356feed7168a457671dd49cd356513f6ab77414edc473e504c`, unchanged. |
+| `dart format --output=none --set-exit-if-changed .` | PASS; 50 Dart files, zero changes. |
+| `dart analyze --fatal-infos` | PASS; no issues. |
+| Full core tests, then full CLI tests | PASS; 180 / 72, including 15 new openHop boundary tests. |
+| Three fresh native builds | PASS; product bin/meshctl.dart, observation example, and existing development datagram_acceptance.dart, sequentially. |
+| Shared `tool/smoke_cli.py` with all three fresh bundles | PASS; 69 macOS process checks, native assets, broken pipe, complete product relocation, five synthetic source scenarios and the same five AOT scenarios outside checkout. |
+| Offline plan generator | PASS; 14 fresh distinct nonzero IDs, a 131-byte two-route Direct boundary plan, missing prerequisites rejected before output; no network/device access. |
+| Final text/relative document links/anchors, whitespace | PASS; performed after the final dated records. |
+| New remote CI execution | NOT_RUN; the unchanged existing job includes the new tests, no real credentials/devices. Historical merge CI is not a result for these changes. |
+
+Early focused development runs are not hidden: sandbox loopback bind was denied,
+so tests were rerun with loopback execution access. An unused single-subscription
+fixture controller made initial focused teardown wait; changing that test-only
+controller to broadcast fixed it. The focused 15-test run and subsequent full
+gate passed. Native tests/builds were not run concurrently. The full gate has
+no hardware/API access; real H0 was a separately authorized later operation.
+
+The whole fresh product bundle was copied to the build's `delivery/<build-id>/`
+before H0, and executable/dylib hashes were recorded first. The hardware record
+retains A info PASS, B source preparation failure before networking (wrong PATH),
+and the subsequently prepared original single WS check PASS. Both sessions
+closed successfully. No RF datagram was sent. Additional user-authorized
+management reads found actual Repeater/Core versions and a two-radio Fabric;
+see [hardware record](hardware-validation.md#1b9-usb-and-openhop-acceptance-on-november-10-2026).
+
+[The local delivery record](releases/phase-1b-dev2.md) and
+[peer/matrix guide](openhop-acceptance.md) specify the exact finite next steps.
+`tool/package_dev_candidate.py` packages the complete tested candidate, original
+notices, compilation-input provenance and an honest acceptance snapshot. It
+checks the final archive by fresh outside-checkout extraction, all ordinary-file
+checksums, layout, execute mode, tested native hashes and four no-device
+invocations. Results are retained in the build's external
+`archive-verification.json`; a final tar.gz and whole-archive SHA-256 sidecar
+remain under `delivery/`. Only documentation/package metadata changed after H0;
+product bytes remain identical. Public distribution, relay/Direct RF, active RF
+cancellation and physical disconnect are not inferred from archive integrity.
+
+The final archive verifier ran with the already-installed normal-path Python3
+3.15.2 (its `tarfile` data extraction filter is available there). It verified
+32 ordinary files and four extracted process checks at
+`2026-11-10T19:47:00.186398Z`. SHA-256:
+`4d6b0eeb06e119120e51eb197d5a0ffcf77b1a057c6a978050a42d78533e0333`.
+The extraction directory is recorded in the external verification JSON and the
+release record; the persistent archive/candidate remain under the ignored build
+directory. Original dependency materials are retained for 23 external resolved
+production-graph packages, plus native COPYING/README and Dart SDK LICENSE.
+
+
+### Later finite read-only channel audit and WS cleanup follow-up
+
+The user's later request added `tool/channel_audit.dart`, its tool-local support,
+a configuration template and 11 tests. No product state machine, version,
+dependency, lockfile, USB default, or candidate binary changed. The tool owns no
+inbox reader and allowlists only initialization plus GET_CHANNEL; key/frame
+buffers are cleared and reports omit names/keys/fingerprints. Explicit single
+endpoint mode allows a bounded independent metadata check without silently
+retrying another endpoint.
+
+The full CLI suite passed 81 tests initially, then 83 after adding explicit
+single-endpoint coverage. Real execution retained two A initialization timeouts,
+then obtained eight matching A/B 16-byte key representations. Investigating the
+observed report/process-exit gap found a development WS cleanup defect: sink
+close completion did not establish receive EOF. The adapter now waits for EOF,
+with a held-EOF regression; all **84 CLI tests** then passed, fatal-info analysis
+reported no issues and format checked **53 Dart files** with zero changes.
+The new source path and affected WS lifecycle tests are part of the ordinary CI
+suite, with no real credentials/devices in tests.
+
+A subsequent B-only invocation validated the fixed cleanup path and natural
+process exit approximately 14 ms after report output. This is a development
+transport fix, not a production USB fix or RF acceptance. The full core suite
+and three native bundles were not needlessly rebuilt for these source-tool-only
+changes; the previously delivered product/archive hashes are unchanged.
+Complete plans, source hashes, test logs and every real result remain in
+`build/phase-1b9/20261110T193252Z/hardware/channel-audit-20261110T200255Z/`.
+See [the actual audit record](hardware-validation.md#read-only-channel-audit-on-november-10-2026).
+
+### Later passive-window and Direct RF follow-up
+
+A source-only finite passive probe now reuses the existing session/watch runner
+with an initialization-only opcode allowlist. Two pure lifecycle tests and a
+real loopback probe check verify actual ready/window/cleanup, no consuming or
+RF commands, cancellation, and structural output. Unknown exact idle-timeout
+configs require an explicitly measured lower bound covering the task budget.
+With this coverage the full CLI suite passed **88 tests**; fatal-info analysis
+passed. The actual test log is under
+`build/phase-1b9/20261110T193252Z/hardware/rf-matrix-20261110T202035Z/cli-tests.log`.
+These are later source-tool results, separate from the original 180/72 gate.
+Product compilation inputs, lockfile and both tested native hashes are unchanged;
+the original three fresh bundles and 69-check source/AOT smoke remain applicable.
+
+The finite plan generator and RF driver default to no device/network I/O. Their
+explicit execution mode records command plans, per-attempt source/native hashes,
+actual UTC/process/cleanup facts, and never retries application sends. Offline
+predicates reject false H2/H6/H7 passes. Python syntax and plan-only validation
+are checked separately. The [actual matrix](hardware-validation.md#direct-rf-matrix-on-november-10-2026)
+retains client evictions, manual client release, 95-second passive window,
+bidirectional exact PONGs, H2/H7 failures and the limited H2 follow-up.
+
+`tool/summarize_openhop_acceptance.py --directory <absolute-evidence-directory>`
+consolidates every retained trial without contacting devices. It checks total
+application attempts against the separately recorded authorization and keeps
+earlier failures alongside latest results. `tool/revise_dev_candidate.py` checks
+the original verified archive, complete member manifest, unchanged production
+compilation inputs and tested native hashes, then copies the full bundle into
+a distinct acceptance-metadata revision. It preserves the old archive, licenses,
+source snapshot and hashes. It produces a new tar.gz/sidecar and checks that
+final archive through fresh outside-checkout extraction, member checksums,
+layout/modes, unchanged notices/native files, and version/help/missing-argument
+invocations. It does not rebuild or imply new product/CI/hardware results.
+
+The acceptance-metadata revision completed at `2026-11-10T20:54:23.032188Z`.
+`archive-verification-rf-20261110T205422Z.json` records actual extraction of the
+final archive to a fresh `/private/tmp` directory, 32 checksummed ordinary files,
+27 unchanged notice/license files, full native modes/hashes, and four successful
+no-device process checks (0/0/64/64 as planned). New archive SHA-256:
+`600268d2df82591e2cc308a69f89701c96636f4ceec855575caaca2afaf47176`.
+The original archive remains unchanged. See the
+[revision paths and limits](releases/phase-1b-dev2.md#rf-acceptance-metadata-archive-actually-verified).
+Final formatting checked 56 Dart files with zero changes.
+
+### Authorized command-budget comparison on November 11, 2026
+
+The explicit user approval was recorded before any new hardware operation:
+B command 15 seconds, A 5 seconds, total ceiling 15. Product source inputs and
+both native hashes were checked unchanged; an expired JWT was detected locally
+and replaced via the existing repository-external 0600 reference. No credential
+or authentication response entered repository files or reports.
+
+H7 passed exact-PONG-gated SIGINT with actual A/B exits 130/0 and cleanup. H2
+initially failed three initialization-only starts; after H7, another finite
+startup used its still-unused single-send allocation, retaining one further
+initialization failure before a pass. The comparison added three application
+attempts, cumulative 14/15. Every latest basic case now has a passing record,
+with original failures preserved. See [all facts and limits](hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026).
+
+Only the Python summary helper and current documentation changed during this
+follow-up. Its explicit trial inventory includes the additional H2 startup, and
+it checks cumulative and per-case comparison allocations (H2 <=1, H7 <=3).
+The prior summary was retained before regeneration. No Dart source, production
+compilation input, dependency or lockfile changed, so the recorded 180 core,
+88 later CLI and 69 original smoke results were not needlessly rerun or relabeled
+as new results. Python syntax, actual summary/allocation facts, current text/links,
+and final archive extraction are verified for this revision.
+
+The November 11 comparison archive passed actual final-tar.gz extraction at
+`2026-11-11T05:23:11.901971Z`; the new external record is
+`archive-verification-rf-20261111T052311Z.json`. Its archive SHA-256 is
+`ac278ca7b2cde0fad2f618c8efe603d2ea89b2fc804961599e28a0de9d8093d7`.
+It verified 32 ordinary-file checksums, 27 original notice/license files, exact
+layout, native 0755 modes and original tested hashes, plus four extracted
+no-device checks with expected exits 0/0/64/64. Both prior archives were checked
+unchanged. See the [exact comparison artifact paths](releases/phase-1b-dev2.md#comparison-archive-actually-extracted-on-november-11).
+
+### Development-tool review fixes on November 11, 2026
+
+Three review findings were reproduced and fixed without changing product/core
+code or USB defaults. Raw listen failures now retain reception counts and never
+project a consuming-read failure as an RF send. WS close still awaits socket
+receive EOF and the owned subscription, while closing public frame delivery
+without waiting for an absent/paused consumer. The finite Python runner checks
+the actual A/B operations and B config before process startup, requires explicit
+responder limits (H3/H4/H5=1, H7=2), rejects duplicate/unsupported options and
+non-Direct routes, and derives its allocation from those checked commands.
+Its send counter also excludes legacy read-only results with a misleading send
+field. This is a development matrix validator, not a new product transport API.
+
+All three new Dart regressions first failed against the old behavior. After the
+fixes, the full CLI suite passed **91**, six new Python tests passed, format
+checked **56 files with zero changes**, and fatal-info analysis found no issues.
+The test processes ran serially. Python tests are integrated into the existing
+CI job; remote CI was not run. Logs, exact argv, UTC times, exit codes and source
+hashes are retained in:
+
+```text
+build/phase-1b9/20261110T193252Z/review-fixes-20261111T054035Z/
+  software-followup.json
+  checks.json
+  format.log
+  analyze.log
+  cli-tests.log
+  python-plan-tests.log
+  retained-evidence-verification.json
+```
+
+Four actual retained plans passed the stronger offline validation. Recounting
+every recorded invocation with the fixed counter still yields **14** application
+attempts, and the RF summary's bytes remain unchanged. All three prior archives
+were checked against their recorded hashes and preserved. No device/deployment
+connection, queue consumption or RF send occurred during this follow-up.
+Production compilation inputs and native hashes remain those of the original
+fresh builds; core tests/native builds/smoke were not unnecessarily repeated.
+
+`tool/revise_dev_candidate.py` accepts `--software-followup <absolute-record>`
+for a metadata revision. It verifies that record's passing checks, build ID and
+source hashes before copying the bundle, so the new archive can distinguish
+91/6 local software results from the earlier 88-test source snapshot. It does
+not relabel the fixed helper source as the source used for previous RF trials;
+those retain their original execution-plan hashes. The complete product bundle
+still excludes source-only tools and tests.
+
+### Settlement and native-evidence fixes on November 11, 2026
+
+A second source-only review identified two remaining Python defects. The runner
+now settles every already-started finite peer in a finally path, including after
+cleanup failure or unexpected orchestration errors. It records the failed or
+blocked case before STOPPED, retaining all per-process observations and known
+application sends. A timed-out process remains pending with its PID, not falsely
+closed. Missing sender facts produce a null actual total, a known lower bound
+and a reserved upper bound; they are never silently counted as zero. No new
+connection, resend, signal or forced kill is added. A post-spawn metadata-write
+failure also returns the process to its owner before raising the stop condition.
+
+The summary now binds native hashes to every retained execution-plan capture,
+checks agreement across trials, and verifies current candidate bytes against
+those captures. Changed bytes, missing/mixed captures and unrepresented legacy
+STOPPED trials reject summary generation before replacing an existing report.
+Pending accounting remains BLOCKED; failed cleanup cannot retain a cached PASS.
+`--candidate` selects the bundle to verify and `--output` allows a separate
+validated report while preserving the historical summary. No candidate is run.
+
+The complete Python suite passed **17 tests** locally. No Dart source changed;
+the preceding 91-test CLI gate and its checked source hashes remain earlier
+software evidence, not a new run. Core/native bundles/smoke were not repeated.
+No remote CI was triggered. New logs, source hashes and validation records:
+
+```text
+build/phase-1b9/20261110T193252Z/review-evidence-fixes-20261111T061833Z/
+  software-followup.json
+  python-tests-final.log
+  bound-summary.log
+  rf-summary-verified.json
+  retained-evidence-verification.json
+```
+
+Actual retained data validated against **five** captured native execution plans.
+The independent output retains 11 trials, four failed trials and exactly **14/15**
+application sends; latest case outcomes/exits/RTTs are unchanged. The original
+RF summary and all four previous archives were checked unchanged. The new
+summary adds provenance and accounting fields without rewriting the old device
+records. This verification neither reconnects hardware nor retrospectively
+claims a live run of the later fixed source.
+
+### Interrupted-run/configuration review fixes on November 11, 2026
+
+Three Python-only defects were reproduced and fixed. Summary generation now
+reconciles every per-case process metadata file even when results.json already
+exists: an unrepresented later process/retry or conflicting identity/final facts
+rejects generation before output is overwritten. Captured process-file hashes
+are included in the native-evidence provenance. Unknown extra invocations are
+never silently treated as zero sends.
+
+The runner parses the receive channel before launching processes, using the
+same ASCII decimal (including leading zeros) and 0x/0X uint8 syntax as the Dart
+CLI. Case evaluation uses that validated number and cannot fail on Python's
+base-zero handling after a hardware case has already finished.
+
+The plan generator accepts the flat JSON emitted by openhop_idle_probe.dart and
+retains support for legacy execution wrappers. Both readers share a validator
+for successful exit/status, actual cleanup and a sufficient passive window;
+nonpassive activity and contradictory initialization facts reject. An omitted
+idleTimeoutSeconds is preserved as null in generated configs when an observed
+window is supplied. No wrapper has to be invented around probe stdout.
+
+The complete local gate passed 25 Python tests, 91 CLI tests (all loopback cases
+executed), 56-file format with zero changes and fatal-info analysis. Core code,
+production compilation inputs and native files were unchanged; no additional
+native bundles/core tests were required. No new hardware/API connection, queue
+consumption, signal or RF application send occurred. Logs and source hashes:
+
+```text
+build/phase-1b9/20261110T193252Z/review-config-fixes-20261111T065713Z/
+  software-followup.json
+  checks.json
+  regressions-before.log
+  python-tests.log
+  cli-tests.log
+  format.log
+  analyze.log
+  bound-summary.log
+  flat-probe-plan.log
+  rf-summary-verified.json
+  retained-evidence-verification.json
+```
+
+The actual retained data reconciled **23 process metadata files** against all
+11 trial records and five native execution captures. Four failed trials, latest
+case exits/RTTs/outcomes and 14/15 application sends are unchanged. The saved
+flat stdout from the actual earlier 95-second probe successfully generated an
+offline plan; that plan was not executed. The original RF summary and all five
+existing product archives were checked unchanged. Product packages exclude these
+development scripts, so the existing archive remains its original dated snapshot;
+this later software record is separate and does not imply new RF acceptance.
+
+### Ledger, raw-session and archive-provenance fixes on November 11, 2026
+
+Three further review defects were reproduced and corrected. The summary scans
+the complete evidence tree and rejects execution/process files outside its
+registered trial directories before publishing totals. Unknown output names
+cannot silently drop an unfinished sender or restore sending allowance. The
+existing registered process reconciliation and native-capture checks remain.
+
+The development raw runner reconciles recorded non-cancellation session failure
+after cleanup. A synchronous OK-then-transport-error reproduction previously
+exited 0; it now exits 69 with session_failure, while preserving the completed
+local write, OK and acceptance facts. Diagnostic task terminal gates are unchanged.
+No production USB/session/core implementation was modified.
+
+The archive reviser reads the original tar.gz once, verifies its external hash,
+then validates and copies only a fresh extraction. Original member checksums,
+complete layout, native hashes against testedNativeHashesVerified and executable
+permission must agree. Tests regenerate a sibling directory with different
+native bytes and matching regenerated manifests: original archived bytes still
+win, and incompatible RF evidence rejects before native execution. Extraction
+rejects links and unsafe paths before using the SDK tar data filter.
+Source-extraction cleanup is checked. The follow-up initially ran under the
+older PATH-selected Python 3.9; the later Python 3.15 record supersedes that
+interpreter choice for future work.
+
+The sequential local follow-up passed **31 Python tests, all 92 CLI tests**,
+fatal-info analysis and a 56-file zero-change format check. Loopback socket tests
+ran successfully. Core/product compilation inputs and both native hashes remain
+unchanged; the prior core/native/smoke records retain their original dates. No new
+hardware/API connection, consuming read, signal or RF send occurred. Logs, hashes
+and independent retained-evidence checks are in:
+
+```text
+build/phase-1b9/20261110T193252Z/review-ledger-provenance-20261111T092140Z/
+  software-followup.json
+  checks.json
+  python-regressions-before.log
+  raw-regression-before.log
+  raw-regression-after.log
+  python-tests.log
+  cli-tests.log
+  format.log
+  analyze.log
+  rf-summary-verified.json
+  original-archive-source-verification.json
+  retained-evidence-verification.json
+  archive-revision.log
+```
+
+Actual retained evidence still reconciles 23 process files, five native execution
+captures, 11 trials, four failed trials and **14/15** application sends. Latest
+outcomes/exits/RTTs, original RF-summary bytes and all five prior archives are
+unchanged. The new complete metadata archive was verified from a fresh final
+extraction; see the [release record](releases/phase-1b-dev2.md#ledger-session-and-original-archive-review-revision).
+Earlier RF trials retain their actual earlier source hashes.
+
+### Python 3.15 toolchain follow-up on November 11, 2026
+
+At the user's request, subsequent local Python work uses the latest installed
+stable version at or above 3.15. The verified entry `/opt/homebrew/bin/python3`
+reported 3.15.2. Adding only `/opt/homebrew/opt/python@3.15/bin` before `/usr/bin`
+keeps `/usr/bin/clang` selected and avoids the older system Python. No interpreter
+was installed/upgraded and no global setting changed. The project agent guidance,
+README and test instructions now preserve this selection policy; historical
+Python 3.9 records remain historical.
+
+The full sequential follow-up reran with that PATH and passed **31 Python tests,
+92 CLI tests**, fatal-info analysis, 56-file zero-change formatting and the
+retained-evidence summary. The actual Python path/full version is saved both in
+python-toolchain.json and software-followup.json. Logs and hashes:
+
+```text
+build/phase-1b9/20261110T193252Z/review-python315-20261111T092825Z/
+  python-toolchain.json
+  software-followup.json
+  checks.json
+  original-archive-source-verification.json
+  retained-evidence-verification.json
+  rf-summary-verified.json
+  archive-revision.log
+  final-verification.json
+```
+
+The archive reviser also ran under Python 3.15.2, using the normal tar data
+filter after its explicit member validation. It copied from the verified
+original archive and actually extracted the final new archive outside the
+checkout. All 32 file checksums, exact layout, native hashes/0755 modes, 27
+unchanged notices/licenses and four no-device exits 0/0/64/64 passed. The six
+earlier archives and original RF-summary bytes were preserved. Native/product
+inputs and historical 14/15 application sends remain unchanged; no new hardware
+run occurred. See the [new archive record](releases/phase-1b-dev2.md#python-315-verified-archive-follow-up).
+
+### Channel-audit final-query failure fix on November 11, 2026
+
+A source-only audit race was reproduced in A-only and A-then-B runs. After the
+last 0x12 reply completed its query, an immediately observed transport error
+could remain queued in the adapter's asynchronous frame stream. The query
+continuation could close a still-ready session before it consumed that error,
+yielding a false PASS and allowing B to open.
+
+The adapter now retains its first non-cancellation failure independently of the
+pending query and forwarded session event. Further queries reject that failure;
+the runner checks it after each reply and again after actual cleanup before
+declaring endpoint success. Completed channel summaries remain available, but
+the endpoint/audit fails with exit 69 and B is not opened. Normal close does not
+create a failure, existing cancellation reasons remain, and no raw error/key is
+retained in the report. No production session/USB/core behavior changed.
+
+Three new tests cover the same-turn final-reply/error in A-only and A-then-B
+modes, plus a transport error during final cleanup held behind an explicit
+Completer. They verify actual cleanup waiting, no B connection/comparison,
+retained read summaries, private-frame wiping, no extra command/queue/RF send,
+and sanitized reporting. The sequential local gate used Python 3.15.2 and passed
+**95 CLI tests**, including all loopback cases, **31 Python tests**, fatal-info
+analysis and 56-file zero-change formatting. Records:
+
+```text
+build/phase-1b9/20261110T193252Z/review-channel-boundary-20261111T094435Z/
+  regressions-before.log
+  channel-tests-after.log
+  python-toolchain.json
+  software-followup.json
+  checks.json
+  cli-tests.log
+  python-tests.log
+  rf-summary-verified.json
+  final-verification.json
+```
+
+The source-only audit is excluded from the product bundle. Existing native
+files, product inputs, archives and original RF records remain unchanged; the
+current archive retains its earlier dated software snapshot. The separate
+summary still reconciles 23 process files, five native captures, 11 trials,
+four failed trials and 14/15 application sends. No real USB/openHop connection,
+queue read, signal or RF send occurred. The corrected audit was tested offline
+only; historical channel/LoRa observations are not relabeled as a run of it.
+
+### Protocol-input and evaluation-accounting fixes on November 11, 2026
+
+Two subsequent review defects were reproduced offline. The channel adapter
+previously retained stream errors but could lose a malformed known Companion
+frame behind the same final-query continuation. Both synchronous and asynchronous
+underlying streams produced PASS after a final channel reply followed by [0x05].
+The adapter now uses the existing Companion decoder at receipt, before forwarding
+valid frames or discarding input during cleanup. Protocol faults are retained
+as protocolFailed and reconciled by the existing endpoint failure gate. Private
+channel lengths are also checked before wiping during cleanup. No protocol
+decoder or production session/USB/core implementation was changed.
+
+The finite runner now validates every evaluation metadata field used after
+execution: contentBytes must be an integer in 0..165 and expected A/B exits must
+be explicit and match each case, including null B for H6. Missing values, booleans
+and invalid ranges/exits reject before output creation or process startup.
+Unexpected evaluator exceptions after settlement are recorded separately as
+evaluationFailure; invocation records and completed send counts are persisted
+in results/STOPPED before stopping. Raw exception messages are omitted, and no
+new signal, retry, force-kill or sending allowance is introduced.
+
+The full sequential local gate used Python 3.15.2 and passed **97 CLI tests**
+(all loopback cases executed), **34 Python tests**, fatal-info analysis and a
+56-file zero-change format check. Two added Dart cases cover malformed final
+input with both stream delivery modes. Three added Python groups cover missing
+metadata in validation/execution modes, invalid types/ranges/exits, and an
+evaluator error after a simulated completed H2 send. That last case retains
+both endpoint records, exactly one send and STOPPED. Logs and hashes:
+
+```text
+build/phase-1b9/20261110T193252Z/review-protocol-evaluation-20261111T100144Z/
+  dart-regressions-before.log
+  python-regressions-before.log
+  channel-tests-after.log
+  python-tests-after.log
+  python-toolchain.json
+  software-followup.json
+  checks.json
+  cli-tests.log
+  python-tests.log
+  rf-summary-verified.json
+  final-verification.json
+```
+
+No hardware/API connection, consuming read, signal or RF send occurred. Product
+compilation inputs, native hashes, seven existing archives and original RF
+records remain unchanged. The separately checked summary still reconciles
+23 process files, five native captures, 11 trials, four failed trials and 14/15
+application sends. Current tool source was tested offline only. The product
+archive remains its earlier dated snapshot; no product rebuild or repackaging
+is inferred from this source-only follow-up.
+
+### Content, invocation-ledger and interpreter fixes on November 11, 2026
+
+Three review findings were corrected in Python development tooling. Plan byte
+counts now match the actual initiating A argv or B config content option.
+Exact even-length ASCII hex and UTF-8 text use their actual byte counts; a
+missing/ambiguous source or mismatch rejects before execution. The fixed Direct
+H5 requires 131 bytes even if both contentBytes and the command are shortened.
+Validated counts are captured in the plan. Summary generation independently
+checks H5 against retained A invocation argv and its explicit Direct/empty route;
+current mutable configuration is not substituted for historical command evidence.
+
+Case counters are checked against a fresh calculation over every retained
+invocation, reusing the runner's accounting and fixed case allocations. Completed
+sends, responder attempts, initialization-only failures and read-only legacy
+reports retain their separate meanings. Unknown send facts retain null actual
+counts and reserved per-invocation bounds. Stale actual/known/upper/knownness
+fields reject before replacing a summary; they cannot restore sending allowance.
+
+All three Python subprocess invocations in the plan tests now use sys.executable.
+The full **41-test Python suite** passed under Python 3.15.2 with the documented
+Apple-compiler-first PATH, where an independent python3 lookup selects
+/usr/bin/python3. Instrumentation observed **35 Python child invocations**, all
+using the same resolved Homebrew 3.15.2 executable as the parent. No system Python
+child was started. Persistent agent guidance now also requires this selection.
+
+Seven new regression groups cover all A/B initiating content roles, a shortened
+H5 with edited metadata, UTF-8 byte counts/exact hex, contradictory cached totals,
+unknown sends disguised as zero, repeated responders/legacy read-only reports,
+and retained H5 arguments. Records and source hashes:
+
+```text
+build/phase-1b9/20261110T193252Z/review-content-ledger-20261111T102001Z/
+  regressions-before.log
+  python-tests-after.log
+  python-tests.log
+  python-toolchain.json
+  python-child-interpreters.json
+  software-followup.json
+  checks.json
+  rf-summary-verified.json
+  bound-summary.log
+  final-verification.json
+```
+
+The new summary verifies the actual 131-byte H5 initiator and recomputes 14/15
+sends from 23 process files and 11 trials in five captured executions. Four failed
+trials and latest outcomes/exits/RTTs remain unchanged. Original RF records and
+seven existing archives are preserved. Product/Dart/core/native inputs did not
+change; the prior 97-CLI-test/format/analysis gate remains earlier dated evidence
+and was not rerun for these Python-only changes. No new hardware/API access,
+queue read, signal, RF send, native build or archive revision occurred.
+
+### Runner cancellation, exits and empty-content fixes on November 11, 2026
+
+Three runner defects were reproduced and fixed. A SIGINT while finally was
+waiting for finite peers could escape before the other peer and case accounting
+were saved. A cleanly settled case with failed acceptance could leave the runner
+exit at zero. H4 accepted a one-byte initiating content option if contentBytes
+was changed with it, omitting the matrix's empty-content boundary.
+
+The finite execution loop is now a separate helper under a temporary deferred
+SIGINT handler. It latches requests through orchestration, settlement and evidence
+persistence, refuses new peer starts after cancellation, and restores the prior
+handler on exit. A programmatically interrupted wait resumes observing the same
+peer under the unchanged original deadline, then observes later peers. Interrupts
+are separate from actual cleanup failures. The interrupted result retains all
+invocations and application-send facts, writes results/STOPPED before output,
+and exits 130 without new child signals, retries, connections, forced termination
+or increased time budgets. Unknown cleanup/send facts remain pending/BLOCKED.
+
+Ordinary cleanly settled acceptance failures may still allow later independent
+authorized cases to run, but the final aggregate exit is 69 if any selected case
+failed or remained blocked. A later pass cannot reset it to zero. Expected peer
+69/130 exits that satisfy H6/H7 still count as passing acceptance, distinct from
+driver cancellation. H4 actual content and metadata must now be zero before
+execution, and its evaluator also enforces that boundary.
+
+The Python-only follow-up passes **46 tests** using 3.15.2. Five new groups cover
+H4 plan/evaluation boundaries, KeyboardInterrupt while settling the receiver,
+two real SIGINT deliveries in the same synthetic wait, previous-handler
+restoration, a cleanly settled failed single case, and a later pass after an
+earlier failure. Both peer records and the one completed H2 send persist before
+exit 130; no new peer starts. Instrumentation records 40 Python children, all
+using the selected Homebrew 3.15.2 interpreter despite /usr/bin/python3 on the
+compiler-first PATH. These tests use mocked peers and self-delivered signals,
+not hardware or a live deployment. Logs and source hashes:
+
+```text
+build/phase-1b9/20261110T193252Z/review-cancellation-exits-20261111T103839Z/
+  regressions-before.log
+  python-tests-after.log
+  python-tests.log
+  python-toolchain.json
+  python-child-interpreters.json
+  software-followup.json
+  checks.json
+  rf-summary-verified.json
+  final-verification.json
+```
+
+The original 11 hardware trials, four failed trials, 23 process records, five
+native captures and 14/15 application attempts remain unchanged. Product/Dart/
+core/native inputs and seven archives are unchanged; their earlier gates retain
+their original dates. This follow-up performs no hardware/API connection, shared
+queue read, RF send, native build or archive revision.

@@ -1,0 +1,19 @@
+{
+  "baseUrl": "http://127.0.0.1:8000/",
+  "companionName": "REPLACE_WITH_REGISTRATION_NAME",
+  "endpointLabel": "openhop-b",
+  "jwt": {"env": "MESHCHAN_OPENHOP_JWT"},
+  "idleTimeoutSeconds": 120,
+  "session": {
+    "commandSeconds": 5,
+    "initializationSeconds": 15,
+    "startupDelayMilliseconds": 0,
+    "taskSeconds": 90
+  },
+  "datagramArguments": [
+    "--send-channel=0", "--receive-channel=0",
+    "--route-descriptor=0", "--path-hex=",
+    "--local-id=1", "--peer-id=2",
+    "--duration=60", "--max-entries=128", "--max-responses=1"
+  ]
+}

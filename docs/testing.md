@@ -3,7 +3,9 @@
 The historical Phase 1 / 1A / Step 8 audit is retained below. Phase 1B.8 adds
 datagram serial-byte acceptance shared by ordinary tests and a source/AOT
 development probe, without changing product behavior.
-Run commands from the repository root unless noted. Python 3 is a
+Run commands from the repository root unless noted. Use the latest installed
+stable Python 3.15 or newer for local Python scripts, as described in the
+[local toolchain selection](development.md#local-python-toolchain). Python is a
 development tool only; the distributed CLI does not require it.
 
 ## Historical behavior audit (1A.8)
@@ -62,10 +64,11 @@ build. No command here supplies a valid port or enumerates on macOS.
 ```bash
 (
   set -eu
-  export PATH="/opt/homebrew/share/flutter/bin:/usr/bin:$PATH"
+  export PATH="/opt/homebrew/share/flutter/bin:/opt/homebrew/opt/python@3.15/bin:/usr/bin:$PATH"
   MESHCHAN_DART=/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart
   "$MESHCHAN_DART" --version
   python3 --version
+  python3 -c 'import sys; assert sys.version_info >= (3, 15)'
   "$MESHCHAN_DART" pub get --enforce-lockfile
   "$MESHCHAN_DART" format --output=none --set-exit-if-changed .
   "$MESHCHAN_DART" analyze --fatal-infos
@@ -228,3 +231,242 @@ waiting, timeout, cleanup and rejection of late results; passing them does not
 repair USB delivery. No retry, reset, extra query, timeout/default-delay change,
 signed release or LoRa round trip is included. Step 9 hardware acceptance remains
 separate; see [hardware evidence](hardware-validation.md).
+
+
+## openHop development boundary tests (1B.9)
+
+`apps/meshctl/test/openhop_peer_test.dart` adds 15 tests to the existing CLI suite.
+They cover inert configuration/URI/secret-reference validation, restricted REST
+selection and redaction, real SDK WS split/coalesced binary frames, an independent
+complete TX vector, text/oversized input, authentication close, normal close,
+partial EOF, redirect rejection, and cancellation with late successful connection
+cleanup. Real loopback session/PING cases insert current-time notifications;
+separate initialization/response timeout cases prove they do not replace the
+response or renew its budget. Raw listening compares actual consumed bytes and
+ends at the entry quota; responder cancellation releases the signal subscription
+and WS connection. The existing diagnostic algorithm matrix is reused.
+
+These use 127.0.0.1 ephemeral sockets, synthetic JWT strings, and event/Completer
+coordination. Only the short notification injection/deadline checks use real VM
+timers. A local sandbox must allow loopback binding; `fake_async` cannot advance
+real sockets. No default test or CI reads real credentials, opens USB, or contacts
+openHop. The current single CI job automatically includes these tests and still
+builds exactly three bundles. No fourth peer AOT product or new platform is added.
+
+The [finite tool/matrix guide](openhop-acceptance.md) describes separately
+authorized hardware execution. The 1B.9 full gate passed 180 core and 72 CLI
+tests, followed serially by three fresh builds and 69 shared macOS smoke checks.
+Source and AOT each passed all five existing datagram synthetic scenarios.
+These are software observations, not RF acceptance. See the
+[dated execution record](development.md#1b9-software-validation-on-november-10-2026).
+
+
+## Read-only channel audit follow-up
+
+`test/channel_audit_test.dart` adds 11 CLI-suite tests for inert config/slot
+validation, serialized metadata queries, empty/zero-key filtering, duplicate-key
+ambiguity, private frame wiping, wrong-index/extended-key/write failures,
+finite timeout, cancellation while actual cleanup remains pending, unsupported
+capacity, and explicit A-only/B-only operation without false comparison claims.
+The fixtures assert exact host opcode sequences and no consuming/RF writes.
+The separate held-EOF openHop regression proves WS cleanup waits beyond the
+outgoing sink close and retains its input subscription until EOF. The full CLI
+suite passed 84 tests after this follow-up. These are later results, not a change
+to the historical 72-test candidate gate above. See
+[actual device attempts](hardware-validation.md#read-only-channel-audit-on-november-10-2026).
+
+## Passive-window and finite RF driver follow-up
+
+`openhop_idle_probe_test.dart` adds two bounded lifecycle tests. A real loopback
+probe case checks actual session ready, a passive window, no queue/RF/heartbeat
+writes, and actual cleanup. The peer config test additionally rejects an unknown
+idle timeout without a sufficient explicit measured lower bound. The complete
+CLI suite now passes **88 tests**; core remains the separately recorded 180-test
+run because its implementation did not change. No actual deployment credential
+or device is accessed by these tests.
+
+The Python driver is validated without hardware against real retained structural
+results: H6 rejects a different timeout cause, H2 rejects wrong length/type/slot,
+and H7 requires an exact PONG plus a still-active A before SIGINT. Hardware
+results remain separately retained and include failures; these predicate checks
+are not additional RF trials. The [Direct matrix record](hardware-validation.md#direct-rf-matrix-on-november-10-2026)
+contains all actual exits, cleanup, send/matching facts and known limits.
+
+The November 11 authorized hardware comparison is separate from the above
+software tests: H2/H7 now have passing records with B command 15 s/A 5 s, and
+all preceding failures remain. The summary accounts for every retained trial,
+checks the cumulative 15-attempt cap and the comparison's individual H2 <=1 and
+H7 <=3 allocations, and records actual cumulative attempts 14. No new Dart test
+run or native rebuild is inferred from these hardware/metadata changes. See
+[the actual comparison](hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026).
+
+## Review regressions on November 11, 2026
+
+Three later CLI regressions first reproduced the reported defects, then passed:
+closing a never-opened WS transport without installing a frames listener;
+pausing public frame delivery while keeping receive EOF as the real resource
+cleanup gate; and a real loopback raw-read timeout after one exact datagram.
+The last case checks retained reception counts, opcode 0x0A failure evidence,
+no invented send fact, and actual cleanup. It does not duplicate diagnostic
+matching algorithms or contact a deployment. The complete CLI suite now passes
+**91 tests**. The previous held-EOF, late-open cancellation and real loopback
+cases remain in that suite.
+
+Six stdlib Python tests in `tool/run_openhop_acceptance_test.py` cover actual
+A/B operation and response-limit validation, full/follow-up derived allocations,
+B limits read from the real referenced config, duplicate/implicit/oversized
+limits, role/route mismatches, rejection before execution-directory creation,
+and read-only legacy failure accounting. They generate synthetic plans in a
+temporary directory and never read credentials, bind a socket, open USB or run
+a device process. Run from the checkout root:
+
+```bash
+python3 -m unittest discover -s tool -p '*_test.py' -v
+```
+
+The existing CI job now includes this command before the Dart suites. No new
+platform or dependency was added. These are local results; no new remote CI
+execution is claimed. Recorded core/native-build/smoke results retain their
+original dates because production inputs and native bytes did not change.
+
+## Settlement and captured-build regressions on November 11, 2026
+
+The later Python suite passes **17 tests** (11 added to the earlier six).
+Synthetic process tests exercise failed cleanup, an unfinished sender,
+unexpected orchestration errors, retained pending snapshots, repeated waits on
+a failed cleanup, and metadata failure after process creation. They assert that
+other started finite peers are awaited, partial case records and known sends
+are saved before STOPPED, unknown sends remain null with reserved bounds, and no
+extra process, resend or signal is introduced. No real child device process is
+started by these tests.
+
+Summary tests use synthetic candidate bytes and execution-plan captures. They
+check captured-hash provenance, rejection of replaced bytes or mixed/missing
+captures, preservation of an existing summary on rejection, blocked unknown
+accounting, legacy stopped trials without results, and failure of cached PASS
+records with unsuccessful cleanup. The unchanged CI discovery command includes
+both Python test files automatically. Dart source did not change in this follow-up;
+the prior 91-test CLI result is retained with its source hashes rather than
+reported as a new execution. No hardware/API credential is used.
+
+## Interrupted-run and input-schema regressions on November 11, 2026
+
+The Python suite now passes **25 tests**, adding eight groups to the earlier
+17. Interrupted-run regressions keep an existing completed case in results.json
+and add unrepresented pending/completed process metadata or a later retry in
+the same case. Summary generation must reject these incomplete totals. Matching
+metadata is accepted and hashed; changed PID/argv/final/cleanup facts reject.
+
+Channel regressions cover decimal leading zeros, explicit hexadecimal values,
+preflight rejection of invalid uint8 values, and a complete synthetic H2 execution
+with `--receive-channel=01` that must save PASS and one send after settlement.
+Probe regressions pass the flat emitted report and legacy execution wrapper
+through actual plan generation, including omission of the optional exact timeout.
+Failed exit/status/cleanup, insufficient window, nonpassive activity and malformed
+window values reject before creating plan output. The summary accepts both probe
+shapes through the same validator.
+
+The full CLI suite was also rerun with local loopback access: **91 passed**,
+including the 16 socket cases blocked by the review environment. Format checked
+56 files with zero changes; fatal-info analysis was clean. Real USB and the
+openHop deployment were not accessed. Existing CI discovery includes all 25
+Python tests; no remote CI result is claimed.
+
+## Ledger, session-race and archive-provenance regressions on November 11, 2026
+
+The Python suite passes **31 tests**, adding six groups to the earlier 25.
+Unknown output-directory regressions cover execution-plan, results, STOPPED and
+pending-process evidence alongside a completed registered run. Generation must
+reject before replacing an existing summary. Synthetic archive tests regenerate
+a sibling delivery directory and its checksum/native manifests while leaving the
+verified tar.gz unchanged. Only original archived bytes and notices may be copied;
+incompatible RF hashes, changed archive bytes and changed external native bindings
+reject. Temporary extraction cleanup is verified. Fake native fixtures never run.
+
+The complete CLI suite passes **92 tests**, including all loopback socket cases.
+One added synchronous-transport test commits a raw send OK then immediately emits
+an error before the awaiting continuation resumes. The final report must keep
+completed write/OK/acceptance facts, record transport/session failure, exit 69,
+complete cleanup and leave no frame listener. Format checked 56 files with zero
+changes and fatal-info analysis was clean. These are local offline results;
+hardware and remote CI were not run. Existing CI discovery includes the new
+archive test file automatically. The [dated software record](development.md#ledger-raw-session-and-archive-provenance-fixes-on-november-11-2026)
+links the logs and evidence checks.
+
+The subsequent [Python 3.15 follow-up](development.md#python-315-toolchain-follow-up-on-november-11-2026)
+reran all **31 Python and 92 CLI tests** with Python 3.15.2 selected, including
+all local loopback cases. Format and fatal-info analysis also passed. New source,
+summary and final-archive verification records include the actual interpreter;
+future local scripts use the latest installed stable Python 3.15 or newer.
+
+## Channel-audit final-query regressions on November 11, 2026
+
+The complete local suite now passes **95 CLI tests**, including the loopback
+tests blocked by the review sandbox. Three added synthetic audit cases cover
+final channel reply followed by an immediate transport error for A-only and
+A-then-B, and an error while final cleanup waits on a Completer. Before the fix,
+both same-turn cases produced PASS. They now require FAIL/69, a retained read
+summary, successful actual cleanup, no listener leak, no B open/comparison and
+no secret-bearing output. The held-cleanup case also requires that the report
+remain pending until release. Existing successful readback and signal cases
+still pass. Python 3.15.2 ran all 31 Python tests successfully; format checked
+56 files without changes and fatal-info analysis was clean. See the
+[dated source/log record](development.md#channel-audit-final-query-failure-fix-on-november-11-2026).
+
+## Protocol-input and evaluation-accounting regressions on November 11, 2026
+
+The full local suite passes **97 CLI tests**, including every loopback case,
+and **34 Python tests** under Python 3.15.2. Two new Dart cases deliver a valid
+final channel reply then malformed SELF_INFO [0x05] over synchronous and
+asynchronous underlying streams. Before the fix both passed; now they require
+FAIL/69, protocolFailed, retained read summaries, real cleanup, no B open/key
+comparison, wiped private frames and no extra queue/RF commands. Existing valid
+notices, cancellation and transport-failure tests still pass.
+
+Three new Python groups reject missing post-execution metadata in both CLI modes
+before output/process creation, reject invalid byte counts/types/expected exits,
+and inject an evaluator RuntimeError after a completed synthetic H2 send. The
+last case must persist both settled records, one known application send and a
+STOPPED record with only the exception type. Existing leading-zero success and
+unknown-send/cleanup accounting tests remain. No hardware child process or real
+credential is used. Fatal-info analysis and 56-file zero-change formatting pass;
+see the [dated verification](development.md#protocol-input-and-evaluation-accounting-fixes-on-november-11-2026).
+
+## Content and invocation-ledger regressions on November 11, 2026
+
+The Python suite passes **41 tests** with seven groups added to the previous 34.
+Plan regressions shorten every actual A/B initiating content option without
+changing metadata, shorten H5 and its count together, and exercise UTF-8 byte
+counts plus malformed hex. All inconsistent plans reject before device work.
+Summary regressions retain contradictory zero/over/unknown totals, unknown send
+facts with zero reserved bounds, multiple responder invocations and misleading
+legacy read-only send fields. Counts must agree with all invocation facts;
+rejection preserves an existing output. Captured H5 argv is independently checked
+against the 131-byte boundary rather than accepting its cached contentBytes.
+
+The test subprocesses use sys.executable. The suite was run through Homebrew
+Python 3.15.2 with Apple Clang's PATH first; although bare python3 resolves to
+/usr/bin/python3, all 35 observed Python children used the selected Homebrew
+interpreter. Logs and hashes are in the
+[dated follow-up](development.md#content-invocation-ledger-and-interpreter-fixes-on-november-11-2026).
+Dart/core/native inputs did not change, so their prior complete gate retains its
+original date rather than being presented as a new execution. No real device,
+deployment, credential or RF send is used by these regressions.
+
+## Runner cancellation and acceptance exits on November 11, 2026
+
+The Python suite passes **46 tests** under 3.15.2, adding five groups. H4 rejects
+a one-byte B content option even when its metadata is edited to match; direct
+evaluation accepts zero and rejects one. Mocked driver tests interrupt the A
+settlement wait with KeyboardInterrupt or two self-delivered SIGINTs. They require
+both peers observed, unchanged send count, actual cleanup facts, saved results/
+STOPPED, exit 130 and restoration of the original handler. Resuming the same wait
+does not start a new process or reset its deadline.
+
+Separate tests require exit 69 for a failed cleanly settled selected case and
+for two synthetic cases where FAIL is followed by PASS. The latter confirms
+continued authorized execution cannot reset the aggregate status. Existing
+passing-case, failed/pending cleanup and evaluator-error tests still pass.
+All 40 observed Python child calls use the selected 3.15.2 interpreter. Dart and
+native inputs did not change, so their prior complete gate was not rerun. See the
+[dated software record](development.md#runner-cancellation-exits-and-empty-content-fixes-on-november-11-2026).

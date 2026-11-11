@@ -1,0 +1,545 @@
+{
+  "_meta": {
+    "description": "This file contains a serialized version of schema entities for drift.",
+    "version": "1.3.0"
+  },
+  "options": {
+    "store_date_time_values_as_text": false
+  },
+  "entities": [
+    {
+      "id": 0,
+      "references": [],
+      "type": "table",
+      "data": {
+        "name": "stored_drafts",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "id",
+            "getter_name": "id",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL PRIMARY KEY CHECK (length(id) = 32 AND id NOT GLOB '*[^0-9a-f]*')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              "primary-key"
+            ]
+          },
+          {
+            "name": "title",
+            "getter_name": "title",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "body",
+            "getter_name": "body",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "created_at_us",
+            "getter_name": "createdAtUs",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (typeof(created_at_us) = 'integer')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "updated_at_us",
+            "getter_name": "updatedAtUs",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (typeof(updated_at_us) = 'integer')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "revision",
+            "getter_name": "revision",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0)",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": []
+      }
+    },
+    {
+      "id": 1,
+      "references": [
+        0
+      ],
+      "type": "index",
+      "data": {
+        "on": 0,
+        "name": "drafts_updated",
+        "sql": "CREATE INDEX drafts_updated ON stored_drafts (updated_at_us DESC, id DESC);",
+        "unique": false,
+        "columns": []
+      }
+    },
+    {
+      "id": 2,
+      "references": [],
+      "type": "table",
+      "data": {
+        "name": "stored_profiles",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "id",
+            "getter_name": "id",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL PRIMARY KEY CHECK (length(id) = 32 AND id NOT GLOB '*[^0-9a-f]*')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              "primary-key"
+            ]
+          },
+          {
+            "name": "name",
+            "getter_name": "name",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (length(trim(name)) > 0)",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "port_hint",
+            "getter_name": "portHint",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": "",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "operation",
+            "getter_name": "operation",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (operation IN ('send', 'listen', 'ping', 'respond'))",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "parameters_json",
+            "getter_name": "parametersJson",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "updated_at_us",
+            "getter_name": "updatedAtUs",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (typeof(updated_at_us) = 'integer')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": []
+      }
+    },
+    {
+      "id": 3,
+      "references": [
+        2
+      ],
+      "type": "index",
+      "data": {
+        "on": 2,
+        "name": "profiles_updated",
+        "sql": "CREATE INDEX profiles_updated ON stored_profiles (updated_at_us DESC, id DESC);",
+        "unique": false,
+        "columns": []
+      }
+    },
+    {
+      "id": 4,
+      "references": [
+        2
+      ],
+      "type": "table",
+      "data": {
+        "name": "stored_settings",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "singleton",
+            "getter_name": "singleton",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL PRIMARY KEY CHECK (singleton = 1)",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              "primary-key"
+            ]
+          },
+          {
+            "name": "default_profile_id",
+            "getter_name": "defaultProfileId",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": "REFERENCES stored_profiles(id)ON DELETE SET NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              {
+                "foreign_key": {
+                  "to": {
+                    "table": "stored_profiles",
+                    "column": "id"
+                  },
+                  "initially_deferred": false,
+                  "on_update": null,
+                  "on_delete": "setNull"
+                }
+              }
+            ]
+          },
+          {
+            "name": "diagnostic_history_limit",
+            "getter_name": "diagnosticHistoryLimit",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (typeof(diagnostic_history_limit) = 'integer' AND diagnostic_history_limit BETWEEN 1 AND 100000)",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": []
+      }
+    },
+    {
+      "id": 5,
+      "references": [],
+      "type": "table",
+      "data": {
+        "name": "stored_runs",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "run_id",
+            "getter_name": "runId",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL PRIMARY KEY CHECK (length(run_id) = 32 AND run_id NOT GLOB '*[^0-9a-f]*')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              "primary-key"
+            ]
+          },
+          {
+            "name": "operation",
+            "getter_name": "operation",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (operation IN ('send', 'listen', 'ping', 'respond'))",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "app_version",
+            "getter_name": "appVersion",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "profile_id",
+            "getter_name": "profileId",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": "CHECK (profile_id IS NULL OR(length(profile_id) = 32 AND profile_id NOT GLOB '*[^0-9a-f]*'))",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "configuration_json",
+            "getter_name": "configurationJson",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "prepared_at_us",
+            "getter_name": "preparedAtUs",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (typeof(prepared_at_us) = 'integer')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "logical_ended_at_us",
+            "getter_name": "logicalEndedAtUs",
+            "moor_type": "int",
+            "nullable": true,
+            "customConstraints": "CHECK (logical_ended_at_us IS NULL OR typeof(logical_ended_at_us) = 'integer')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "record_state",
+            "getter_name": "recordState",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (record_state IN ('prepared', 'settled', 'recovered_archived'))",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "result_json",
+            "getter_name": "resultJson",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": "",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "cleanup_json",
+            "getter_name": "cleanupJson",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "recovered_at_us",
+            "getter_name": "recoveredAtUs",
+            "moor_type": "int",
+            "nullable": true,
+            "customConstraints": "CHECK (recovered_at_us IS NULL OR typeof(recovered_at_us) = 'integer')",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "recovery_reason",
+            "getter_name": "recoveryReason",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": "CHECK (recovery_reason IS NULL OR recovery_reason IN ('interrupted', 'cleanup_unconfirmed'))",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "summary_format_version",
+            "getter_name": "summaryFormatVersion",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL CHECK (typeof(summary_format_version) = 'integer' AND summary_format_version > 0)",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": []
+      }
+    },
+    {
+      "id": 6,
+      "references": [
+        5
+      ],
+      "type": "index",
+      "data": {
+        "on": 5,
+        "name": "runs_prepared",
+        "sql": "CREATE INDEX runs_prepared ON stored_runs (prepared_at_us DESC, run_id DESC);",
+        "unique": false,
+        "columns": []
+      }
+    },
+    {
+      "id": 7,
+      "references": [
+        5
+      ],
+      "type": "index",
+      "data": {
+        "on": 5,
+        "name": "runs_operation",
+        "sql": "CREATE INDEX runs_operation ON stored_runs (operation, prepared_at_us DESC, run_id DESC);",
+        "unique": false,
+        "columns": []
+      }
+    },
+    {
+      "id": 8,
+      "references": [
+        5
+      ],
+      "type": "index",
+      "data": {
+        "on": 5,
+        "name": "runs_state",
+        "sql": "CREATE INDEX runs_state ON stored_runs (record_state, prepared_at_us DESC, run_id DESC);",
+        "unique": false,
+        "columns": []
+      }
+    },
+    {
+      "id": 9,
+      "references": [
+        5
+      ],
+      "type": "index",
+      "data": {
+        "on": 5,
+        "name": "runs_operation_state",
+        "sql": "CREATE INDEX runs_operation_state ON stored_runs (operation, record_state, prepared_at_us DESC, run_id DESC);",
+        "unique": false,
+        "columns": []
+      }
+    }
+  ],
+  "fixed_sql": [
+    {
+      "name": "stored_drafts",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"stored_drafts\" (\"id\" TEXT NOT NULL PRIMARY KEY CHECK (length(id) = 32 AND id NOT GLOB '*[^0-9a-f]*'), \"title\" TEXT NOT NULL, \"body\" TEXT NOT NULL, \"created_at_us\" INTEGER NOT NULL CHECK (typeof(created_at_us) = 'integer'), \"updated_at_us\" INTEGER NOT NULL CHECK (typeof(updated_at_us) = 'integer'), \"revision\" INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0));"
+        }
+      ]
+    },
+    {
+      "name": "drafts_updated",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX drafts_updated ON stored_drafts (updated_at_us DESC, id DESC)"
+        }
+      ]
+    },
+    {
+      "name": "stored_profiles",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"stored_profiles\" (\"id\" TEXT NOT NULL PRIMARY KEY CHECK (length(id) = 32 AND id NOT GLOB '*[^0-9a-f]*'), \"name\" TEXT NOT NULL CHECK (length(trim(name)) > 0), \"port_hint\" TEXT, \"operation\" TEXT NOT NULL CHECK (operation IN ('send', 'listen', 'ping', 'respond')), \"parameters_json\" TEXT NOT NULL, \"updated_at_us\" INTEGER NOT NULL CHECK (typeof(updated_at_us) = 'integer'));"
+        }
+      ]
+    },
+    {
+      "name": "profiles_updated",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX profiles_updated ON stored_profiles (updated_at_us DESC, id DESC)"
+        }
+      ]
+    },
+    {
+      "name": "stored_settings",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"stored_settings\" (\"singleton\" INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1), \"default_profile_id\" TEXT REFERENCES stored_profiles(id)ON DELETE SET NULL, \"diagnostic_history_limit\" INTEGER NOT NULL CHECK (typeof(diagnostic_history_limit) = 'integer' AND diagnostic_history_limit BETWEEN 1 AND 100000));"
+        }
+      ]
+    },
+    {
+      "name": "stored_runs",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"stored_runs\" (\"run_id\" TEXT NOT NULL PRIMARY KEY CHECK (length(run_id) = 32 AND run_id NOT GLOB '*[^0-9a-f]*'), \"operation\" TEXT NOT NULL CHECK (operation IN ('send', 'listen', 'ping', 'respond')), \"app_version\" TEXT NOT NULL, \"profile_id\" TEXT CHECK (profile_id IS NULL OR(length(profile_id) = 32 AND profile_id NOT GLOB '*[^0-9a-f]*')), \"configuration_json\" TEXT NOT NULL, \"prepared_at_us\" INTEGER NOT NULL CHECK (typeof(prepared_at_us) = 'integer'), \"logical_ended_at_us\" INTEGER CHECK (logical_ended_at_us IS NULL OR typeof(logical_ended_at_us) = 'integer'), \"record_state\" TEXT NOT NULL CHECK (record_state IN ('prepared', 'settled', 'recovered_archived')), \"result_json\" TEXT, \"cleanup_json\" TEXT NOT NULL, \"recovered_at_us\" INTEGER CHECK (recovered_at_us IS NULL OR typeof(recovered_at_us) = 'integer'), \"recovery_reason\" TEXT CHECK (recovery_reason IS NULL OR recovery_reason IN ('interrupted', 'cleanup_unconfirmed')), \"summary_format_version\" INTEGER NOT NULL CHECK (typeof(summary_format_version) = 'integer' AND summary_format_version > 0));"
+        }
+      ]
+    },
+    {
+      "name": "runs_prepared",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX runs_prepared ON stored_runs (prepared_at_us DESC, run_id DESC)"
+        }
+      ]
+    },
+    {
+      "name": "runs_operation",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX runs_operation ON stored_runs (operation, prepared_at_us DESC, run_id DESC)"
+        }
+      ]
+    },
+    {
+      "name": "runs_state",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX runs_state ON stored_runs (record_state, prepared_at_us DESC, run_id DESC)"
+        }
+      ]
+    },
+    {
+      "name": "runs_operation_state",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX runs_operation_state ON stored_runs (operation, record_state, prepared_at_us DESC, run_id DESC)"
+        }
+      ]
+    }
+  ]
+}

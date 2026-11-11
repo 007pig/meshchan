@@ -32,14 +32,18 @@ jobs:
       - name: Get locked workspace dependencies
         run: dart pub get --enforce-lockfile
 
-      - name: Generate offline core dependency probe
+      - name: Generate production database and dependency probe
         working-directory: packages/meshchan_core
         run: dart run build_runner build
 
-      - name: Check tracked dependency probe generation
+      - name: Check production schema snapshot and generated helpers
+        working-directory: packages/meshchan_core
+        run: dart run tool/check_schema.dart
+
+      - name: Check tracked production and probe artifacts
         run: |
-          git ls-files --error-unmatch packages/meshchan_core/test/support/dependency_probe_database.g.dart
-          git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
+          git ls-files --error-unmatch packages/meshchan_core/lib/src/storage/database.g.dart packages/meshchan_core/test/support/dependency_probe_database.g.dart packages/meshchan_core/drift_schemas/drift_schema_v1.json packages/meshchan_core/test/storage/generated/schema.dart packages/meshchan_core/test/storage/generated/schema_v1.dart
+          git diff --exit-code -- packages/meshchan_core/lib/src/storage/database.g.dart packages/meshchan_core/test/support/dependency_probe_database.g.dart packages/meshchan_core/drift_schemas packages/meshchan_core/test/storage/generated
 
       - name: Check formatting
         run: dart format --output=none --set-exit-if-changed .
@@ -50,7 +54,7 @@ jobs:
       - name: Test finite acceptance plan validation without hardware
         run: python3 -m unittest discover -s tool -p '*_test.py'
 
-      - name: Test offline business values and in-memory SQLite probe
+      - name: Test offline values, real SQLite files, ownership and failure paths
         working-directory: packages/meshchan_core
         run: dart test
 

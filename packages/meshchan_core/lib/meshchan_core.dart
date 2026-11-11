@@ -1,6 +1,9 @@
 /// Offline business values and asynchronous persistence contracts.
-/// No production database, repository implementation, or device I/O.
+/// Controlled production storage lifecycle; no repository implementation or device I/O.
 library;
+
+export 'src/storage/database.dart' show databaseSchemaVersion;
+export 'src/storage/storage.dart' show CoreStorage, StorageState;
 
 export 'src/errors.dart' show CoreErrorCode, CoreException;
 export 'src/models/app_settings.dart' show AppSettings;

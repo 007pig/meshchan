@@ -1,0 +1,45 @@
+CREATE TABLE stored_drafts (
+  id TEXT NOT NULL PRIMARY KEY CHECK (length(id) = 32 AND id NOT GLOB '*[^0-9a-f]*'),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at_us INTEGER NOT NULL CHECK (typeof(created_at_us) = 'integer'),
+  updated_at_us INTEGER NOT NULL CHECK (typeof(updated_at_us) = 'integer'),
+  revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0)
+);
+CREATE INDEX drafts_updated ON stored_drafts (updated_at_us DESC, id DESC);
+
+CREATE TABLE stored_profiles (
+  id TEXT NOT NULL PRIMARY KEY CHECK (length(id) = 32 AND id NOT GLOB '*[^0-9a-f]*'),
+  name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+  port_hint TEXT,
+  operation TEXT NOT NULL CHECK (operation IN ('send', 'listen', 'ping', 'respond')),
+  parameters_json TEXT NOT NULL,
+  updated_at_us INTEGER NOT NULL CHECK (typeof(updated_at_us) = 'integer')
+);
+CREATE INDEX profiles_updated ON stored_profiles (updated_at_us DESC, id DESC);
+
+CREATE TABLE stored_settings (
+  singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+  default_profile_id TEXT REFERENCES stored_profiles(id) ON DELETE SET NULL,
+  diagnostic_history_limit INTEGER NOT NULL CHECK (typeof(diagnostic_history_limit) = 'integer' AND diagnostic_history_limit BETWEEN 1 AND 100000)
+);
+
+CREATE TABLE stored_runs (
+  run_id TEXT NOT NULL PRIMARY KEY CHECK (length(run_id) = 32 AND run_id NOT GLOB '*[^0-9a-f]*'),
+  operation TEXT NOT NULL CHECK (operation IN ('send', 'listen', 'ping', 'respond')),
+  app_version TEXT NOT NULL,
+  profile_id TEXT CHECK (profile_id IS NULL OR (length(profile_id) = 32 AND profile_id NOT GLOB '*[^0-9a-f]*')),
+  configuration_json TEXT NOT NULL,
+  prepared_at_us INTEGER NOT NULL CHECK (typeof(prepared_at_us) = 'integer'),
+  logical_ended_at_us INTEGER CHECK (logical_ended_at_us IS NULL OR typeof(logical_ended_at_us) = 'integer'),
+  record_state TEXT NOT NULL CHECK (record_state IN ('prepared', 'settled', 'recovered_archived')),
+  result_json TEXT,
+  cleanup_json TEXT NOT NULL,
+  recovered_at_us INTEGER CHECK (recovered_at_us IS NULL OR typeof(recovered_at_us) = 'integer'),
+  recovery_reason TEXT CHECK (recovery_reason IS NULL OR recovery_reason IN ('interrupted', 'cleanup_unconfirmed')),
+  summary_format_version INTEGER NOT NULL CHECK (typeof(summary_format_version) = 'integer' AND summary_format_version > 0)
+);
+CREATE INDEX runs_prepared ON stored_runs (prepared_at_us DESC, run_id DESC);
+CREATE INDEX runs_operation ON stored_runs (operation, prepared_at_us DESC, run_id DESC);
+CREATE INDEX runs_state ON stored_runs (record_state, prepared_at_us DESC, run_id DESC);
+CREATE INDEX runs_operation_state ON stored_runs (operation, record_state, prepared_at_us DESC, run_id DESC);

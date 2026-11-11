@@ -1,4 +1,6 @@
-# Empty databases otherwise generate a manager with an unused private field.
+# The empty dependency probe generates an unused manager field without this.
+# Repositories use explicit transactions, so production needs no managers either.
+# Production snapshots use drift_dev schema dump/generate (tool/check_schema.dart).
 # Keep the default source set, including test/, and all other default options.
 targets:
   $default:

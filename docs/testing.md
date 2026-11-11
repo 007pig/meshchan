@@ -524,3 +524,40 @@ passing-case, failed/pending cleanup and evaluator-error tests still pass.
 All 40 observed Python child calls use the selected 3.15.2 interpreter. Dart and
 native inputs did not change, so their prior complete gate was not rerun. See the
 [dated software record](development.md#runner-cancellation-exits-and-empty-content-fixes-on-november-11-2026).
+
+## Production storage and ownership (1C.3)
+
+Run the package's full suite after generation and `tool/check_schema.dart`.
+`dart_test.yaml` serializes its test files because process fixtures invoke the
+SDK's shared native-asset hooks. Keep communication/CLI tests and native builds
+in separate sequential processes as before. Every storage test uses an independent
+temporary directory; no user data directory, serial port, or radio is accessed.
+
+| Group | Actual assertions |
+| --- | --- |
+| `test/storage/database_test.dart` | A real production file matches the generated schema-1 snapshot helper; all four business objects, four operation configurations/results, exact Unicode/whitespace/newlines, non-millisecond UTC timestamps, integer elapsed facts above 2^53, nullable/partial facts and independent cleanup survive commit/close/reopen. Settings start absent. |
+| Constraints and transactions | Duplicate keys, invalid IDs, revision/type/history-limit/singleton checks and an actually enabled settings FK reject invalid SQL. Internal profile deletion clears the live default while preserving a run's historical ID. A failed second statement rolls back a draft's related fields and preserves them across reopen. These SQL fixtures do not implement repository APIs. |
+| Initialization failure | The hook runs after the first CREATE inside the real creation transaction; injected failure leaves no user objects and user_version 0, closes resources, and permits reinitialization. |
+| `test/storage/ownership_test.dart` | Opening/closing reservations, dot/parent/symlink aliases, competing recursive directory creation, same-process and different-isolate opens, independent-process busy with zero executor factories, and an independent third contender after rejected opens. A native close interceptor and admitted-query barrier prove ownership lasts through actual close; repeated close shares the Future. |
+| Process exit and marker | Ready/release line handshakes establish live ownership. Normal release and explicit exit without close allow reopen. Stale/informational marker deletion cannot bypass the dedicated flock resource. Close failure and secondary open-cleanup failure retain busy ownership until fixture process exit, preserving primary errors and safe unconfirmed state. |
+| `test/storage/preflight_test.dart` | Future version, non-SQLite input, alien version 0, missing table/index, and symlink/hard-link resources fail before production executor creation. Main and all recognized existing sidecars are compared for both bytes and presence on rejection. Ordinary empty version 0 can initialize. |
+| Journal states | Rollback-mode files without sidecars, arbitrary sidecars beside invalid input, a real WAL carrying committed future user_version absent from the main header, and a real hot rollback journal left by an unclosed transaction. Rejection inspects isolated copies; supported WAL with committed data is accepted. No immutable/nolock shortcut is used. |
+| Decoding/errors | Illegal IDs, wrong JSON field types/keys, missing required fields, mismatched operation, unknown codes and cleanup shapes map to corrupt. Raw BLOB/text and fractional-integer damage is rejected before Drift coercion, including aliases. Caller LocalId validation remains invalid_input; future summary rows have a separate unreadable-row path. Controlled permission/I/O errors remain open_failed with safe default text. |
+
+Process fixtures use bounded ready/release/exit waits, drain stderr, collect exit
+codes, and kill/reap only test children during failed-test teardown. They permit
+only the exact SDK build-hook status text in stderr. Production locking and close
+have no polling, timeout release, busy retry, or marker/PID liveness heuristic.
+The abnormal-exit tests establish OS lock release and specific journal states;
+they do not establish diagnostic business recovery or arbitrary power-loss safety.
+
+`tool/check_schema.dart` rejects a formal table definition differing from its
+saved version, even if build_runner succeeded. CI runs this guard, checks the
+production/probe `.g.dart` and saved/generated schema files are tracked/unchanged,
+and runs all file/ownership tests via `dart test`. Existing communication/CLI/
+Python tests, three native bundle builds, and shared smoke remain configured.
+This configuration is not itself evidence of a remote passing run. The local
+[1C.3 validation record](development.md#1c3-local-validation-on-november-11-2026)
+records the actual environment/results. Existing CLI bundles still do not call
+business SQLite, so their source/AOT smoke is not product SQLite distribution
+acceptance. Linux CI coverage intent is separate from macOS local lock evidence.

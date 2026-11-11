@@ -9,6 +9,8 @@ environment:
 
 dependencies:
   drift: ^2.35.4
+  ffi: ^2.2.0
+  path: ^1.9.1
   sqlite3: ^3.9.1
 
 dev_dependencies:

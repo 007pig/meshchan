@@ -8,6 +8,11 @@ The root `pubspec.yaml` lists `packages/meshcore_link` and `apps/meshctl`. Both 
 
 The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. No Flutter engine or platform project is involved.
 
+The [offline core and persistence contract (1C.1)](architecture/offline-core.md)
+defines the planned `meshchan_core` boundary, local business objects, diagnostic
+recording/recovery rules, and acceptance requirements for subsequent 1C steps.
+It does not add a workspace member or change the current implementation status.
+
 ## SDK and native toolchain baseline
 
 Actual local checks on November 8, 2026, reported:

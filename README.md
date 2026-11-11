@@ -19,6 +19,7 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | Package | Responsibility and current status |
 | --- | --- |
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
+| `packages/meshchan_core` | 1C.2 offline business values, safe diagnostic summaries, asynchronous repository/history contracts, and a test-only in-memory Drift/SQLite dependency probe. No production database, CRUD, recorder, or CLI integration yet. |
 | `apps/meshctl` | Asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
 
 Local Python scripts and tests use the latest installed stable Python **3.15 or

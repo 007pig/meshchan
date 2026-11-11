@@ -8,6 +8,52 @@ stable Python 3.15 or newer for local Python scripts, as described in the
 [local toolchain selection](development.md#local-python-toolchain). Python is a
 development tool only; the distributed CLI does not require it.
 
+## Offline business package baseline (1C.2)
+
+`packages/meshchan_core/test/values_test.dart` imports the public business entry
+and checks exact Chinese/emoji/mixed-newline UTF-8 lengths, content larger than a
+radio packet, local ID representation, copied/unmodifiable paths and collections,
+page/settings bounds and defaults, UTC/range checks, stable error codes, and
+preservation of unknown diagnostic facts across independent cleanup scopes.
+It does not implement fake CRUD repositories or test pure interface declarations.
+
+`test/dependency_probe_test.dart` uses the internal empty Drift fixture under
+`test/support`. Real `build_runner` output supplies its superclass. The test
+injects `NativeDatabase.memory()`, executes `SELECT 1 AS value`, verifies a single
+integer 1, and awaits close in `finally`, including assertion/query failures.
+No fixture is exported from the public business API. Fixture schema version 1
+does not define the production `databaseSchemaVersion`; no business table,
+schema snapshot, migration, disk database, directory lock, or device is created.
+
+After locked root dependency resolution, generate from the member directory:
+
+```bash
+(cd packages/meshchan_core && dart run build_runner build)
+git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
+dart format --output=none --set-exit-if-changed .
+dart analyze --fatal-infos
+(cd packages/meshchan_core && dart test)
+```
+
+Check in the generated fixture and reject regeneration differences. The minimal
+`build.yaml` only disables the empty manager's unused private field; the default
+source set still includes `test/`. See the [dependency/toolchain record](development.md#offline-core-package-and-dependency-baseline-1c2).
+Then run existing communication/CLI/Python regressions and native smoke gates
+below sequentially. A cold sqlite3 hook cache needs access to its upstream
+versioned native release; the default hook verifies the downloaded asset hash.
+Do not substitute a manually downloaded system library to bypass a failed hook.
+
+This probe establishes dependency/generator/native SQLite compatibility in the
+tested environment. Existing CLI source/AOT smoke exercises existing serial and
+synthetic datagram paths; it does not call SQLite. File reopen, production
+migrations, ownership/recovery, and SQLite AOT distribution remain later work.
+CI configuration is coverage intent, not an observed remote passing result.
+The [November 11 local record](development.md#1c2-local-validation-on-november-11-2026)
+reports 12 offline business/probe, 180 communication, 97 CLI, and 46 Python tests,
+three fresh existing native builds, and 69 shared macOS smoke checks. It records
+the initial sandbox network failures and the resolved empty-manager warning;
+remote CI, hardware, real-file storage, and SQLite product AOT are not inferred.
+
 ## Historical behavior audit (1A.8)
 
 Paths below are relative to each package's `test/` directory. The audit found no
@@ -70,8 +116,13 @@ build. No command here supplies a valid port or enumerates on macOS.
   python3 --version
   python3 -c 'import sys; assert sys.version_info >= (3, 15)'
   "$MESHCHAN_DART" pub get --enforce-lockfile
+  "$MESHCHAN_DART" pub workspace list
+  (cd packages/meshchan_core && "$MESHCHAN_DART" run build_runner build)
+  git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
   "$MESHCHAN_DART" format --output=none --set-exit-if-changed .
   "$MESHCHAN_DART" analyze --fatal-infos
+  python3 -m unittest discover -s tool -p '*_test.py'
+  (cd packages/meshchan_core && "$MESHCHAN_DART" test)
   (cd packages/meshcore_link && "$MESHCHAN_DART" test)
   (cd apps/meshctl && "$MESHCHAN_DART" test)
   CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/meshchan-1b8.XXXXXX")"
@@ -143,7 +194,10 @@ asset is also checked. No library path is redirected to a
 pub cache. Only the script-owned relocation copy is removed automatically.
 
 CI retains one Ubuntu job, fixed Flutter/action versions, locked dependencies,
-format/analyze, both full suites, and the two existing native builds. It builds a
+format/analyze, the existing Python suite, and all three Dart member suites.
+After resolution it generates the offline dependency fixture in its member
+directory, verifies that the generated file is tracked, and rejects a diff
+before analysis/tests. It retains the two existing native builds and builds a
 third, separate development bundle with
 `dart build cli --target=tool/datagram_acceptance.dart --output=build/datagram-acceptance`
 from `apps/meshctl`, then passes it as `--datagram-acceptance-bundle` to this same

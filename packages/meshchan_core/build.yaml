@@ -1,0 +1,8 @@
+# Empty databases otherwise generate a manager with an unused private field.
+# Keep the default source set, including test/, and all other default options.
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          generate_manager: false

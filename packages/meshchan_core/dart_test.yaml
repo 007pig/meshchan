@@ -1,0 +1,4 @@
+# Process fixtures invoke the SDK's shared native-asset hooks. Keep test files
+# sequential so different fixture groups do not rebuild the same asset state.
+concurrency: 1
+timeout: 2m

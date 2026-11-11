@@ -16,9 +16,14 @@ enum CoreErrorCode {
 
 /// Safe default description; no original exception, stack, or user input.
 final class CoreException implements Exception {
-  const CoreException(this.code);
+  const CoreException(this.code, {this.cleanupUnconfirmed = false});
   final CoreErrorCode code;
 
+  /// Resources may still be owned. The host must not report a completed close.
+  /// This flag never includes native error text or changes the primary category.
+  final bool cleanupUnconfirmed;
+
   @override
-  String toString() => 'CoreException(${code.code})';
+  String toString() =>
+      'CoreException(${code.code}${cleanupUnconfirmed ? ", cleanup_unconfirmed" : ""})';
 }

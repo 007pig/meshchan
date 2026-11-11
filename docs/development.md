@@ -11,8 +11,9 @@ The root provides `lints`; the CLI uses `args` and directly declares `test` and 
 The [offline core and persistence contract (1C.1)](architecture/offline-core.md)
 defines the `meshchan_core` boundary, local business objects, diagnostic
 recording/recovery rules, and acceptance requirements for subsequent 1C steps.
-1C.2 adds only the package, values/interfaces, and dependency probe described
-below; persistence, recording, and CLI business behavior remain future work.
+1C.2 added the package, values/interfaces, and dependency probe described below.
+The later [1C.3 implementation](#production-storage-and-migration-baseline-1c3)
+adds production storage; recording and CLI business behavior remain future work.
 
 ## SDK and native toolchain baseline
 
@@ -1993,3 +1994,189 @@ native captures and 14/15 application attempts remain unchanged. Product/Dart/
 core/native inputs and seven archives are unchanged; their earlier gates retain
 their original dates. This follow-up performs no hardware/API connection, shared
 queue read, RF send, native build or archive revision.
+
+## Production storage and migration baseline (1C.3)
+
+This implementation starts from clean local `master`
+`40d5bd47f9a119db0652f291fbe7b5ceea214a80`. GitHub reported PR #19 merged at
+2026-11-11 20:09:35 UTC into that commit; prerequisite
+`c207dfb6acd8c5ec8c101a9eea0d32e72008d3c1` is an ancestor. The initial `gh` request
+was blocked by sandbox networking; the authorized network-enabled read confirmed
+the merged state. No prerequisite PR was merged by this step, and no history or
+preexisting user changes were rewritten.
+
+The [package README](../packages/meshchan_core/README.md) describes the public
+`CoreStorage.open(dataDirectory: Directory(...))` lifecycle, stable file names,
+lock/marker distinction, connection responsibility, error/sidecar policy, and
+schema/codec choices. The host must supply the directory; there is no cwd/default
+platform-directory lookup or CLI parsing. The production native connection lives
+on the opening isolate and is created after ownership and preflight. Other
+isolates may call the same open entry and compete through OS flock; they do not
+share handles. No SQL worker is started for a rejected contender.
+
+The small native adapter uses libc `open`/`flock`/`close`, errno, and verified stat
+prefixes on macOS/Linux arm64/x64. Dart's process-associated
+[RandomAccessFile.lock](https://api.dart.dev/dart-io/RandomAccessFile/lock.html)
+was deliberately not used for directory ownership. See
+[Apple flock](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html),
+[Linux flock](https://man7.org/linux/man-pages/man2/flock.2.html), and
+[Dart VarArgs](https://api.dart.dev/dart-ffi/VarArgs-class.html).
+Darwin layout/flags were checked in the installed macOS SDK `sys/stat.h` and
+`sys/fcntl.h`; Linux prefixes were checked against the upstream
+[x64](https://github.com/torvalds/linux/blob/master/arch/x86/include/uapi/asm/stat.h)
+and [asm-generic arm64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/stat.h)
+headers. The adapter implements ABI calls, without copying upstream implementation
+code. Network filesystems, hostile inode/directory replacement, and noncooperating
+external SQLite clients are outside the boundary. Application code never removes
+the dedicated ownership resource as stale cleanup.
+
+`ffi ^2.2.0` and `path ^1.9.1` are now direct dependencies for native allocation/
+UTF-8 and safe path composition. Both were already transitively locked at those
+versions; they are now declared by the member before direct imports. **No root
+lockfile version/content change** was needed. Their installed LICENSE texts are BSD-3-Clause. Drift
+2.35.4, sqlite3 3.9.1, drift_dev 2.35.3, build_runner 2.17.1, and test 1.33.0
+remain unchanged. There is no `meshcore_link` dependency, extra ORM, native lock
+package, SDK installation, or package version bump.
+
+### Generation and future structural changes
+
+From the repository root, get locked dependencies, then run the two distinct
+production-generation checks from the member:
+
+```bash
+dart pub get --enforce-lockfile
+(cd packages/meshchan_core && dart run build_runner build)
+(cd packages/meshchan_core && dart run tool/check_schema.dart)
+git diff --exit-code -- packages/meshchan_core/lib/src/storage/database.g.dart \
+  packages/meshchan_core/test/support/dependency_probe_database.g.dart \
+  packages/meshchan_core/drift_schemas packages/meshchan_core/test/storage/generated
+```
+
+`build_runner` supplies the production and empty probe `.g.dart` files.
+`check_schema.dart` separately exports the current production definition into a
+temporary directory, compares the saved JSON snapshot byte-for-byte, generates
+verification helpers there, and compares their complete file set/bytes. It
+cannot silently replace a committed snapshot. CI additionally requires the
+artifacts to be tracked. The real schema is
+`lib/src/storage/schema.drift`, database entry `lib/src/storage/database.dart`,
+snapshot `drift_schemas/drift_schema_v1.json`, helpers
+`test/storage/generated/{schema.dart,schema_v1.dart}`. The probe is not a migration
+history entry. `generate_manager: false` still prevents its unused manager field.
+
+The initial snapshot/helper commands (run from `packages/meshchan_core`) were:
+
+```bash
+dart run drift_dev schema dump lib/src/storage/database.dart drift_schemas/drift_schema_v1.json
+dart run drift_dev schema generate drift_schemas test/storage/generated
+```
+
+The production constant equals Drift's schemaVersion 1. Initial creation runs
+DDL and user_version in one short transaction; failure after the first real
+CREATE rolls both back. A future real change increments this constant, implements
+transactional upgrade steps in `CoreDatabase.migration`, adds a new versioned
+snapshot, regenerates helpers, and validates old records. Existing released
+snapshots must remain unchanged. No production v2 was invented for tests.
+Diagnostic summary format, CLI output version, app version, and wire version
+remain separate. Newer summary rows fail explicitly as `storage_read_failed`;
+newer database structures fail as `unsupported_database_version` before Drift.
+
+### Handoff to 1C.4
+
+Use `storage/storage.dart`'s owned `StorageHandle.useDatabase` for the complete
+Future of each short transaction, `database.dart`/`schema.drift` for SQL, and
+`codec.dart` for exact typed row conversions. Do not retain a database from the
+callback or create another production connection. For writes, select
+`failureCode: CoreErrorCode.storageWriteFailed`; reads default to the safe read
+category. Typed core errors and recognized corruption retain priority. Table
+readers check raw SQLite types before Drift's string/integer coercions, including
+when a table is aliased. Close drains admitted work,
+then awaits the executor, then releases the real lock/reservation. Unconfirmed
+close remains owned/quarantined and reports `storage_write_failed`; an open
+failure keeps its first category plus `cleanupUnconfirmed` if necessary.
+
+Draft repository logic still needs ID generation, commit-error mapping, CRUD,
+revision conflict/no-op behavior, and bounded queries. Profiles/settings remain
+interfaces; the FK is infrastructure, not a completed deletion service.
+Communication mapping, recording/recovery, history pruning/export, CLI directory
+selection and flags, and SQLite product AOT distribution remain later work.
+No database open performs diagnostic recovery or retention.
+
+### 1C.3 local validation on November 11, 2026
+
+The final local environment was macOS **27.2.1 (26B131), arm64**, using
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` **3.13.7 stable**.
+Installed Flutter metadata reports **3.47.9 stable**, revision
+`c197ca5199e9ee5661e865596c9c07294dfab51c`; the Flutter wrapper's initial version
+attempt was denied cache-stamp writes by the sandbox, so subsequent commands used
+the documented direct Dart entry. No SDK/cache/upstream source was modified to
+work around it. Native commands selected `/usr/bin/clang`, Apple Clang **21.0.0**
+(`clang-2100.4.1.1`). Python entry `/opt/homebrew/bin/python3` reported **3.15.2**,
+with `sys.executable` `/opt/homebrew/opt/python@3.15/bin/python3.15`. No global PATH,
+interpreter, SDK, channel, or package version was changed.
+
+Observed final checks:
+
+| Check | Result |
+| --- | --- |
+| Root `dart pub get --enforce-lockfile` | Passed; root lockfile unchanged, no member lockfiles. |
+| Member build_runner | Production and probe generated successfully; a repeat retained identical SHA-256 hashes for both `.g.dart` files, the snapshot, and both used schema helpers. |
+| Separate schema export/helper guard | Passed. A temporary unversioned table-default change was deliberately rejected; the source was restored byte-for-byte and the normal check passed again. The snapshot itself was not rewritten by the guard. |
+| Workspace formatting / fatal-info analysis | 86 Dart files, zero format changes; no analyzer issues. |
+| Complete meshchan_core suite | **43 passed**, including the original 12 value/probe tests and 31 new file/schema/ownership/error cases. |
+| Complete meshcore_link suite | **180 passed**. |
+| Complete meshctl suite | **97 passed** after enabling local loopback sockets. The initial sandbox run failed its 127.0.0.1 server binds with Operation not permitted; that failed log is retained separately. No hardware or external peer was used. |
+| Python development-tool suite | **46 passed** under the explicitly selected Python 3.15.2. |
+| Existing native build gates | Three fresh bundles passed sequentially: product CLI, serial observation usage fixture, and synthetic datagram acceptance fixture. |
+| Shared source/AOT smoke | **69 passed on macOS**, including broken pipe, complete-bundle relocation, and five synthetic datagram scenarios in source/AOT. |
+| Final patch / new-file review | Tracked patch whitespace passed; all 18 new files, including production generated code, snapshot, helpers and tests, were enumerated and checked for whitespace/conflict markers. No temporary database/native cache was added. |
+
+The process tests observed macOS same-isolate and different-isolate exclusion,
+independent-process contention after losing attempts, normal/abnormal exit,
+marker deletion/staleness, and busy ownership while a real executor close was
+blocked or failed. Path tests included relative, absolute, dot/parent, directory
+symlink and case aliases when the actual filesystem recognized them; database,
+sidecar and lock symlinks/hard links were rejected. The real hot-journal fixture
+checks its journal magic; the WAL fixture checks that main-header user_version
+is still zero while the committed future version is correctly rejected from WAL.
+Rejected main/sidecar bytes and existence were unchanged.
+
+Early checks exposed and corrected the Darwin arm64 variadic `open` binding
+(mode must be passed through Dart `VarArgs`), Drift's default raw-row coercions,
+and the SQL LIKE underscore wildcard in internal-object recognition. Final tests
+cover restrictive lock-file mode, BLOB/text and fractional-integer damage before
+coercion (including aliases), and a nonreserved `sqliteX...` user table at version
+zero. These are final passing fixes, not exceptions to the contract.
+
+Current logs and generated hashes are retained locally under:
+
+```text
+build/phase-1c3/local-20261111/
+  pub-get.log
+  python-toolchain.log
+  codegen-reproducibility.log
+  generated-before.sha256
+  generated-after.sha256
+  schema-negative-control.log
+  schema-check-final.log
+  format.log
+  analyze.log
+  meshchan-core-tests-final.log
+  meshcore-link-tests.log
+  meshctl-tests.log
+  meshctl-tests-network-enabled.log
+  python-tests.log
+  build-meshctl.log
+  build-observation.log
+  build-datagram-acceptance.log
+  smoke.log
+```
+
+The CI workflow now verifies production/probe generation, saved schema/helper
+consistency, tracked artifacts and the complete file/ownership suite while
+preserving previous regressions/native gates. At the time of this local
+validation, the changes were uncommitted/unpushed and no remote CI result had
+been observed. Linux
+locking/path/journal tests are configured for CI but were not run on this Mac.
+Existing CLI bundles have no business SQLite wiring: their passing native smoke
+is not SQLite product AOT packaging, a real historical upgrade, diagnostic
+recovery, hardware/RF acceptance, or completion of any later 1C step.

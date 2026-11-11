@@ -38,6 +38,9 @@ jobs:
       - name: Analyze workspace
         run: dart analyze --fatal-infos
 
+      - name: Test finite acceptance plan validation without hardware
+        run: python3 -m unittest discover -s tool -p '*_test.py'
+
       - name: Test CLI
         working-directory: apps/meshctl
         run: dart test

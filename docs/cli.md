@@ -4,8 +4,13 @@ The CLI includes the 1A `ports`, `port-check`, `info`, and `watch` diagnostics
 and the 1B.7 finite `datagram send/listen/ping/respond` commands. 1B.8 adds
 [shared serial-byte source/AOT acceptance](testing.md#datagram-cross-layer-coverage-audit-1b8)
 and [software evidence](development.md#1b8-software-validation-on-november-10-2026).
-The application version remains `0.1.0-dev.1`. Real-device datagram acceptance
-and final candidate handling remain 1B.9 work.
+The application version is `0.1.0-dev.2`. Real-device Direct tests established
+exact round trips in both directions, the binary boundary, and no-responder
+timeout. H2 local acceptance and H7 active cancellation subsequently passed an
+explicitly authorized B-command-15-second/A-5-second comparison, retaining all
+earlier failures. Product defaults are unchanged. See the
+[actual matrix](hardware-validation.md#direct-rf-matrix-on-november-10-2026)
+and [local dev.2 candidate](releases/phase-1b-dev2.md).
 
 From the repository root, use the existing Homebrew SDK on this Mac:
 
@@ -464,3 +469,15 @@ This software integration does not perform real serial/LoRa acceptance or
 complete 1B.9 device acceptance or delivery. The separate
 [1B.8 synthetic checks](testing.md#datagram-cross-layer-coverage-audit-1b8)
 replace only the native boundary. Historical hardware/USB findings above remain unchanged.
+
+
+## openHop development peer (1B.9)
+
+The product's connection options remain USB-only. The source-only
+[openHop acceptance peer](openhop-acceptance.md) provides finite development
+info/send/listen/ping/respond operations over the selected virtual Companion's
+binary WS frame proxy. It is excluded from product bundles. Its local-write
+projection means local WS submission, while product USB local-write facts retain
+their existing meaning. Neither establishes RF completion. The two tools share
+Meshchan diagnostic tasks; exact PONG evidence must come from actual reception
+over the two Heltec radios. See the [dev.2 status](releases/phase-1b-dev2.md).

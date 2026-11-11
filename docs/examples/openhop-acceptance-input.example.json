@@ -1,0 +1,24 @@
+{
+  "baseUrl": "http://192.168.1.189:8000/",
+  "companionName": "REPLACE_WITH_CONFIRMED_REGISTRATION_NAME",
+  "endpointLabel": "openhop-b",
+  "jwt": {"env": "MESHCHAN_OPENHOP_JWT"},
+  "aPort": "/dev/cu.usbmodem211101",
+  "aSendChannel": null,
+  "aReceiveChannel": null,
+  "bSendChannel": null,
+  "bReceiveChannel": null,
+  "idleTimeoutSeconds": null,
+  "sameChannelKeyConfirmed": false,
+  "radioCompatibleConfirmed": false,
+  "clientSlotsAvailable": false,
+  "sharedQueueConsumptionAccepted": false,
+  "session": {
+    "commandSeconds": 5,
+    "initializationSeconds": 15,
+    "startupDelayMilliseconds": 0,
+    "taskSeconds": 90
+  },
+  "radio": {"frequencyHz": null, "bandwidthHz": null, "spreadingFactor": null, "codingRate": null},
+  "versions": {"aFirmwareSource": null, "repeater": null, "core": null, "modemFirmware": null, "radioBinding": null}
+}

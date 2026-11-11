@@ -6,8 +6,9 @@ Phase 1 / 1B / Step 1 (1B.1) fixed the protocol, ownership, and acceptance
 contract only. Review date: November 9, 2026. The reviewed Meshchan checkout was
 clean on `master` at `98a50a3d5e9c8a1c843f3552ca0263a2c73a4369`, the same
 commit as the task's historical reference. No hardware was accessed for this
-review. The intended later 1B candidate is `0.1.0-dev.2`; the current application
-remains `0.1.0-dev.1`.
+review. At that review, the intended later 1B candidate was `0.1.0-dev.2` and the
+application was `0.1.0-dev.1`. The current local candidate is now dev.2; see
+the [1B.9 delivery record](../releases/phase-1b-dev2.md).
 
 | Status | Evidence and boundary |
 | --- | --- |
@@ -18,7 +19,7 @@ remains `0.1.0-dev.1`.
 | Implementation after 1B.6 | Single-run PING and finite responder tasks, secure nonce lifecycle, runtime deduplication, monotonic deadlines/RTT, and independent actual cleanup. See [task API](diagnostic-tasks.md). |
 | Implementation after 1B.7 | Nested `datagram send/listen/ping/respond`, pure CLI input/budget validation, safe JSON/NDJSON projections, signal/output cancellation, and awaited actual cleanup. See [CLI contract](../cli.md#finite-datagram-commands-1b7). |
 | Implementation after 1B.8 | Shared finite serial-byte scenarios, ordinary Dart tests, source/AOT development probe, strict shared process smoke and third CI bundle. See [coverage mapping](#1b8-software-coverage-mapping). |
-| Remaining planned 1B behavior | 1B.9 explicit device/LoRa acceptance, final candidate handling, signing and release. |
+| Implementation after 1B.9 | Finite development openHop WS peer and dev.2 local candidate. Every basic Direct case has a passing record after the explicitly authorized H2/H7 B-command-15-second/A-5-second comparison; all earlier failures remain. Specified relay paths, physical unplug, and public release remain unvalidated. |
 | Pending device validation | Datagram support on the selected firmware, actual channel/radio compatibility, forward/return routes, timing budgets, and two-Companion LoRa acceptance. Protocol source inspection is not device evidence. |
 
 The [session contract](companion-session.md) remains authoritative for the
@@ -991,3 +992,27 @@ consistency, relative and fixed-commit links, UTF-8/LF/whitespace checks, and
 scope/diff review. It does not establish unit-test, build, or hardware acceptance.
 The listed upstream evidence was accessible; deployment-specific firmware
 support, channel settings, routes, and radio behavior remain unverified.
+
+
+### 1B.9 development acceptance boundary
+
+The [openHop peer](../openhop-acceptance.md) is a tool-local CompanionTransport,
+not a new product connection option. The frozen v1 diagnostic, 165-byte payload,
+176-byte inner frame, app target 3, FIFO, reception/cleanup ownership, deduplication,
+and failure priority remain unchanged. B's binary WS submission is a local host
+fact; Companion OK remains separate and an exact PONG is required for a round
+trip. No HTTP/WS/file/IPC path returns A's application messages to A.
+The peer shares the core and therefore does not independently validate its
+algorithms. See [actual hardware statuses](../hardware-validation.md#1b9-usb-and-openhop-acceptance-on-november-10-2026).
+
+Later [Direct RF execution](../hardware-validation.md#direct-rf-matrix-on-november-10-2026)
+used A slot 1 and B slot 3, zero-hop descriptor 0 and empty paths. H3/H4/H5
+validated exact PONGs with 15, 0, and 131 content bytes respectively; 131 is the
+smaller of both actual Direct route budgets. H1 compared a real received raw
+payload in memory. H2's A output establishes only type/slot/length. Earlier H2
+local-OK timeouts and H7's missing PONG gate remain in the record. The later
+[authorized comparison](../hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026)
+passed H2 local acceptance and H7 exact-PONG-gated SIGINT, with B command 15 s
+and A 5 s. This does not establish that increasing B's budget fixed a cause;
+A initialization timeouts persisted. No historical USB repair or reliability
+rate is inferred.

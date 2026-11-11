@@ -1114,3 +1114,522 @@ initialization or a waiting/replug fix. No raw bytes were captured and no new
 **development-with-known-limitations**. No further hardware call followed this
 attempt in this record. The latest documentation-only archive keeps identical
 native asset hashes; previous archives remain dated snapshots.
+
+
+## 1B.9 USB and openHop acceptance on November 10, 2026
+
+The H0 and initially blocked matrix below are the earlier snapshot. Subsequent
+channel inspection and [actual Direct RF execution](#direct-rf-matrix-on-november-10-2026)
+are appended, with failures preserved rather than replacing the initial record.
+
+This record appends to, and does not replace, the historical USB/body/H10
+observations above. The user explicitly selected A `/dev/cu.usbmodem211101` and
+B `http://192.168.1.189:8000/`, subsequently selected registration `007-02`,
+confirmed no other clients, and authorized H0-H7 once with at most 12 application
+sending attempts. Queue/channel prerequisites were not asserted by that consent.
+No PSK, token, original user-message body, identity key, or raw configuration is
+included in this record. Secrets are referenced outside the checkout.
+
+Build ID: `0.1.0-dev.2-macos-arm64-20261110T193252Z`.
+A used the complete newly copied product bundle in
+`build/phase-1b9/20261110T193252Z/delivery/0.1.0-dev.2-macos-arm64-20261110T193252Z/`.
+B used source `apps/meshctl/tool/openhop_peer.dart`, with the installed bundled
+Dart 3.13.7 and Apple compiler PATH. The captured compilation input hashes and
+peer hashes are in `compilation-inputs.json`, `hardware/execution-plan.json`,
+and the candidate `build-info.json`, under that build directory. Source commit
+is `40ab5bcd5638751f4b2362b05792e0de74c92f62` plus recorded uncommitted inputs.
+
+| Tested product file | SHA-256 recorded before H0 |
+| --- | --- |
+| `bin/meshctl` | `ca9f250eb31a8c9cef71ae24730100c2c7337e5992bd650e199a19d38f01d356` |
+| `lib/liblibserialport_plus.dylib` | `6a3fbe15228b7e860b0cd9ec3fd8a60b55f0e40fbbe2ef3b5cef0f3a7ea4a56d` |
+
+### Actual H0 commands and results
+
+A command, from the checkout root, using the candidate's absolute executable:
+
+```text
+<build-directory>/delivery/<build-id>/bin/meshctl info --port=/dev/cu.usbmodem211101 --json --timeout=5 --init-timeout=15 --startup-delay=0
+```
+
+Actual argv, endpoint labels, budgets, and hashes were written to
+`hardware/execution-plan.json` before execution. A started at
+`2026-11-10T19:35:02.646728Z` and ended at `19:35:03.229569Z`: exit 0,
+initializationCompleted=true, sessionClosed=true, app target 3. Device report:
+protocol 14, `v1.18.0-81dbae5`, build date `15-Oct-2026`, `Heltec V4.3 OLED`.
+The user identified the firmware as official Companion; the string is observed,
+while an installed-image hash/download source was not independently obtained.
+A reports 869618 kHz, BW 62500 Hz, SF 8, CR 8, TX 10 dBm.
+
+B's first source invocation, `19:35:03.230199Z` to `19:35:05.537879Z`, exited
+255 in a native build hook: the invocation omitted the documented Apple-first
+PATH and selected Homebrew Clang 18, which could not link `System`. It never
+entered the peer, read its secret, contacted REST/WS, or opened a device. The
+preparation failure and stderr remain in `hardware/H0-results.json` and the
+original H0-B log files; they were not overwritten by the prepared invocation.
+This is not an RF timeout or a failed WS connection attempt.
+
+The corrected process environment used:
+
+```bash
+export PATH="/opt/homebrew/share/flutter/bin:/usr/bin:$PATH"
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart run \
+  apps/meshctl/tool/openhop_peer.dart \
+  --config <build-directory>/hardware/H0-b.json info
+```
+
+B's originally planned single network/session check started at
+`2026-11-10T19:35:44.390019Z` and ended at `19:35:51.991971Z`: exit 0,
+peer_session_ready from the real session state, initializationCompleted=true,
+sessionClosed=true, cleanup=succeeded. It performed exactly the three preflight
+GETs selecting `007-02` and one WS session, with command/init/startup/task
+budgets 5 s/15 s/0 ms/90 s. Actual idle timeout was explicitly unknown/null
+for this no-listen info operation. No queue read or diagnostic send occurred.
+`hardware/H0-B-prepared-results.json` preserves this separate invocation.
+
+B reports protocol 14, version string `14.0`, date `13 Feb 2026`, model
+`openHop-Repeater-Companion`, and the same RF frequency/BW/SF/CR as A, TX 16 dBm.
+These are virtual Companion reports, not the modem's firmware identity.
+REST reported slots 0-7 and `is_running=false`, both during initial discovery
+and the H0 preflight. Nevertheless the authorized WS session reached ready.
+The running flag/session discrepancy is retained without attributing a cause or
+claiming that the service was started or repaired.
+
+### Additional authorized management inspection
+
+The user asked to inspect the management page for unknown deployment inputs.
+Browser access was unavailable (`browser access host is unavailable`); no UI
+login or change occurred. The public `/api/openapi` response was YAML, while an
+initial metadata probe expected JSON, so that probe produced no schema result.
+Read-only `/api/stats` and `/api/config_export?include_secrets=false` were then
+used outside the peer's fixed three-GET preflight. Only a strict projection was
+retained; full configuration, keys, authentication responses, message/packet
+logs, and current-user traffic were discarded/not stored. No modem endpoint was
+contacted. Evidence: `hardware/deployment-metadata.json` and
+`hardware/radio-and-timeout-metadata.json`, observed at approximately
+`19:40:14Z` and `19:42:01Z`.
+
+Actual deployment reports Repeater **1.1.5.dev231**, Core **1.1.4.dev9**.
+These differ from the reviewed Repeater commit/Core 1.1.3 baseline. Installed
+commit hashes remain unknown; passing initialization does not prove all datagram
+behavior in these development versions.
+
+The deployed radio stack reports `mode=multi`, `fabric=true`, `tx_mode=bridge`,
+`origin_tx=all`, `repeat_on_ingress=true`, default `local`, radios `local/link`.
+Their configured modem TCP endpoints are respectively
+`dub-donnybrook-007-01.local:5055` and `dub-donnybrook-007-02.local:5055`.
+These labels do not independently identify either physical Heltec, nor prove
+that one is distinct from A. The selected virtual Companion has TCP port 5050,
+bind address `0.0.0.0`, no explicit tcp_timeout, and no explicit per-Companion
+radio_id/tx_radio/rx_radio in the returned configuration. Missing values are
+not treated as known effective defaults for this different installed version.
+Modem firmware and the effective Companion idle timeout remain unknown. The
+user separately supplied matching RF settings, including CR 4/8, preamble 16,
+and B TX 16 dBm; A preamble was not observed by the current info projection.
+No RF Fabric, channel, power, identity, firmware, or service setting changed.
+
+### Finite matrix status
+
+| Item | Status | Expected A/B exits | Actual A/B exits | Facts and limits |
+| --- | --- | --- | --- | --- |
+| H0 A USB / B REST+WS | PASS | 0 / 0 | 0 / 0 | Both real initialization and cleanup; B source preparation 255 is separately retained. No LoRa claim. |
+| H1 A raw send / B exact raw listen | BLOCKED | 0 / 0 | not run / not run | Four selected slots/equal channel key unknown; actual multi-radio path unconfirmed. |
+| H2 B raw send / A structural listen | BLOCKED | 0 / 0 | not run / not run | Same prerequisites; A CLI would not prove payload equality or sender identity. |
+| H3 A ping / B responder(1) | BLOCKED | 0 / 0 | not run / not run | No local acceptance, exact PONG, or RTT recorded. |
+| H4 B ping / A responder(1) | BLOCKED | 0 / 0 | not run / not run | No response attempts/local confirmations recorded. |
+| H5 route-capacity PING/PONG | BLOCKED | 0 / 0 | not run / not run | Planned both-direction zero-hop Direct minimum is 131 content bytes; no boundary RF trial. |
+| H6 A responseTimeout after B ends | BLOCKED | 69 / none | not run / none | No timeout is fabricated from an initialization failure or offline example. |
+| H7 A active responder(2) SIGINT after B exact PONG | BLOCKED | 130 / 0 | not run / not run | No signal sent and no active-stage RF cancellation evidence. |
+| Specified independent relay path | NOT_RUN | route dependent | not run | No actual independent forward/return routes provided; same-host logical roles are not a hop. |
+| A ready-state physical USB unplug | NOT_RUN | scenario dependent | not run | No physical action or new watch connection requested/performed. Historical H10 remains unchanged. |
+| B control disconnect on real deployment | NOT_RUN | scenario dependent | not run | Representatively covered in software; no extra live disconnection trial. |
+
+Actual application datagram send attempts: **0**. Expected normal full matrix:
+11 application datagrams; authorized application sending-attempt ceiling: 12.
+No queue was consumed, client displaced, implicit retry/reconnect performed,
+RF diagnostic sent, watchdog kill used, or cleanup left pending. Successful H0
+initialization supplies no Direct/relay RF evidence and no reliability estimate.
+
+The [tool and reviewable plan generator](openhop-acceptance.md#prepare-a-reviewable-matrix)
+are ready. Missing slots/equal-key confirmation and a confirmed physical RF path
+remain necessary; effective idle timeout and independent firmware source/image evidence also
+remain incomplete. The later user-provided modem version is recorded below. Existing execution authorization is retained. Further RF
+operations need those actual inputs and a reviewed plan that fits the existing
+multi-radio deployment, without automatically changing it.
+
+
+After the management snapshot, the user stated that the `link` modem was
+temporarily off. This is retained as user-provided physical state, not as an
+additional API liveness observation. The configured two-radio topology remains
+a configuration fact; two currently active modems are not claimed. No link
+reconnect, enable, RF Fabric edit, or extra session was attempted. The physical
+identity of the remaining `local` modem relative to A still needs confirmation.
+
+The user then identified B's modem firmware as **openHop 1.4.0** and its hardware
+as **Heltec V4.3**. Source: user-provided device information, not an API firmware
+query or image/hash verification. This is separate from the virtual Companion's
+14.0 protocol report. It resolves the previously unknown user-reported version;
+a downloaded firmware source/image hash and the remaining local/A physical
+separation are not inferred.
+
+
+### Read-only channel audit on November 10, 2026
+
+After the initial candidate delivery, the user explicitly requested implementation
+and execution of a finite read-only A/B channel/key audit. This is an additional
+metadata task, not an H1-H7 RF attempt. Endpoint selections and exclusive access
+were retained. The later user instruction explicitly allowed multiple attempts
+to address failures. Every invocation below is preserved separately.
+
+The new source tool is `apps/meshctl/tool/channel_audit.dart`, with supporting
+`tool/support/channel_audit.dart`. It reuses the existing MeshCoreSession and
+serial/WS transports without changing production state machines. Only DEVICE_QUERY,
+APP_START, and serialized GET_CHANNEL are allowed. It sends no queue reads,
+application/RF commands, configuration writes, advertisements, or channel updates.
+A query response must contain exactly the expected index, name field and 16-byte
+Companion key representation; malformed/extended layouts fail without logging
+bytes. Empty/zero entries are excluded. Keys are compared only in memory, then
+owned key/frame buffers are cleared. Names, PSKs and fingerprints are omitted.
+
+Retained parent directory:
+`build/phase-1b9/20261110T193252Z/hardware/channel-audit-20261110T200255Z/`.
+`execution-plan.json`, `authorized-retry-plan.json` and
+`b-cleanup-verification-plan.json` capture authorization, finite scope, argv/input
+hashes and budgets before their corresponding invocations. The config files
+contain only a reference to a restricted JWT file outside the checkout.
+Budgets remain command 5 s, initialization 15 s, endpoint 90 s, startup delay 0.
+The initial plan caps channel reads at A 40 plus B 8, with no retries inside the
+tool. The later scope permitted up to three new invocations, stopping complete
+comparison retries on the first success. The remaining third invocation was
+narrowed to B-only verification of a subsequently discovered cleanup defect.
+
+| Invocation | UTC process interval | Exit | Actual result |
+| --- | --- | --- | --- |
+| Initial audit | 20:03:00.963067Z-20:03:07.407933Z | 69 | A DEVICE_QUERY completed; APP_START/SELF_INFO timed out (command 0x01, expected 0x05, initializing). A cleanup succeeded; zero channel reads; B not opened. |
+| Newly authorized attempt 1 | 20:06:02.595054Z-20:06:09.724407Z | 69 | A DEVICE_QUERY/DEVICE_INFO timed out (command 0x16, expected 0x0D, initializing). A cleanup succeeded; zero channel reads; B not opened. |
+| Newly authorized attempt 2 | 20:06:09.724966Z-20:06:20.454282Z | 0 | Both initialized, A read 40 slots, B read 8 slots, eight equal 16-byte readback pairs found. Tool report ended at 20:06:15.439695Z, with a later approximately five-second SDK close timer gap before process exit, investigated below. |
+| Remaining invocation, B-only cleanup verification | 20:08:57.767117Z-20:08:59.690102Z | 0 | After the development WS fix, B initialized/read 8 slots/closed successfully. Report ended 20:08:59.676650Z; process naturally exited about 14 ms later. No A connection or cross-endpoint comparison in this invocation. |
+
+The first report predates the explicit `comparisonPerformed`/null result
+refinement: its default false key-found field must not be interpreted as a
+negative comparison. No keys had been read. Later reports explicitly use null
+when no comparison was performed.
+
+Actual matching results, all 16-byte Companion readback values equal in memory:
+
+| A send / inferred receive slot | B send / inferred receive slot | Queried duplicate-key ambiguity |
+| --- | --- | --- |
+| 0 / 0 | 0 / 0 | None |
+| 1 / 1 | 3 / 3 | None |
+| 2 / 2 | 1 / 1 | None |
+| 3 / 3 | 2 / 2 | None |
+| 4 / 4 | 4 / 4 | None |
+| 5 / 5 | 5 / 5 | None |
+| 6 / 6 | 6 / 6 | None |
+| 8 / 8 | 7 / 7 | None |
+
+A reported capacity 40; named/nonzero-key entries were slots 0-8, while 9-39
+were excluded as empty. A slot 7 had no key match among B's queried 0-7. B also
+reported capacity 40, but this audit deliberately queried only the eight slots
+from its prior REST listing; it makes no claim about unqueried B slots 8-39.
+All eight B entries were named/nonzero. No pair was automatically selected.
+Receive-slot values are inferences from unique matching entries, not actual RF
+receive observations. Confirmation is scoped to the 16-byte representation
+returned by the interfaces; hidden internal extended-key configuration remains
+unobservable. No names, PSKs, hashes of PSKs, channel configurations or raw
+frames were retained in the reports.
+
+The initial and first newly authorized failures are initialization failures,
+not RF loss, and no channel-mismatch conclusion follows from them. Successful
+later initialization does not identify or repair the historical intermittent
+USB body-delivery problem. No USB default, timeout budget or startup delay was
+changed; no firmware or system setting was changed.
+
+#### Development WS cleanup correction
+
+The complete successful comparison exposed approximately five seconds between
+report output and process exit. Inspection of the installed SDK showed that
+WebSocket.close() returns its outgoing sink close future; canceling the receive
+subscription immediately afterward could prevent processing the peer close and
+leave the SDK's existing five-second close timer alive. The development
+`openhop_frame_transport.dart` now observes receive EOF before canceling its
+owned subscription and confirming cleanup, including a late successful open
+after cancellation. No production cleanup timeout or USB code changed. A copy
+of the previous source is retained as
+`openhop_frame_transport-before-cleanup-fix.dart.txt` in the audit directory.
+
+A regression test holds incoming EOF after sink close and verifies that cleanup
+remains pending with input subscribed until EOF. All 84 CLI tests passed after
+the fix (11 channel-audit tests, 16 openHop boundary tests, 57 earlier CLI tests),
+fatal-info analysis passed, and final format checked 53 Dart files without
+changes. Tests remained synthetic; the separate B-only real invocation above
+validated the affected adapter path and prompt process release. The old
+successful comparison's matching algorithm/values were unaffected by this
+cleanup-only change, and its report/process times remain preserved.
+
+Total actual audit host commands: 65 (9 initialization commands and 56 channel
+queries). Actual connections: A three, B two. Application datagrams, consuming
+queue reads and configuration writes: **0 each**. Every process exited naturally;
+no cleanup failure/pending resource was bypassed, no forced termination occurred,
+and no RF matrix was silently started. Both failure records remain alongside
+the success and cleanup follow-up.
+
+The existing product executable/dylib and local archive were not rebuilt or
+modified. Their prior hashes/hardware record remain valid for those bytes.
+This new tool, changed development adapter and its tests/docs are later source
+work, not content retroactively claimed by the older archive's manifest. The
+older packaged acceptance snapshot remains historical. Channel-pair availability
+is now established within the stated readback scope; selecting the intended pair,
+physical local-modem distinction, effective idle timeout/window and actual RF
+acceptance still remain separate.
+
+### Direct RF matrix on November 10, 2026
+
+Build ID `0.1.0-dev.2-macos-arm64-20261110T193252Z` and the exact delivered
+native executable/dylib from H0 were used throughout. Their SHA-256 values
+remain `ca9f250eb31a8c9cef71ae24730100c2c7337e5992bd650e199a19d38f01d356`
+and `6a3fbe15228b7e860b0cd9ec3fd8a60b55f0e40fbbe2ef3b5cef0f3a7ea4a56d`.
+The user authorized additional finite attempts, confirmed that the remaining
+`local` modem is a different physical device from A, and reported `link` off.
+The selected key readback pair was A send/receive slot **1** and B send/receive
+slot **3**. All forward/return descriptors were **0**, with empty paths.
+Raw data used development type `65535`. Each trial had fresh nonzero distinct
+A/B IDs; diagnostic nonces came from the unchanged secure-random core.
+
+#### Client ownership and passive window
+
+Two initial passive control observations ended with WS closure after ready,
+exit 69 and successful cleanup. Redacted server-log categories showed clients
+replacing each other on Companion port 5050: our connection displaced an
+existing client, and another connection displaced it 35-54 ms later. These
+were client-ownership failures, not an idle-timeout measurement or RF loss.
+The user then closed the connected MeshCore One app. No modem, service, radio
+setting, identity, channel, or queue was reset to resolve the conflict.
+
+After that manual release, one passive observation ran from
+`2026-11-10T20:29:26.100279Z` to `20:31:02.220915Z`, exit 0 and actual cleanup.
+It observed ready for **95,008 ms**, issued only initialization opcodes 0x16
+and 0x01, and sent no commands during the observation: no queue reads, RF
+application sends, or heartbeat. Incoming 0x09 notifications were counted but
+could not renew any deadline. This establishes an observed **95-second passive
+window**, sufficient for the configured 90-second tasks in this session.
+The exact effective configured idle timeout is still **unknown**: read-only
+config/log inspection exposed no value, and the reviewed older source default
+is not asserted for this deployed development version. The evidence records
+`effectiveConfiguredIdleTimeoutSeconds: null`.
+
+#### Plan, ownership, and software preparation
+
+Evidence root, relative to the checkout:
+
+```text
+build/phase-1b9/20261110T193252Z/hardware/rf-matrix-20261110T202035Z/
+```
+
+`matrix-plan/commands.txt` and `plan.json` contain reviewed actual argv and
+finite parameters. A uses the native delivery entry point; B uses the bundled
+Flutter Dart SDK source entry point. Initial command/init/response budgets were
+5/15/20 seconds, raw/responder duration 60 seconds, overall task 90 seconds
+(B ping task 60 seconds), and maxEntries 128. H3/H4/H5 responder maxResponses
+was 1; H7 was 2. B task windows use the measured lower bound, not a fabricated
+exact idle timeout. B session-ready and reception-active events are actual
+state observations. A has no such ready event: its 20-second scheduling guard
+was a finite scheduling choice, never readiness evidence. PONGs establish actual
+responsiveness where obtained.
+
+`tool/run_openhop_acceptance.py` defaults to offline validation. With explicit
+`--execute`, it preserves stdout/stderr, source/plan/native hashes, start/end
+UTC, process exits and structural task results. Initialization-only failures
+may be attempted at most three times under the user's additional-attempt
+permission, only after actual cleanup and with no application send or consumed
+entry. There is no automatic RF resend. A pending process/cleanup stops the
+sequence; a watchdog or forced kill cannot pass cleanup. The offline driver
+checks reject a wrong H6 timeout cause, wrong H2 structure and an H7 without
+the exact-PONG/active-A signal gate.
+
+#### Initial matrix and retained follow-up
+
+The first matrix ran `20:35:47.849163Z`-`20:38:54.558273Z`. All started sessions
+reported actual successful cleanup. Expected/actual exits are A/B; dash means
+that side was intentionally absent, and `not started` is a failed prerequisite.
+
+| ID | Status | Expected A/B | Actual A/B | Actual facts |
+| --- | --- | --- | --- | --- |
+| H0 | PASS, earlier | 0 / 0 | 0 / 0 | Actual USB and REST/WS initialization/cleanup; firmware/version sources retained above. No RF claim. |
+| H1 | PASS | 0 / 0 | 0 / 0 | A local write, OK and acceptance; B consumed one actual slot-3/type-65535/15-byte entry and matched every byte in memory. |
+| H2, initial | FAIL | 0 / 0 | 69 / not started | A consumed six ordinary entries, then timed out reading 0x0A in ready stage. B sent nothing. This was not an RF transmission failure. |
+| H3 | PASS | 0 / 0 | 0 / 0 | A exact PONG, roundTripSucceeded=true, 15 content bytes, RTT 3,538,069 us. B responseAttempts/localResponsesConfirmed=1/1. |
+| H4 | PASS | 0 / 0 | 0 / 0 | B exact PONG with empty content, RTT 4,574,680 us. A responseAttempts/localResponsesConfirmed=1/1, accepted last send. |
+| H5 | PASS | 0 / 0 | 0 / 0 | Exact 131-byte binary content round trip, including NUL/non-UTF-8, RTT 4,762,750 us. Length is the minimum of both Direct capacities. |
+| H6 | PASS | 69 / - | 69 / - | B helpers had ended. A local acceptance succeeded, final reason strictly responseTimeout, roundTripSucceeded=false, successful RTT null. |
+| H7, initial | FAIL | 130 / 0 | 0 / 69 | B local submission completed but 0x3E OK timed out. A confirmed one reply, then ended normally by duration. No exact PONG was validated by B, so no SIGINT was sent. |
+| H2, finite follow-up | FAIL | 0 / 0 | 0 / 69 | One initial A DEVICE_INFO timeout consumed/sent nothing and cleaned up; the second A invocation received the planned slot/type/15-byte structure. B local submission completed but its 0x3E OK timed out after 5 s. |
+
+The H2 follow-up ran `20:42:14.983194Z`-`20:43:20.463644Z`, with one application
+send. Its A quota was conservatively reduced to 121 to retain the initial
+128-entry aggregate allowance, including a possibly consumed timed-out read.
+The initial matrix used ten application send attempts; with this follow-up the
+actual total is **11**, within the original **12** ceiling. This is application
+attempt accounting, not physical RF transmissions/forwarding/airtime.
+
+H2 A output cannot prove full payload equality or sender identity. Its actual
+receipt does not substitute for B local OK, so it remains FAIL. H7 is not a
+cancellation pass: a normally ended A and an unsent signal cannot satisfy it.
+The repeated B local-OK timeouts do not identify an underlying cause or prove
+that increasing a budget would fix it. A separate concrete B-command-15-second
+comparison proposal with a global ceiling of 15 is retained as **pending
+explicit approval**, not an executed or passing result. No budgets were
+silently enlarged and no RF packet was retried until success.
+
+`rf-summary.json` indexes every trial, including earlier failures and later
+results. `matrix-results/` and `H2-followup-results/` retain actual per-process
+commands/results. `idle-probe-after-client-release/result.json` retains the
+passive window. Source hashes were recorded per execution; the B tool's later
+source is not retroactively attributed to the original archive's older helper
+manifest. No raw user message, PSK, token-bearing URL or authentication response
+is in the structural reports. Queue consumption and client displacement are
+explicit limitations.
+
+The evidence is native Meshchan USB CLI interoperating with an openHop virtual
+Companion through real LoRa on distinct physical devices. B shares the core
+protocol/diagnostic implementation; it is not an independent protocol oracle.
+RTT includes host, queue, USB, WS/openHop and radio processing. The finite
+successes do not establish reliability or explain historical incomplete USB
+bodies/H10 failures. Specified independent relay paths and ready-state physical
+USB unplug are **NOT_RUN**. Public distribution remains **NOT_READY**.
+
+### Authorized command-budget comparison on November 11, 2026
+
+The user explicitly approved the concrete comparison: cumulative application
+send ceiling **15**, B command budget **15 seconds**, A command budget still
+**5 seconds**, H2 at most one additional application send and H7 at most three.
+`comparison-authorization.json` records this approval, the pre-run count of 11,
+plan/config hashes, and no automatic application resend. Initialization remained
+15 seconds overall, response 20 seconds, with the same finite durations/task
+limits, A slot 1/B slot 3, descriptor 0 and empty paths. The old proposal file
+is retained as its original pre-approval snapshot; this authorization supersedes
+its pending state. No product defaults, firmware, service or RF settings changed.
+
+The previous JWT had expired, detected locally before device/network I/O. The
+new user-supplied JWT was stored only in the existing repository-external 0600
+file. Neither JWT nor authentication response was put in plans, source, logs,
+reports or the product package. Current native hashes and every captured product
+compilation input were verified unchanged before starting.
+
+All times below are UTC on November 11. Every started session completed actual
+cleanup, and no forced termination/watchdog was counted as cleanup.
+
+| Trial | Status | Expected A/B exits | Actual A/B exits | Actual evidence |
+| --- | --- | --- | --- | --- |
+| H2 command=15, first invocation | FAIL, initialization prerequisite | 0 / 0 | 69 / not started | 05:15:50.751306-05:16:06.410805. Three A initialization timeouts: SELF_INFO 0x16 once, DEVICE_INFO 0x01 twice. No entries consumed and no application sends; B never started. |
+| H7 command=15 | PASS | 130 / 0 | 130 / 0 | 05:16:20.543210-05:16:47.754208. B exact PONG, all send acceptance facts true, RTT 5,468,891 us. Only after B completion/cleanup and A still active, SIGINT was sent at 05:16:47.665360. A first cause sigint/canceled; one response attempt/confirmation, accepted last send, pendingAtTermination=false; both cleanup succeeded. |
+| H2 command=15, unused single-send allocation after H7 | PASS, one preceding initialization failure retained | 0 / 0 | 0 / 0 | 05:18:06.234664-05:19:11.762807. First A DEVICE_INFO timed out without consumption/send. Second A initialized and listened for its finite duration; B sent exactly once with local write/OK/acceptance true. A received one slot-1/type-65535/15-byte datagram and ended durationElapsed. Both cleanup succeeded. |
+
+The final H2 invocation used fresh synthetic bytes/IDs and the unchanged quota
+118. Its preceding invocation had exhausted only initialization attempts; the
+approved H2 application-send allocation was still unused. After H7 proved A
+responsive and both sessions released resources, this additional finite startup
+used the existing multiple-attempt permission and the same one-send allocation.
+`H2-after-H7-execution-scope.json` records that decision before execution, with
+at most three initialization invocations and no further run after it. Only two
+were needed. No application packet was resent. A's 20-second scheduling guard
+remained scheduling only; actual PONG/datagram events established reception.
+
+H7 used A maxResponses=2 but produced only one confirmed reply. B consumed 102
+entries within its 128-entry bound, and A consumed 17. H2's successful A listener
+consumed one entry. These shared-queue costs are retained, not erased or used to
+increase limits. No signal was sent to an already-ended process. No new response
+attempt was recorded after cancellation; final responseAttempts remained one.
+
+The comparison spent **3** application send attempts: H7 two, H2 one. Cumulative
+actual attempts are **14 / 15**, so the final unused allowance was not spent.
+`rf-summary.json` now reports **PASS_WITH_RETAINED_FAILURES**: every latest basic
+case H1-H7 has a passing record, with earlier H0 pass retained separately. This
+is a composite finite acceptance across the recorded trials and budgets, not a
+claim that the original single matrix passed without retries. The failed H2
+initial invocation, earlier H2/H7 RF/acceptance trials, and the four new A
+initialization failures all remain in their original records.
+
+The evidence directories are:
+
+```text
+build/phase-1b9/20261110T193252Z/hardware/rf-matrix-20261110T202035Z/
+  comparison-authorization.json
+  command15-preflight.json
+  H2-command15-results/
+  H7-command15-results/
+  H7-command15-results/H7/signal-precondition.json
+  H2-after-H7-execution-scope.json
+  H2-command15-after-H7-results/
+  rf-summary-before-command15-20261110.json
+  rf-summary.json
+```
+
+H2 A's structure does not prove full bytes or sender identity. H7's exact PONG
+provides precise application correlation, but B still shares Meshchan core.
+The 15-second B configuration passed these finite trials; this does **not** show
+that an OK arrived after five seconds or establish that increasing the budget
+fixed an underlying cause. Four A initialization timeouts persisted without
+changing A's five-second budget. No historical USB fix, success percentage,
+independent protocol oracle or pure LoRa-airtime RTT is claimed. The exact
+configured Companion idle timeout remains unknown; the earlier 95-second
+passive observation remains dated evidence, not a newly measured configuration.
+Specified independent relay paths and ready-state physical USB unplug remain
+NOT_RUN; public distribution remains NOT_READY.
+
+### Source-only review follow-up after the RF comparison
+
+Three subsequent development-tool fixes address read-failure send reporting,
+close before open/with paused public delivery, and plan/response-limit validation
+before device startup. They were verified with local synthetic/loopback cases
+and Python-only plans; no A/B connection, consuming read, signal or application
+send was added to this hardware record. Recounting all retained invocations
+with the corrected counter still produces **14 / 15**. The previously recorded
+H0-H7 outcomes, failure records, payload facts, cleanup, timestamps and RF-summary
+bytes remain unchanged. Per-trial source hashes identify the earlier helper;
+no live acceptance of the later fixed source is retroactively claimed. See the
+[software follow-up](development.md#development-tool-review-fixes-on-november-11-2026).
+
+### Captured native-evidence verification after the second source review
+
+A separate validated summary was generated under
+`review-evidence-fixes-20261111T061833Z/rf-summary-verified.json` in the same build
+folder. It verifies five per-execution native-hash captures against each other
+and the unchanged product bundle. All 11 retained trials, four failed trials,
+latest case outcomes/exits/RTTs and the 14/15 send accounting remain consistent.
+The original RF-summary bytes and every per-device record remain untouched.
+There was no new connection, consuming read, signal or application send.
+The runner/summary failure-path corrections were tested with synthetic processes
+and artifacts only, as recorded in the [software follow-up](development.md#settlement-and-native-evidence-fixes-on-november-11-2026).
+
+### Source-only process/input reconciliation follow-up
+
+The later interrupted-run/configuration fixes were checked offline against all
+23 actual per-process metadata files and 11 recorded trials in the five captured
+native executions. A separate report under
+`review-config-fixes-20261111T065713Z/rf-summary-verified.json` preserves the same
+latest case outcomes/exits/RTTs, four failed trials and 14/15 application attempts.
+The original RF summary and all raw structural records remain unchanged. The
+previously saved flat 95-second probe stdout also passed the corrected plan-input
+workflow without contacting B or repeating the observation. The generated plan
+was not executed. No new A/B connection, consuming read, signal or RF send was
+added; the 25 Python and 91 CLI results are [software evidence](development.md#interrupted-runconfiguration-review-fixes-on-november-11-2026).
+
+### Ledger, raw-session and archive-provenance follow-up
+
+The next review follow-up was offline only: 31 Python tests and 92 CLI tests,
+including loopback cases, passed. The raw helper now rejects a recorded session
+failure even when a send OK had already committed; accepted local-send facts
+remain visible. The ledger rejects unknown execution directories instead of
+ignoring their possible sends. A new separate report under
+`review-ledger-provenance-20261111T092140Z/rf-summary-verified.json` reconciles all
+23 recorded process files and five native captures. It retains 11 trials, four
+failed trials, latest outcomes/exits/RTTs and 14/15 application-send accounting.
+
+Original hardware records and RF-summary bytes are unchanged. No A/B connection,
+consuming read, signal or RF send was added. The corrected helper was not used
+in those earlier trials; their captured source remains the evidence. The new
+archive revision draws its native bundle from the verified original tar.gz and
+retains its exact hashes. This does not add a hardware pass, explain historical
+USB failures, or change NOT_RUN relay/unplug and NOT_READY public-distribution
+states. See the [software follow-up](development.md#ledger-raw-session-and-archive-provenance-fixes-on-november-11-2026).

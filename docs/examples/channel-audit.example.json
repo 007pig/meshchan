@@ -1,0 +1,16 @@
+{
+  "aPort": "/dev/cu.usbmodem211101",
+  "aSlots": "allReported",
+  "bSlots": [0, 1, 2, 3, 4, 5, 6, 7],
+  "baseUrl": "http://192.168.1.189:8000/",
+  "companionName": "007-02",
+  "endpointLabel": "openhop-b",
+  "jwt": {"env": "MESHCHAN_OPENHOP_JWT"},
+  "idleTimeoutSeconds": null,
+  "session": {
+    "commandSeconds": 5,
+    "initializationSeconds": 15,
+    "startupDelayMilliseconds": 0,
+    "taskSeconds": 90
+  }
+}

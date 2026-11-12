@@ -14,6 +14,12 @@ are `0.1.0-dev.3`; the [local delivery record](docs/releases/phase-1c-dev3.md)
 separates source/native/archive acceptance from CI, clean-environment and public distribution status.
 These are software/source/AOT results, not new hardware acceptance.
 
+**Phase 1 / 1D / Step 1** defines the [Flutter host contract](docs/architecture/flutter-host.md):
+three primary pages, explicit saves and recorded diagnostics, application-level
+resource ownership, and future platform/acceptance checks. The Flutter app is
+planned for subsequent 1D steps; no Flutter workspace member or runnable UI has
+been added. The initial product target is macOS arm64 + USB.
+
 The historical hardware track covers **Phase 1 / 1B / Step 9: finite USB/openHop development acceptance and a local `0.1.0-dev.2` candidate**. The product remains USB-only. A source-only [openHop peer](docs/openhop-acceptance.md) reuses Meshchan's existing core for a selected virtual Companion over binary WebSocket. It is excluded from the product bundle and is not an independent application-protocol oracle. The fresh [software gate](docs/development.md#1b9-software-validation-on-november-10-2026) and source/AOT synthetic checks passed. [Real Direct acceptance](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) established exact round trips in both directions, the binary boundary, and no-responder timeout. A later [authorized H2/H7 comparison](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026) passed local acceptance and active cancellation with B command=15 s/A=5 s. Every basic case now has a passing record, with all earlier failures retained; relay paths and physical unplug remain untested. See the [dev.2 local delivery record](docs/releases/phase-1b-dev2.md).
 
 Historical 1A evidence remains separate. On November 9, 2026, a fresh software gate and the fixed H2–H7 USB hardware matrix passed on one macOS 27.2 arm64 host and one explicitly authorized Companion USB device. H1 enumeration, H8 nonexistent-port handling and H9 initialization cancellation passed. Later H10 startups failed three times before ready, with confirmed cleanup; a separate manual replug/info sequence had one timeout and one success. Ready-state disconnect detection and a complete H10 recovery cycle remain untested. See the [1A delivery record](docs/releases/phase-1a-dev1.md) and [latest H10 attempt](docs/hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).

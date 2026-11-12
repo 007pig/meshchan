@@ -6,7 +6,8 @@ Use American English for project documentation, code comments, CLI output, and c
 
 The root `pubspec.yaml` lists `packages/meshcore_link`, `packages/meshchan_core`, and `apps/meshctl`. All three members use `resolution: workspace`; all packages use `publish_to: none` and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`. Do not create member lockfiles or add Flutter SDK dependencies. The CLI resolves `meshcore_link` to the local workspace member without overrides. Check membership with `dart pub workspace list` (which also displays the root package).
 
-The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the communication core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. The offline business package declares `drift`/`sqlite3`, plus `drift_dev`, `build_runner`, and `test` for development. No Flutter engine or platform project is involved.
+The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the communication core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. The offline business package declares `drift`/`sqlite3` and the workspace
+`meshcore_link` dependency for pure route/capacity validation, plus `drift_dev`, `build_runner`, and `test` for development. No Flutter engine or platform project is involved.
 
 The [offline core and persistence contract (1C.1)](architecture/offline-core.md)
 defines the `meshchan_core` boundary, local business objects, diagnostic
@@ -14,7 +15,9 @@ recording/recovery rules, and acceptance requirements for subsequent 1C steps.
 1C.2 added the package, values/interfaces, and dependency probe described below.
 The later [1C.3 implementation](#production-storage-and-migration-baseline-1c3)
 adds production storage; [1C.4](#persistent-draft-repository-1c4) adds draft CRUD
-and pagination. Recording and CLI business behavior remain future work.
+and pagination. [1C.5](#profiles-settings-and-typed-resolution-1c5) adds persistent
+profiles/settings and core typed parameter resolution. Recording, history
+services, and CLI business wiring remain future work.
 
 ## SDK and native toolchain baseline
 
@@ -141,10 +144,12 @@ codes, named microsecond fields, bounded page sizes/cursors, and independent
 nullable facts follow the [1C.1 contract](architecture/offline-core.md).
 `DraftRepository`, `ProfileRepository`, `SettingsRepository`, and read-only
 `DiagnosticHistory` describe asynchronous committed-save/query contracts.
-There are no service implementations. Profile constructors are typed input
-values with only local checks; complete operation/route/capacity validation is
-required at the later save/merge boundary. Neither communication nor CLI code
-depends on this package, and these types do not yet reference `meshcore_link`.
+These were initially interfaces in 1C.2; drafts are implemented in 1C.4 and
+profiles/settings/core resolution in 1C.5. Profile constructors remain typed input
+values with partial local checks; complete operation/route/capacity validation
+runs at the repository and resolver boundaries. Neither communication nor CLI
+code depends on this package. Core now depends on the workspace `meshcore_link`
+public pure helpers, preserving that direction.
 
 Dependency selection on November 11, 2026, used the official
 [pure Dart setup](https://drift.simonbinder.eu/setup/),
@@ -2084,8 +2089,8 @@ newer database structures fail as `unsupported_database_version` before Drift.
 ### Handoff to 1C.4
 
 This is the preserved 1C.3 handoff. Its draft work is now implemented in
-[1C.4](#persistent-draft-repository-1c4); profiles/settings and the later services
-remain pending.
+[1C.4](#persistent-draft-repository-1c4); profiles/settings and core resolution are now implemented in
+[1C.5](#profiles-settings-and-typed-resolution-1c5). Diagnostic services remain pending.
 
 Use `storage/storage.dart`'s owned `StorageHandle.useDatabase` for the complete
 Future of each short transaction, `database.dart`/`schema.drift` for SQL, and
@@ -2099,9 +2104,10 @@ then awaits the executor, then releases the real lock/reservation. Unconfirmed
 close remains owned/quarantined and reports `storage_write_failed`; an open
 failure keeps its first category plus `cleanupUnconfirmed` if necessary.
 
-Draft repository logic still needs ID generation, commit-error mapping, CRUD,
-revision conflict/no-op behavior, and bounded queries. Profiles/settings remain
-interfaces; the FK is infrastructure, not a completed deletion service.
+At the 1C.3 handoff, draft ID generation, commit-error mapping, CRUD,
+revision/no-op behavior, and bounded queries were still pending, as were
+profile/settings implementations. Those services are now complete in 1C.4–1C.5;
+the FK is used by the profile deletion service.
 Communication mapping, recording/recovery, history pruning/export, CLI directory
 selection and flags, and SQLite product AOT distribution remain later work.
 No database open performs diagnostic recovery or retention.
@@ -2199,7 +2205,8 @@ The public `CoreStorage.drafts` getter returns one lifecycle-bound
 `DraftRepository`. The [package example](../packages/meshchan_core/README.md#persistent-drafts-1c4)
 demonstrates host-supplied directory, create/read/update/list/delete, returned
 revisions, caller conflict handling, and awaited close in `finally`. No CLI or
-platform directory selection is introduced. Only drafts are implemented.
+platform directory selection is introduced. This section records the draft
+implementation; current profile/settings/resolver behavior is described below.
 
 `lib/src/repositories/draft_repository.dart` contains the concrete implementation.
 Every call has one outer `StorageHandle.useDatabase` callback. Short mutations
@@ -2243,17 +2250,17 @@ the probe row is strictly decoded before returning a page.
 
 ### Handoff to 1C.5
 
-Start with `lib/src/storage/storage.dart`, `lib/src/repositories/draft_repository.dart`,
-`lib/src/storage/{database.dart,schema.drift,codec.dart}`, and
-`test/repositories/draft_repository_test.dart`. Reuse the single-admission,
-private-read, short-transaction, safe-error pattern and the real executor
-interceptor/Completer tests. The current ID generation and clock protection are
-small private draft helpers; extract only demonstrated shared needs when
-profiles require them. Do not expose deterministic hooks to hosts or add a
-second connection/owner. The existing settings FK is still infrastructure;
-profile/settings repositories and their validation/default behavior belong to
-1C.5. Diagnostic recording/recovery, history/pruning/export, effective parameter
-merging, CLI wiring, and SQLite product AOT distribution remain later work.
+This is the 1C.4 seam, now implemented by
+[1C.5](#profiles-settings-and-typed-resolution-1c5). Profile/settings repositories
+reuse `StorageHandle.useDatabase`, strict table readers/codecs, short
+transactions, and the actual executor interceptor/Completer tests. The small ID
+and protected clock helpers now live in internal `repositories/write_support.dart`;
+Unicode checking is shared through `validation.dart`. Draft semantics remain
+unchanged, with a separate internal profile ID source. Core profile selection,
+per-field merge, and final effective-parameter validation are complete in 1C.5.
+CLI parsing/presence/explicit-port checks and execution wiring belong to 1C.8.
+The earlier description of merging as general later work did not move core
+resolution beyond 1C.5. No second connection or owner is introduced.
 
 ### 1C.4 local validation on November 11, 2026
 
@@ -2355,3 +2362,214 @@ The before-fix failing plan, after-fix result, complete tests, formatting,
 analysis, schema guard, and final review logs are retained under ignored
 `build/phase-1c4/pagination-review-20261111/`. This follow-up preserves all existing
 uncommitted 1C.4 work and does not implement 1C.5.
+
+## Profiles, settings, and typed resolution (1C.5)
+
+Implementation started from clean `master` at
+`4dd0a2a756a1457d644d376786dcbf2af4b3dcd2`, containing PRs #18–#21 and the
+1C.4 cursor-query follow-up. No checkout/reset or history rewrite was used.
+
+The [public API example](../packages/meshchan_core/README.md#profiles-settings-and-effective-parameters-1c5)
+shows host directory → open → complete profile save → default setting → typed
+invocation overrides/content → resolve → awaited close in finally. New entry
+points are `CoreStorage.profiles`, `.settings`, and `.resolveParameters(request)`.
+`EffectiveParameterRequest` has send/listen/ping/respond subtypes, each with its
+own override vocabulary. Results contain the selected optional profile ID,
+complete immutable typed parameters, and invocation bytes where applicable.
+Port hints do not authorize execution, and results are not safe diagnostic
+snapshots. The example performs no device I/O.
+
+Implementation files relative to the core package:
+
+| File | Responsibility |
+| --- | --- |
+| `lib/src/models/effective_parameters.dart` | Operation-specific requests/overrides and immutable result; nullable override fields preserve absence, and `DataTypeOverride(null)` explicitly clears a listen filter. Paths and invocation bytes are copied synchronously. |
+| `lib/src/profile_validation.dart` | Full ranges/cross-field checks and public link helper calls; no device/session/task construction. Checks bytes before Uint8List conversion. |
+| `lib/src/repositories/profile_repository.dart` | Complete profile read/create/replace/no-op/delete and bounded two-key cursor list; strict decoded semantics include probe rows. |
+| `lib/src/repositories/settings_repository.dart` | Default read without insertion, atomic full save/reference checks, and explicit reset. |
+| `lib/src/parameter_resolver.dart` | Consistent selection snapshot, field-by-field merge and full validation/content capacity; no writes, IDs, clock, drafts, history lookup, or device access. |
+| `lib/src/repositories/write_support.dart`, `validation.dart` | Small shared secure-ID/protected-dependency and exact Unicode checks, preserving draft behavior. |
+
+Each operation enters one `StorageHandle.useDatabase`; database-taking internal
+helpers avoid nested public repository admission. Selection uses a short
+transaction for settings/profile consistency. An explicit profile bypasses
+settings entirely; selected damage is detected before overrides, then operation
+mismatch fails. Pure merge/validation remains within the admitted Future after
+the SQL transaction ends, so close still drains the whole operation.
+
+Per-field priority is explicit invocation > profile > existing defaults. Only
+request 5 s, initialization 15 s, startup 0 ms, maxEntries 128, and maxResponses 1
+have program defaults. Descriptor/path, endpoints and budgets merge independently;
+zero and explicit empty path/content are meaningful. A descriptor-only override
+can fail against an inherited path. Listen filter absence inherits; explicit
+null clears; numeric zero is a valid filter. Full validation applies to both
+complete preset saves and merged results, with actual content capacity checked
+only on send/PING resolution. Respond validates the local return route, leaving
+unknown incoming content capacity to the existing responder at response time.
+Earlier applicable deadlines still win without a task-budget ordering rule.
+
+Profile creation uses secure 16-byte random IDs and targeted ID-only insertion
+retry (eight attempts). Changed saves atomically replace all typed content;
+canonical codec comparison ignores stored JSON formatting and deeply compares
+path bytes for no-op. No-op performs no UPDATE/time call. Supplied missing IDs
+never upsert. Equal/backward UTC microsecond clocks are preserved. Concurrent
+valid saves can both succeed in transaction order; there is no profile revision.
+Deletion relies on the enabled FK to clear only the default reference, preserving
+history limit, unrelated data and historical run associations/snapshots.
+
+Settings read/default validation share a transaction. Null/1000 is returned
+without an initial row. Save validates a referenced profile before committing
+both fields; missing references fail as not_found without changing settings.
+Explicit null save/reset bypass old dangling references. Limits are 1..100000.
+Every mutation awaits commit. Write/controlled pre-commit failures roll back
+immediately and the same open handle can continue. Reads/resolution use read
+fallback; every part of a mutation uses write fallback. Input/merge errors are
+invalid_input, stored semantic/type/JSON damage database_corrupt, and missing
+references not_found. Protected ID/clock failures cannot masquerade as damaged
+rows. Normal errors contain no local text, paths, route/test IDs, content or SQL.
+
+The one manifest addition is the normal workspace dependency
+`meshcore_link: ^0.1.0-dev.2`. Normal pub resolution followed by enforced resolution
+left the single root lockfile unchanged: this workspace member and its native
+serial dependency were already resolved. No package/SDK/communication/storage
+version, schema, snapshot, table, column, FK, or index changed. Offline means no
+device I/O; core validation can now invoke existing libserialport native build
+hooks, requiring the same Apple compiler/platform SDK. Shared hook tests/builds
+are run sequentially. Existing CI already generates/guards schema and runs the
+full core suite, discovering new tests without duplicate jobs.
+
+### Handoff to 1C.6
+
+Use `CoreStorage.resolveParameters` as validated execution input and map only
+allowed fields into a safe diagnostic configuration snapshot. Never persist its
+whole result: it contains local route/test labels and raw invocation content.
+1C.6 owns registration, typed communication-result mapping, independent logical
+and actual cleanup saves, recovery, and lifecycle coordination using the same
+owned handle. No device transaction may span an SQL transaction.
+
+1C.7 owns bounded history query, eligibility/deletion guards, actual bounded
+pruning and safe export. Only diagnosticHistoryLimit is persisted here. Pruning
+must trigger after a settings limit commit, terminal/recovery updates, and open;
+a pruning failure must be reported separately from the already committed save.
+There is no retention scheduler/callback or deletion of runs/drafts in 1C.5.
+
+1C.8 owns CLI parser presence (only truly supplied options become overrides),
+text/hex lexical conversion and exactly-one-content checks, explicit nonblank
+port with exact path forwarding, host data directory selection and execution
+wiring. Current meshctl remains unconnected to business SQLite. This work stops
+at 1C.5; no coordinator, recovery, history API, CLI flags, UI, or version bump is
+included.
+
+### 1C.5 local validation on November 12, 2026
+
+Actual environment: macOS **27.2.1 (26B131), arm64**, using the installed
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` **3.13.7 stable**.
+Installed Flutter metadata reports **3.47.9 stable**, framework revision
+`c197ca5199e9ee5661e865596c9c07294dfab51c`; this is metadata, not a fresh Flutter
+wrapper result. Native commands use process-local Apple-compiler-first PATH
+`/opt/homebrew/share/flutter/bin:/usr/bin:$PATH`, selecting `/usr/bin/clang`
+**21.0.0** (`clang-2100.4.1.1`) and the installed Xcode/macOS 27.2 SDK.
+Before project scripts/tests, `/opt/homebrew/bin/python3` was verified as
+**3.15.2**, resolving `sys.executable` to
+`/opt/homebrew/opt/python@3.15/bin/python3.15`. No SDK, interpreter, channel,
+global PATH/configuration, or dependency version was installed/upgraded.
+
+| Check | Observed result |
+| --- | --- |
+| Root normal `dart pub get`, then `dart pub get --enforce-lockfile` | Passed; only the core manifest adds the existing workspace link member. The unique root lockfile is byte-for-byte unchanged, with no member lockfiles. Workspace list shows all three members plus root. |
+| Core `dart run build_runner build` | Passed; tracked production/probe generated files unchanged. |
+| Core `dart run tool/check_schema.dart` | Passed; production schema 1, frozen JSON snapshot and complete generated verification helper set/bytes match. |
+| Root `dart format --output=none --set-exit-if-changed .` | Passed; **100 Dart files, zero changes**. |
+| Root `dart analyze --fatal-infos` | Passed; no issues. |
+| All repository tests (`dart test --reporter expanded test/repositories`) | **191 passed**, including **157 new** profile/settings/resolver/validation tests and all 34 existing draft tests. |
+| Complete meshchan_core | **234 passed**, including all previous 77 value/probe/codec/file/preflight/ownership/close cases. |
+| Complete meshcore_link | **180 passed**. |
+| Complete meshctl | **97 passed** with local loopback allowed. The initial sandboxed run had 16 fixture bind failures (`127.0.0.1`, Operation not permitted); that log is retained separately. No external peer or device was used. |
+| Python development-tool suite | **46 passed**, using the verified Python entry above. |
+| Native build gates | Three fresh sequential bundles passed: product meshctl, serial observation fixture, and development datagram acceptance fixture. Existing native assets were copied by the standard build hooks. |
+| Shared source/AOT smoke | **69 passed on macOS**, including native assets, broken pipe, complete-bundle relocation and five synthetic datagram scenarios in source/AOT. |
+| Final diff/artifact review | Tracked patch and all new files checked for whitespace/conflict markers/final newlines; schema/generated/snapshot/root-lockfile comparisons unchanged. No database/cache/bundle artifacts added to version control. |
+| Remote CI / Linux / hardware | **NOT_RUN** for these changes: no push/dispatch or observed remote CI result; this host is macOS. No real-device/RF test or SQLite product AOT-distribution claim. Existing CI is unchanged and naturally discovers the new core tests. |
+
+Tests exposed and corrected test setup issues (an omitted Drift extension import,
+a nested test registration, and a legal 0x3F/63-byte Direct route mislabeled as
+invalid). The corrected route rejection fixture has a mismatched path; production
+continues to delegate route interpretation to link helpers. Initial analyzer-only
+unused/unnecessary imports were removed. Final results above are the passing
+runs, not exceptions to the validation contract.
+
+Logs, actual toolchain output, schema/generated hashes and fresh bundles are
+retained locally under ignored `build/phase-1c5/local-20261112/`:
+
+```text
+pub-get.log
+pub-get-enforced.log
+workspace.log
+toolchain.log
+python-toolchain.json
+codegen.log
+schema-check.log
+generated.sha256
+format.log
+analyze.log
+repository-tests.log
+meshchan-core-tests.log
+meshcore-link-tests.log
+meshctl-tests.log
+meshctl-tests-network-enabled.log
+python-tests.log
+build-meshctl.log
+build-observation.log
+build-datagram-acceptance.log
+smoke.log
+final-review.log
+meshctl/bundle/
+observation/bundle/
+datagram-acceptance/bundle/
+```
+
+Real SQLite failure tests reject writes and COMMIT before commit takes effect;
+they verify immediate rollback and normal reopen, not every power-loss window.
+The CLI still has no business SQLite wiring, so its bundle/smoke pass does not
+establish complete SQLite product AOT packaging. 1C.6–1C.8 remain scoped by the
+handoff above; no recording/recovery/pruning/export or CLI business flow was
+started in this step.
+
+### 1C.5 NUL-name review follow-up on November 12, 2026
+
+The review reproduced a real validation/category mismatch: names beginning with
+NUL, or only U+0020 spaces before NUL, passed complete input validation but failed
+schema 1's `CHECK (length(trim(name)) > 0)` as storage_write_failed. SQLite's
+default trim removes only U+0020 spaces, and length stops at the first NUL.
+
+The profile-specific validator now rejects exactly these incompatible names as
+invalid_input before beginning a transaction, querying, or calling clock/ID
+sources. It does not rewrite accepted names. A non-U+0020 character before NUL
+still satisfies the SQLite constraint, including tab/newline or Unicode
+whitespace; compatible embedded NUL names remain exact. The shared Unicode
+validator still accepts NUL as valid Unicode, and port hints/drafts gain no NUL
+restriction. A stored name violating this constraint is database_corrupt on
+read/list/update/resolution through the existing stored-validation boundary.
+
+Three real-file regressions cover six rejected name forms for both create and
+update, unchanged existing content, and zero transaction/query/clock/ID use by
+rejected saves. The test checks the real SQLite name predicate with bound input.
+Six compatible name forms and NUL-containing port hints survive create, update,
+list and reopen. A deliberately constraint-violating stored fixture verifies
+corruption classification. Before the fix, two regressions failed with the
+reported behavior; after the fix all three passed.
+
+Validation used the same installed macOS 27.2.1 arm64, bundled Dart 3.13.7,
+Apple Clang 21.0.0 and process-local compiler PATH as the record above. The
+Homebrew Python entry `/opt/homebrew/bin/python3` was reverified as 3.15.2 before
+any project script use. Full meshchan_core tests passed **237/237**, root format
+reported **100 files, zero changes**, fatal-info analysis found no issues, and
+the schema guard passed. Schema 1, frozen/generated artifacts, dependencies,
+root lockfile and versions remain unchanged. Prior uncommitted 1C.5 work was
+preserved. No remote CI result was observed. Communication/CLI, Python suites,
+native builds and smoke were not repeated for this profile-only validation fix;
+their earlier dated results remain above. No hardware or later-step work ran.
+
+Before/after regression logs, full core tests, formatting, analysis, schema guard
+and final review are retained in ignored
+`build/phase-1c5/nul-review-20261112/`.

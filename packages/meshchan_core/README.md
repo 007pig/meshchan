@@ -1,14 +1,15 @@
 # meshchan_core
 
-Pure Dart offline business values, persistent drafts, repository/history
-contracts, and a controlled production Drift/SQLite storage lifecycle. Import
+Pure Dart offline business values, persistent drafts/profiles/settings, typed
+effective-parameter resolution, history contracts, and a controlled production Drift/SQLite storage lifecycle. Import
 `package:meshchan_core/meshchan_core.dart`. All packages remain `0.1.0-dev.2`.
 
 1C.2 established immutable business values and interfaces. 1C.3 adds the real
 schema 1, internal row codecs, directory ownership, file opening/closing, and a
 migration baseline. 1C.4 implements draft CRUD, secure local IDs, revision
 checks, and bounded cursor pagination through `CoreStorage.drafts`.
-Profile/settings repositories, the communication-result mapper, recorder,
+1C.5 implements `CoreStorage.profiles`, `CoreStorage.settings`, and
+`CoreStorage.resolveParameters`. The communication-result mapper, recorder,
 business recovery, history query/retention/export service, and CLI wiring remain
 unimplemented.
 Opening storage never accesses devices or changes diagnostic business records.
@@ -30,7 +31,8 @@ try {
 ```
 
 `hostDataDirectory` is a host-supplied `dart:io` Directory, not a default chosen
-by core. The public handle exposes lifecycle/state and drafts; it exports no arbitrary
+by core. The public handle exposes lifecycle/state, the three repositories, and typed
+resolution; it exports no arbitrary
 SQL executor or lock bypass. The internal `StorageHandle.useDatabase` admits work
 only while open and tracks each returned Future through all queries/transactions.
 Later package services must use that seam and must not retain its database.
@@ -128,6 +130,163 @@ connection close and ownership release. Old repositories fail in closing,
 closed, or closeUnconfirmed states; opening another storage never revives them.
 There is no second connection, repository close, or ownership mechanism.
 
+## Profiles, settings, and effective parameters (1C.5)
+
+This complete public-entry flow opens no device:
+
+```dart
+import 'dart:io';
+import 'package:meshchan_core/meshchan_core.dart';
+
+Future<EffectiveParameters> prepareSend(Directory hostDataDirectory) async {
+  final storage = await CoreStorage.open(dataDirectory: hostDataDirectory);
+  try {
+    final profile = await storage.profiles.save(ProfileContent(
+      name: 'Local send preset',
+      portHint: '/local/location-hint',
+      parameters: SendProfileParameters(
+        budgets: const ProfileBudgets(taskTimeoutSeconds: 30),
+        sendChannelIndex: 3,
+        route: ProfileRoute(routeDescriptor: 0xff),
+        dataType: 42,
+      ),
+    ));
+    await storage.settings.save(AppSettings(
+      defaultProfileId: profile.id,
+      diagnosticHistoryLimit: 250,
+    ));
+    return await storage.resolveParameters(SendParameterRequest(
+      // Omit profileId to select the current default; pass it to select explicitly.
+      overrides: const SendOverrides(
+        budgets: BudgetOverrides(requestTimeoutSeconds: 10),
+        sendChannelIndex: 0,
+      ),
+      payload: [0x00, 0xff], // Explicit empty [] is also valid.
+    ));
+  } finally {
+    await storage.close();
+  }
+}
+```
+
+The result is immutable in-memory execution input, including local route bytes,
+test labels when applicable, and raw invocation content. It is **not a safe
+history snapshot** and must not be serialized wholesale into runs/logs. 1C.6
+will project allowed diagnostic fields before registration and lifecycle saves.
+`portHint` is only saved text: neither it nor resolution authorizes a connection.
+The future CLI must require the current explicit nonblank `--port` and forward
+its exact path. Core does not accept an execution port or construct transports,
+sessions, or tasks. Leaving the short resolution transaction keeps host directory
+ownership until awaited close.
+
+`profiles.save(content)` validates a complete preset before clock/entropy use,
+then creates a secure random 16-byte ID encoded as 32 lowercase hex digits. Only
+`ON CONFLICT(id) DO NOTHING RETURNING` retries (eight total attempts); other
+constraints or commit failures fail immediately. The separate internal profile
+ID seam does not consume draft test IDs. `save(content, id: existingId)` requires
+an existing profile; it never creates/upserts the requested ID. Changed saves
+replace the whole operation-specific JSON atomically, clearing irrelevant fields.
+There is no revision protocol: concurrent valid saves serialize and may both
+succeed. Typed canonical content comparison ignores JSON whitespace/key order
+and compares path bytes deeply; an unchanged save performs no UPDATE or clock
+read and retains updatedAt. Changed saves preserve observed UTC microseconds,
+including equal or backward times. Duplicate names are valid. Name and port hint
+are nonblank, preserve exact whitespace/Unicode/path spelling, and reject
+unpaired UTF-16 surrogates without rejecting explicit U+FFFD.
+Schema 1 also requires a name containing NUL to have at least one character
+other than U+0020 space before its first NUL: SQLite's default `trim()` removes
+only those spaces, and `length()` stops at NUL. Incompatible names fail with
+`invalid_input` before SQL, clock, or ID generation on both create and update.
+Compatible embedded NUL names remain exact, including tabs/newlines or Unicode
+whitespace before NUL. This name-only constraint does not change Unicode
+validation or impose a NUL restriction on port hints or draft text.
+
+`profiles.read(id)`, `delete(id)`, and a supplied update ID return `not_found`
+when missing. Deletion uses the enabled settings `ON DELETE SET NULL` FK in the
+same transaction; only the matching default reference clears. History limit,
+other profiles, drafts, historical profile IDs, and run snapshots survive.
+`profiles.list(size: PageSize(...), after: cursor)` has the same non-snapshot,
+50-default/1..200 page contract as drafts. It uses `profiles_updated`, descending
+UTC microseconds/ID and a bound strict two-key row comparison, fetching at most
+size + 1 and validating the probe too. Cursors remain usable after row deletion.
+
+`settings.read()` returns null/1000 without inserting a row when absent.
+`settings.save(AppSettings(...))` replaces both fields in one transaction and
+checks a nonnull default against a valid profile in that transaction. Any profile
+operation is allowed; matching the invocation happens during resolution.
+History limits are 1..100000, without clamping. A missing referenced profile is
+`not_found`, including a format-valid dangling stored default. An explicit null
+save or `restoreDefaults()` repairs that reference without first reading it.
+`restoreDefaults()` restores null/1000 and affects no other business data.
+Settings reads and their profile validation share one short transaction.
+
+Only the history **limit setting** is implemented. 1C.7 must add eligible-history
+selection, bounded pruning and export, including pruning triggers after settings
+commit, terminal/recovery updates, and open. A later pruning failure cannot imply
+that already committed settings were rolled back. No runs or drafts are pruned
+by this step and no placeholder scheduler is installed.
+
+Request subtypes explicitly select `send`, `listen`, `ping`, or `respond` and
+permit only applicable fields. `SendParameterRequest` accepts payload;
+`PingParameterRequest` accepts content; both require current invocation bytes,
+with missing distinct from empty. Bytes are opaque and may be non-UTF-8. The
+other request types accept no content; ping/respond have no overridable dataType.
+`EffectiveParameters` returns optional selected profileId, complete
+`ProfileParameters`, and optional invocation `content` (send payload/PING content).
+
+Selection and merging follow these rules:
+
+- Explicit profile ID reads only that profile, bypassing unrelated settings,
+  including corrupt/dangling defaults. Otherwise settings/default profile are
+  read in one short consistent transaction. Missing references never fall back.
+- Stored profiles pass strict types/JSON and complete semantic validation before
+  checking operation or applying any override. Overrides cannot repair damage.
+  A valid profile for a different requested operation is `invalid_input`.
+- Each explicit override wins over its profile field, then actual program
+  defaults (request 5 s, initialization 15 s, startup 0 ms, maxEntries 128,
+  maxResponses 1). Budgets, endpoints, descriptor, and path merge independently.
+  Channel/descriptor/startup zero remain explicit values.
+- `ListenOverrides.dataType == null` inherits the filter;
+  `DataTypeOverride(null)` explicitly clears it; `DataTypeOverride(0)` filters
+  type zero. An omitted path inherits; an explicit empty path replaces it. With
+  no inherited path, only the path itself defaults to empty. A changed descriptor
+  does not automatically clear an inherited incompatible path.
+- No defaults exist for task timeout, channels, descriptor, test endpoints,
+  response timeout, listen duration, or invocation bytes. Final range and cross
+  checks still apply after merging, including distinct nonzero uint32 endpoints
+  and startup strictly below initialization. Earlier applicable deadlines win;
+  task timeout need not exceed any other budget.
+
+Full validation uses `meshcore_link`'s public pure route/capacity helpers, never
+its private code or a copied formula. Flood requires empty path; zero-hop Direct
+0x00/0x40/0x80 are preserved; reserved 0xC0 and mismatched paths fail. Iterable
+path/content bytes are checked before any Uint8List conversion can truncate them.
+Actual send bytes use raw capacity; PING uses diagnostic content capacity (Flood
+165/131; 0x60 with 64 path bytes 107/73). Respond validates its local return route;
+future incoming PING content is checked by the existing responder at reply time,
+without promising every possible message fits. Saving profiles needs neither
+content nor a device. Inputs are copied synchronously at request/route construction
+and nested result collections are unmodifiable; later edits/deletion cannot
+change the resolved snapshot.
+
+All new operations enter the same StorageHandle once. Private helpers accept the
+admitted database, avoiding nested admission after closing begins. The admitted
+Future spans snapshot, pure merge/validation and result construction; no SQL
+transaction extends into device execution. Mutation success includes actual
+commit; controlled pre-commit failures immediately roll back on the same handle.
+Bad caller input is `invalid_input`, missing records/references `not_found`,
+stored type/JSON/semantic damage `database_corrupt`; real query failures use
+`storage_read_failed` or, for any part of a mutation, `storage_write_failed`.
+Entropy/clock failures use the write category even for TypeError/FormatException.
+Default errors expose no local text, paths, test IDs, content, or SQL.
+
+The normal workspace dependency is now core → `meshcore_link ^0.1.0-dev.2`,
+with no reverse/CLI import. Offline means **no device I/O**; existing
+libserialport native build hooks can still run alongside SQLite hooks. Use the
+installed native compiler and run shared hook/build gates sequentially.
+1C.8 owns CLI presence checks (`wasParsed`, not parser defaults), text/hex lexical
+conversion, explicit-port checks, data directory composition, and execution wiring.
+
 ## Directory and file boundary
 
 Supported production ABIs are macOS and Linux, arm64/x64, on cooperating local
@@ -180,7 +339,7 @@ key is internal, with only the two contracted settings and limit 1..100000; no
 settings row is inserted at creation. The settings FK is enabled and verified:
 profile deletion atomically sets the default to null. A historical run's profile
 ID has no FK and survives deletion. Existing dangling references are not repaired
-on open; the later settings service must return the contracted `not_found`.
+on open; settings reads and default selection return the contracted `not_found`.
 
 `codec.dart` explicitly encodes operation-specific profile parameters and safe
 diagnostic configuration/result/cleanup JSON. Each nested object requires exact
@@ -197,7 +356,8 @@ scan. Production table row readers, including aliases, check raw SQLite types
 before Drift's default string/integer coercions. Internal work also maps native
 failures to a safe read category, or an explicitly selected write category,
 preserving recognized corruption and typed core errors. The codecs do not
-implement full preset or route/capacity validation.
+implement full preset or route/capacity validation; profile repository and
+resolver boundaries add that complete semantic validation after decoding.
 
 Preflight runs before the production executor factory or Drift migration. A
 missing file or an existing version-0 file with no user objects can initialize.

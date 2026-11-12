@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:drift/drift.dart';
 
 import '../errors.dart';
@@ -10,45 +8,16 @@ import '../storage/database.dart';
 import '../storage/storage.dart';
 import '../validation.dart';
 import '../values.dart';
+import 'write_support.dart';
 
 // Only a targeted id conflict can consume another attempt. Other constraints,
 // query failures, and commit failures leave immediately through useDatabase.
 const _idAttempts = 8;
 const _maxRevision = 9223372036854775807;
 
-LocalId _randomId() {
-  final random = Random.secure();
-  return LocalId(
-    List.generate(
-      16,
-      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-    ).join(),
-  );
-}
-
-// Dependency failures are write failures, even when an injected source throws
-// a TypeError/FormatException that would mean corruption at the row boundary.
-T _writeDependency<T>(T Function() action) {
-  try {
-    return action();
-  } catch (_) {
-    throw const CoreException(CoreErrorCode.storageWriteFailed);
-  }
-}
-
 void _validateText(DraftContent content) {
-  for (final text in [content.title, content.body]) {
-    for (var i = 0; i < text.length; i++) {
-      final unit = text.codeUnitAt(i);
-      if (unit >= 0xd800 && unit <= 0xdbff) {
-        requireValid(++i < text.length);
-        final low = text.codeUnitAt(i);
-        requireValid(low >= 0xdc00 && low <= 0xdfff);
-      } else {
-        requireValid(unit < 0xdc00 || unit > 0xdfff);
-      }
-    }
-  }
+  validateUnicode(content.title);
+  validateUnicode(content.body);
 }
 
 // The locked Drift query builder has no tuple expression. Write the row
@@ -89,14 +58,14 @@ final class PersistentDraftRepository implements DraftRepository {
     this._storage, {
     LocalId Function()? generateId,
     DateTime Function()? clock,
-  }) : _generateId = generateId ?? _randomId,
+  }) : _generateId = generateId ?? randomLocalId,
        _clock = clock ?? DateTime.now;
 
   final StorageHandle _storage;
   final LocalId Function() _generateId;
   final DateTime Function() _clock;
 
-  DateTime _now() => _writeDependency(() => _clock().toUtc());
+  DateTime _now() => writeDependency(() => _clock().toUtc());
 
   Future<Draft> _read(CoreDatabase db, LocalId id) async {
     final row = await (db.select(
@@ -114,7 +83,7 @@ final class PersistentDraftRepository implements DraftRepository {
           final now = _now();
           for (var attempt = 0; attempt < _idAttempts; attempt++) {
             final draft = Draft(
-              id: _writeDependency(_generateId),
+              id: writeDependency(_generateId),
               content: content,
               createdAt: now,
             );

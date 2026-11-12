@@ -89,6 +89,32 @@ Future<void> main(List<String> args) async {
             'unconfirmed': e.cleanupUnconfirmed,
             'state': storage.state.name,
             'draftErrors': rejected,
+            'profileSettingsErrors': await Future.wait(
+              [
+                () => storage.profiles.list(),
+                () => storage.profiles.save(
+                  ProfileContent(
+                    name: 'test',
+                    parameters: const ListenProfileParameters(
+                      budgets: ProfileBudgets(taskTimeoutSeconds: 1),
+                      receiveChannelIndex: 0,
+                      listenDurationSeconds: 1,
+                    ),
+                  ),
+                ),
+                () => storage.settings.read(),
+                () => storage.settings.save(AppSettings()),
+                () => storage.settings.restoreDefaults(),
+                () => storage.resolveParameters(const ListenParameterRequest()),
+              ].map((action) async {
+                try {
+                  await action();
+                  return 'unexpected_success';
+                } on CoreException catch (failure) {
+                  return failure.code.code;
+                }
+              }),
+            ),
           }),
         );
       }

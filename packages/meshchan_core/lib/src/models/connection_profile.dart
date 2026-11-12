@@ -2,7 +2,7 @@ import '../validation.dart';
 import '../values.dart';
 
 /// Named units match existing command budgets. Full effective-parameter and
-/// route/capacity validation is deferred to profile services in 1C.5.
+/// route/capacity validation runs at repository and resolver boundaries.
 /// Request/initialization/task seconds must be 1..86400; startup milliseconds
 /// must be 0..86399999 and strictly less than initialization milliseconds.
 final class ProfileBudgets {
@@ -19,7 +19,7 @@ final class ProfileBudgets {
 }
 
 /// Local configuration only; diagnostic snapshots retain the byte count.
-/// Exact route validation uses the communication helper in later services.
+/// Repository/resolver validation uses the public communication helper.
 final class ProfileRoute {
   ProfileRoute({required this.routeDescriptor, Iterable<int> path = const []})
     : path = List.unmodifiable(path) {

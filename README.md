@@ -18,7 +18,7 @@ The historical hardware track covers **Phase 1 / 1B / Step 9: finite USB/openHop
 
 Historical 1A evidence remains separate. On November 9, 2026, a fresh software gate and the fixed H2–H7 USB hardware matrix passed on one macOS 27.2 arm64 host and one explicitly authorized Companion USB device. H1 enumeration, H8 nonexistent-port handling and H9 initialization cancellation passed. Later H10 startups failed three times before ready, with confirmed cleanup; a separate manual replug/info sequence had one timeout and one success. Ready-state disconnect detection and a complete H10 recovery cycle remain untested. See the [1A delivery record](docs/releases/phase-1a-dev1.md) and [latest H10 attempt](docs/hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).
 
-The complete archived 1A bundle passed extraction and integrity checks. The recommendation remains **development with known limitations**: historical intermittent USB delivery failures remain unresolved, and a successful info call did not establish stable initialization or a waiting/replug fix. The [channel-datagram contract](docs/protocol/channel-datagrams.md) is implemented in software; its real-device acceptance remains pending. Public redistribution and remaining hardware scenarios are still open.
+The complete archived 1A bundle passed extraction and integrity checks. The recommendation remains **development with known limitations**: historical intermittent USB delivery failures remain unresolved, and a successful info call did not establish stable initialization or a waiting/replug fix. The [channel-datagram contract](docs/protocol/channel-datagrams.md) is implemented in software. Its basic Direct real-device cases have passing records in the [November 10 matrix](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) and the [November 11 H2/H7 follow-up](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026), with earlier failures retained. Specified relay paths and ready-state physical USB unplug remain untested; public redistribution remains open.
 
 See the [testing guide](docs/testing.md) for the behavior audit and shared source/native smoke checks, including broken pipes and complete-bundle relocation. `meshctl info --port <path>` initializes one existing `MeshCoreSession`, awaits cleanup, and prints a complete closed-connection snapshot. `meshctl watch --port <path>` initializes once and observes session states and unassociated response summaries until duration, signal, or failure. The original `ports` and `port-check` commands remain available. All four commands support JSON; watch uses NDJSON. See the [CLI guide](docs/cli.md) for options, schemas, cancellation, exit codes, and explicit-port hardware authorization.
 
@@ -101,5 +101,6 @@ found eight matching A/B 16-byte key representations without consuming the inbox
 or sending RF data. Its two initial USB timeouts remain recorded. The separate
 development WS adapter cleanup correction waits for receive EOF; the later CLI
 suite passed 84 tests. Those counts and the original dev.2 binary/archive remain
-historical. Later authorized Direct evidence is linked above; this dev.3 delivery
-adds no RF acceptance.
+historical. Basic Direct acceptance subsequently completed on the selected
+A slot 1/B slot 3 zero-hop path, including the authorized H2/H7 follow-up linked
+above. This dev.3 delivery adds no new RF acceptance.

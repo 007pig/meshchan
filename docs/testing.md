@@ -729,3 +729,175 @@ sequential. See the [dated local record](development.md#1c7-local-validation-on-
 for executed results and limits; CI configuration alone establishes no remote
 pass. Current CLI bundles still do not execute business SQLite, so their smoke
 is not SQLite product AOT distribution acceptance. No RF/hardware claim is made.
+
+## Product business CLI coverage and source/AOT SQLite (1C.8)
+
+The shared smoke now executes real product SQLite, in addition to its retained
+legacy help/rejection/broken-pipe and five synthetic datagram scenarios. For
+source, the freshly built product AOT bundle, and a relocated complete bundle,
+it creates an isolated directory, commits an exact UTF-8 draft, reads it in a
+second process, saves a profile/settings, reads settings again, queries empty
+history and decodes the raw safe export envelope. It checks that the database
+file exists at the explicit directory and does not appear in cwd. These gates
+exercise the SQLite native asset at runtime; help-only serial smoke is no longer
+the sole product bundle evidence. Retained dated 1C.2–1C.7 records above describe
+their older bundles accurately and are not retroactively upgraded.
+
+`business_cli_test.dart` exercises the real parser, platform directory policy,
+zero opener/device side effects, strict UTF-8/BOM/newline input, true file
+reopen, partial/no-op/stale revisions, bounded cursors, four complete profile
+types/replacements, NUL name compatibility, default deletion and partial/full/
+reset settings with damaged or dangling old values. `business_datagram_test.dart`
+uses real SQLite and existing controllable transports to test presence/default
+merges, empty/zero/clear semantics, exact current ports, post-merge capacity,
+no-record history absence and legacy output, four recorded operations, actual
+registration/logical/cleanup commit faults, early PONG/local write failure,
+logical success/cleanup failure, cancellation during prepared and synchronous
+subscribe, frozen session failures, output failure and pending actual cleanup.
+The real host-subscription cancellation Future remains evidence of release.
+Offline signal/output tests hold a real commit boundary, preserve committed data
+and wait for close; process-signal cancellation tests prove both watches start
+canceling even when one hangs and the other fails.
+
+`business_history_test.dart` covers typed filters/cursors, deleted cursor rows,
+recovery facts, guarded deletion, raw bounded export/metadata/output failures,
+sticky startup failures, committed settings with failed retention, completed/deferred/failed prune reports, partially
+committed prune batches, post-done unpin maintenance and actual DB-close barriers.
+`business_process_test.dart` adds controlled owners in another process, independent
+directories, normal close/reopen and actual native-close rejection/quarantine.
+The test-only core history fixture accepts an explicit temporary directory;
+production CLI continues to import only the core public barrel. Audited wrappers
+delegate actual work and reject any new history I/O after close begins.
+
+All datagram regression/acceptance `runCli` callers now use explicit temporary
+directories through `test/support/isolated_cli.dart`. The shared source/AOT
+acceptance probe therefore exercises real storage without touching user defaults.
+Old nonbusiness session tests still prove storage is never opened. New finite
+openHop plan generation also emits a separate absolute `--data-dir` per product
+case under its new output directory; validation/summarization can still read
+retained older argv. No RF matrix is executed by these tests or smoke.
+
+Use the existing sequential reproduction procedure above, including locked pub,
+core generation/schema checks, format/analyze and all three package suites. The
+same `tool/smoke_cli.py` arguments now cover business SQLite automatically; build
+a fresh **whole** product bundle before passing it to smoke. In this step's local
+run the three new output paths are:
+
+```text
+build/phase-1c8/final/meshctl/bundle/
+build/phase-1c8/final/observation/bundle/
+build/phase-1c8/final/datagram-acceptance/bundle/
+```
+
+See the [dated actual command/results record](development.md#1c8-local-validation-on-november-12-2026)
+for observed counts, toolchain and failures. Directory resolution branches are
+unit-tested for macOS/Linux/Windows, but local native product execution here is
+macOS arm64 only. Linux blocked enumeration remains unchanged and CI still uses
+the same shared smoke; no remote passing CI result is inferred. Full dev.3
+packaging, notices, clean-machine/other-platform distribution and remaining
+hardware/RF work belong to 1C.9 or their original acceptance tracks.
+
+### Datagram storage-phase signal regression
+
+The [subsequent 1C.8 review fix](development.md#1c8-review-fix-signal-ownership-across-storage-phases)
+adds `datagram_storage_signals_test.dart`. It gates a delegating real SQLite
+opener, resolver and close Future, injecting SIGINT/SIGTERM through a broadcast
+source in both recording modes. All 12 original reproductions fail on the old
+wiring. The complete 26-case file also covers source errors, real cancellation
+Futures, frozen device failures and signal/output ordering while closing.
+
+`datagram_signal_process_test.dart` starts the controlled
+`test/support/datagram_signal_process.dart` child. Eight cases use actual process
+signals during open/close, acknowledge actual delivery before releasing the gate,
+verify the directory is still busy, then require orderly 130/143 exit and reopen.
+This checks the lazy production `processStopRequests` source as well as injected
+streams. It uses no real port or RF and no sleeps to guess delivery order.
+
+The real invocation source outlives the runner's forwarding observer and the
+storage close barrier. Tests distinguish saved core cleanup from the new
+`signalCleanup` output and verify that a pending/failed real source cancellation
+is never hidden by a successful observer cancellation. Existing normal no-record
+JSON remains unchanged. Updated pre-admission cancellation tests preserve null
+logical facts when no device operation was admitted. Review-fix validation/logs
+and fresh source/AOT bundle results are recorded in the linked development entry.
+
+### Admission-failure precedence and native-asset suite serialization
+
+`datagram_failure_priority_test.dart` adds 18 controlled cases. Real SQLite DDL
+and registration transactions fail behind an explicit gate after SIGINT,
+SIGTERM or sink failure has been observed; public parameter resolution fails
+under the same ordering. Tests cover both recording modes, retain later core
+code/source facts, assert zero transport/subscription-plan factories when
+registration rolls back, and reopen the file to verify no diagnostic committed.
+Reverse-order controls observe a resolution/registration failure before injecting
+a signal during close and require that earlier failure to stay primary. No sleeps
+or repeated device operations are used to force ordering.
+
+`apps/meshctl/dart_test.yaml` sets `concurrency: 1`, matching the existing core
+package policy. Both subprocess suites launch `dart run` children whose native
+assets are bundled into the workspace's shared `.dart_tool/lib`; separate data
+directories do not isolate that SDK state. The default package `dart test` now
+runs files sequentially, preventing cross-suite bundling overlap without skips,
+retries or altered native libraries. The owner/probe processes within the
+ownership test still coexist intentionally, with each next launch starting only
+after the previous child's startup/bundling readiness acknowledgment. Keep package
+test commands and native builds sequential as before, and do not override CLI
+suite concurrency when these source-process fixtures are included.
+The [review-fix validation record](development.md#1c8-review-fix-observation-order-and-serialized-process-suites)
+records both default-suite runs and fresh bundle/smoke results.
+
+### Offline storage failure before signal cleanup
+
+`business_history_test.dart` gates a real settings transaction, then fails the
+resulting retention delete and the later signal-subscription cancellation. The
+command must retain its committed settings and maintenance error, return
+`storage_finalization_failure`/74, and report the host cleanup failure separately.
+A control injects SIGTERM before the transaction settles and requires that earlier
+143 result to remain primary. Both cases verify storage is closed before signal
+cleanup starts, only one final object is written, and settings survive reopen.
+
+`business_process_test.dart` extends the native-close rejection child with a
+failing signal cancellation, for both draft creation and history export. It
+requires 74 in the actual child exit and final metadata, preserves
+`closeUnconfirmed` and quarantine until process exit, retains the host failure,
+and confirms the committed draft can be read after the child exits. The export
+remains the unchanged core summary envelope. These fixtures use no device or RF.
+See the [offline finalization validation record](development.md#1c8-review-fix-offline-finalization-failure-priority)
+for reproduction results, commands and logs.
+
+### Required offline IDs and revisions
+
+`business_cli_test.dart` covers missing IDs on every applicable draft/profile/
+history action, missing draft mutation revisions, both fields omitted, and
+missing fields together with an unreadable body file. Each case runs through
+the real parser in text and JSON mode and requires exit 64 with no stdout,
+directory-policy/opener/signal-subscription/device calls, port enumeration or
+data-directory creation. Fixed errors must identify the option without echoing
+secret-marked input. Help/version controls keep the existing short circuits.
+
+`business_process_test.dart` exercises the product entry with a complete
+profile-update preset but no ID, a draft show without an ID, and a draft delete
+without a revision. Each must return 64 without creating its isolated data
+directory or a database. This guards the public core API's intentional
+`profiles.save(id: null)` create behavior from accidental CLI update admission.
+The [required-option validation record](development.md#1c8-review-fix-required-offline-ids-and-revisions)
+contains the before/after results, commands and logs.
+
+### Offline primary and additional error fields
+
+`offline_failure_priority_test.dart` covers ordinary JSON and export metadata
+with SIGINT/SIGTERM/output failure observed before real SQLite creation failure,
+draft transaction rollback or export read failure. Explicit gates control the
+ordering. Each case requires the external reason/code, null primary failure and
+the later stable storage error in additionalFailures. Failed operation/commit
+facts stay false, no failed export invents a summary, acquired handles close
+before signal-source cancellation, and files reopen with no partial data.
+
+Six reverse-order controls inject the external intent while close is pending
+after a real operation failure; the earlier storage error must remain primary.
+Tests fail the output channel that does not carry the selected final envelope or
+metadata, exercising real CliOutput sink failure without hiding the assertions.
+Secret-marked source errors/body data must never appear in diagnostics. No
+scheduling sleeps or device actions are used; reopen checks happen after cleanup.
+See the [offline error-envelope validation record](development.md#1c8-review-fix-offline-primary-and-additional-failure-fields)
+for the reproduction, commands and observed results.

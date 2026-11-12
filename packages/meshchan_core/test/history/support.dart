@@ -141,7 +141,11 @@ class HistoryControl extends Control {
 }
 
 class Fixture {
-  final directory = Directory.systemTemp.createTempSync('meshchan-history-');
+  Fixture({Directory? dataDirectory})
+    : directory =
+          dataDirectory ??
+          Directory.systemTemp.createTempSync('meshchan-history-');
+  final Directory directory;
   final handles = <StorageHandle>[];
   Future<StorageHandle> open({
     HistoryControl? control,

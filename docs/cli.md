@@ -31,6 +31,353 @@ Then `build/dist/bundle/bin/meshctl` is equivalent to the source invocation.
 Distribute the entire bundle, including its native library. Source invocations
 may emit native build-hook diagnostics before the application starts.
 
+## Offline business commands and storage (1C.8)
+
+The product CLI now imports `meshchan_core` through its public entry. These
+commands and opt-in recording blocks extend CLI `schemaVersion: 1`. Database
+schema/snapshot 1 and `diagnosticSummaryFormatVersion: 1` are independent and
+unchanged. The application remains `0.1.0-dev.2`; this is not dev.3 delivery.
+
+Put the global directory option before the command:
+
+```text
+meshctl --data-dir /absolute/path/to/data draft list --json
+meshctl --data-dir /absolute/path/to/data datagram ping ... --record --json
+```
+
+An explicit path must be nonblank and contain no NUL. Its characters are
+preserved; relative explicit paths resolve against the caller's cwd. Defaults
+never depend on cwd, source location, executable location or the bundle:
+
+| Host directory policy | Default |
+| --- | --- |
+| macOS | `$HOME/Library/Application Support/meshchan` |
+| Linux | Absolute, nonblank `$XDG_DATA_HOME/meshchan`, otherwise `$HOME/.local/share/meshchan` |
+| Windows | Absolute `%LOCALAPPDATA%\meshchan` |
+
+Home/base must be usable and absolute; unavailable bases or other platforms
+require `--data-dir`. These are directory policies, not new platform/native
+support claims. Existing serial enumeration/Windows safety guards still apply.
+Only macOS arm64 source/AOT business execution was validated for this step.
+
+Each business invocation, including history reads/export and **all four datagram
+operations without `--record`**, owns at most one `CoreStorage`. Open acquires
+core's exclusive canonical directory ownership, preflights, recovers incomplete
+runs and requests retention. Contention fails immediately; do not remove markers
+or force-unlock. Reads can therefore cause recovery/retention writes. Every
+acquired handle is closed and awaited on success, failure and cancellation.
+Offline commands never construct transports, enumerate ports or consume inboxes.
+Help/version and `ports`, `port-check`, `info`, `watch` bypass business storage.
+`--data-dir` is inapplicable to these four legacy commands. All command layers
+have `--help`. Syntax/unknown options/extra positionals precede help/version;
+normal help/version precede body-file reads, directory policy, storage and devices.
+
+### Drafts, profiles and settings
+
+All leaves below support text and `--json`. Explicit options select IDs; arbitrary
+positionals, unrelated options, `--all`, interactive editors and stdin bodies are
+not supported.
+
+| Command | Required/optional input |
+| --- | --- |
+| `draft create` | Optional `--title TEXT`; mutually exclusive `--body TEXT` / `--body-file FILE`; omitted title/body are empty |
+| `draft show` | `--id ID` |
+| `draft update` | `--id ID --expected-revision N`; at least one explicit title/body source; omitted fields retain saved text |
+| `draft delete` | `--id ID --expected-revision N` |
+| `draft list` | Page options below; list omits large bodies |
+| `profile create` | `--name NAME --operation send|listen|ping|respond`, a complete operation preset, optional `--port-hint PATH` |
+| `profile show`, `profile delete` | `--id ID` |
+| `profile update` | `--id ID --name NAME --operation OP` and complete replacement preset |
+| `profile list` | Page options below; list omits preset details |
+| `settings show`, `settings reset` | No business options; reset calls `restoreDefaults()` directly |
+| `settings set` | At least one of `--default-profile-id ID` / `--clear-default-profile`, or `--history-limit N`; profile selectors are mutually exclusive |
+
+IDs are core `LocalId` values: exactly 32 lowercase hexadecimal digits. Revisions,
+limits and counts use strict unsigned decimal spelling (no sign/space/hex/fraction).
+Draft revisions must be positive. Changed updates increment once; unchanged
+updates retain revision/time. Stale update/delete returns conflict, even for
+unchanged content. The supplied expected revision is never replaced by a read.
+Show/update/delete require an explicit `--id` for drafts and profiles; history
+show/delete do too. Draft update/delete also require `--expected-revision`.
+Omitting a required option returns input error 64 before reading a body file,
+selecting a data directory, opening storage or starting any device work. Profile
+update never creates a profile when its ID is omitted. Normal help/version
+short circuits still work with these values omitted.
+Explicit empty title/body clears that field. Titles/bodies are not trimmed,
+normalized, truncated, split/rejoined or limited to a radio packet. UTF-8 file
+reading is strict: one initial BOM is consumed as an encoding marker, other text,
+Chinese/emoji, mixed CR/LF, whitespace and trailing newlines remain exact. Invalid
+UTF-8 is input error 64; actual file open/read failure is host I/O error 74.
+JSON normally escapes controls; text display escapes terminal controls without
+changing stored text. Local draft/profile views deliberately show business
+content and are not shareable diagnostic reports.
+
+Profile fields use the datagram option names and lexical rules below. Complete
+presets require task timeout and operation-specific channels, route, endpoints,
+duration/response timeout. Fields with program defaults use 5/15/0 budgets, empty
+path, 128 entries and one response where applicable. `profile update` replaces
+all fields, including operation: omitted port hint and listen filter clear old
+values. It does not merge a current device/profile snapshot. Profile operations
+reject `--port`, `--record`, `--text`, payload/content and incompatible fields.
+Names need not be unique. Core validates Unicode, nonblank names and schema-1
+NUL compatibility; compatible embedded NUL is retained. Port hints are local
+text only and are never probed. Deleting a default profile atomically clears the
+reference in core and preserves historical diagnostic snapshots.
+
+The two settings are `defaultProfileId` (initially null) and
+`diagnosticHistoryLimit` (initially 1000, range 1..100000). Partial set reads and
+preserves the omitted field, reporting any bad old state. An explicit profile
+choice/clear together with an explicit limit saves the complete typed object
+without first reading old settings. Reset likewise does not depend on an old
+broken/dangling reference. Core validates a nonnull reference in the save
+transaction. Empty/0/`null` are not clearing aliases. A committed settings save
+and its triggered maintenance have independent outcomes.
+
+```bash
+# Test-only local examples; replace returned IDs explicitly.
+meshctl --data-dir /tmp/meshchan-example-data draft create \
+  --title 'Example draft' --body-file ./example-body.txt --json
+meshctl --data-dir /tmp/meshchan-example-data draft show --id "$DRAFT_ID" --json
+meshctl --data-dir /tmp/meshchan-example-data draft update \
+  --id "$DRAFT_ID" --expected-revision 1 --body= --json
+meshctl --data-dir /tmp/meshchan-example-data profile create \
+  --name 'Example ping' --operation ping --send-channel 3 --receive-channel 2 \
+  --route-descriptor 0 --local-id 1 --peer-id 2 --task-timeout 20 \
+  --response-timeout 2 --port-hint /dev/EXAMPLE-ONLY --json
+meshctl --data-dir /tmp/meshchan-example-data settings set \
+  --default-profile-id "$PROFILE_ID" --history-limit 1000 --json
+meshctl --data-dir /tmp/meshchan-example-data settings reset --json
+```
+
+Draft/profile list accepts `--limit N` (default 50, range 1..200), plus paired
+`--after-updated-at UTC --after-id ID`. JSON has `items` and `nextCursor` (object
+with `updatedAt`, `id`, or null). Cursor inputs use `YYYY-MM-DDTHH:mm:ss[.ffffff]Z`,
+with valid calendar components and at most six fractional digits; offsets,
+normalizing overflow dates and excess precision are rejected. Cursor output
+always has exactly six fractional digits. A cursor row may have been deleted;
+no lookup is required. Pages are separate selections, not a cross-call snapshot.
+
+### Profiles on finite datagrams and opt-in recording
+
+All four finite leaves always resolve parameters through the opened storage.
+Priority is explicit invocation values, then explicit `--profile ID` or the
+default profile, then program defaults. Presence comes from `wasParsed`, so
+parser-inserted defaults do not override a preset. An explicit profile bypasses
+unrelated default-reference reads. Missing, mismatched or corrupt selected/default
+profiles fail without fallback, even if every explicit override was supplied.
+Route descriptor/path merge independently: changing descriptor retains inherited
+path until explicit `--path-hex=` clears it. Listen inherits its filter when
+omitted; `--data-type 0` filters 0, and listen-only `--all-data-types` clears the
+filter (mutually exclusive with `--data-type`).
+
+Every invocation still needs an explicit nonblank `--port`; its original
+characters reach the transport factory. Hints, environment, defaults and history
+never authorize a port, and no enumeration supplies one. Send/ping also require
+exactly one explicit content source, including explicit empty content. Full
+merged route/capacity validation precedes transport construction. Task/session
+budgets and no-retry semantics are unchanged. For example:
+
+```bash
+meshctl --data-dir /tmp/meshchan-example-data datagram ping \
+  --profile "$PROFILE_ID" --port /dev/EXAMPLE-ONLY --text 'test content' \
+  --record --json
+meshctl --data-dir /tmp/meshchan-example-listen datagram listen \
+  --port /dev/EXAMPLE-ONLY --receive-channel 2 --duration 5 --task-timeout 10 \
+  --all-data-types --record --json
+```
+
+`--record` is non-negatable and admits exactly one `CoreStorage.record` operation
+with the actual application version. Registration commits before any fresh
+transport or subscription-plan factory runs. No-record operations use the old
+runner and add no `DiagnosticRun`; recovery and maintenance at open still apply.
+There is no second session/inbox consumer, replay, save-driven resend or retry.
+
+**Recorded listen uses summary mode:** `datagram listen --record --json` emits
+one final `event: "end"`, without per-datagram or failure stdout events. Immediate
+safe logical diagnostics can appear on stderr while native cleanup is pending.
+Unrecorded listen retains datagram/failure/end NDJSON. Send/ping/respond always
+have one final JSON object. Normal no-record envelopes/fields/line counts are
+unchanged when storage has no failure. Storage failures may add independent
+status blocks, never a second terminal object.
+
+Recorded JSON has the usual command/operation/reason/exitCode/failure/result,
+but its opt-in `result` uses the core typed safe logical projection (including
+nullable failure/reception/send command facts). `cleanup` has `aggregate`, `core`
+and `hostSubscriptions`, each scope retaining state, failureCount and failures.
+`recording` has `runId`, `registration`, `logical`, `cleanup`, `saves`,
+`coordinationFailure` and core's `fullySuccessful`. Every save reports `phase`,
+`state` (`notAttempted`, `committed`, `failed`), safe `error` and `finalCleanup`.
+The three named saves describe the required phase outcomes; `saves` retains the
+bounded coordinator attempts, including intermediate cleanup attempts. Failed
+registration leaves logical null and later saves notAttempted. These are
+persistence facts, independent of device results and actual cleanup.
+
+### History and single-page safe export
+
+| Command | Input and result |
+| --- | --- |
+| `history list` | One page of safe summaries, `items` and `nextCursor` |
+| `history show --id ID` | Safe configuration/result, both cleanup scopes and independent recovery facts; unknowns stay null |
+| `history delete --id ID` | One protected core deletion; prepared/active/unsettled records conflict; no force/clear-all |
+| `history prune` | One explicit `maintain()` request; `prune` reports completed/deferred/failed, committed `deletedCount`, nullable `historyLimit`, `deferredCount` and safe error |
+| `history export` | One `exportSummary()` selection, always raw core JSON on stdout |
+
+List/export share `--operation send|listen|ping|respond`,
+`--state prepared|settled|recovered_archived`, `--from UTC` inclusive and
+`--until UTC` exclusive, `--limit N` (50 by default, 1..200), and paired
+`--after-prepared-at UTC --after-run-id ID`. Filters combine with AND; both
+bounds require from < until. Times refer to `preparedAt`. Ordering is preparedAt
+DESC/runId DESC. Continuation never requires a live cursor row or collects all
+pages. Recovery archives are not labeled wireless failures.
+
+Export stdout is the core JSON object, without double encoding or added fields.
+Its only root fields are `diagnosticSummaryFormatVersion`, `exportedAt`, `runs`.
+It omits profileId, port/configuration names, exact route bytes, endpoint IDs,
+content, nonces, device details, argv, exceptions and stacks. It preserves
+six-digit UTC, integer microseconds and meaningful null/false/zero/partial facts.
+It is a safe summary selection, **not a backup or import format**.
+
+Export stderr contains one independently parseable JSON metadata line:
+
+```json
+{"schemaVersion":1,"command":"history","action":"export","event":"metadata","nextCursor":{"preparedAt":"2026-11-11T12:03:04.567891Z","runId":"00000000000000000000000000000001"},"operationSucceeded":true,"reason":"completed","exitCode":0,"failure":null,"maintenance":{},"storageClose":{"state":"closed","error":null},"hostCleanup":"succeeded","additionalFailures":[]}
+```
+
+The example abbreviates maintenance to `{}`; actual fields follow the lifecycle
+contract below. No next page is `"nextCursor":null`. Other stderr diagnostics
+start with fixed text; select the JSON line with `event == "metadata"`. Source
+Dart build hooks can write their own stderr prefix before the application starts.
+The metadata cursor is never inserted into stdout. Continue explicitly with the
+same filters and both values:
+
+```bash
+meshctl --data-dir /tmp/meshchan-example-data history export --limit 50 \
+  > example-summary.json 2> example-export-metadata.txt
+meshctl --data-dir /tmp/meshchan-example-data history export --limit 50 \
+  --after-prepared-at "$PREPARED_AT" --after-run-id "$RUN_ID" \
+  > example-summary-next.json 2> example-export-next-metadata.txt
+```
+
+The complete page is generated before writing. Query/encoding failure emits no
+invented empty runs. A generated summary remains usable if later maintenance or
+close fails; metadata reports that failure. stdout writes are not atomic: output
+failure can leave a partial object; the process fails and appends no replacement.
+
+### Independent finalization, output and exit codes
+
+Business JSON has `schemaVersion`, `command`, `action`, `operationSucceeded`,
+`committed` (true for a returned mutation, false for a failed operation, null for
+a successful query/prune/export), `reason`, `exitCode`, `failure`, operation data,
+`maintenance`, `storageClose`, `hostCleanup`, `additionalFailures`. Draft/profile/settings use
+`draft`, `profile`, `settings`; deletion uses `id`, `deleted`. Text exposes the
+same facts with terminal-safe display. These explicit local projections are
+separate from the diagnostic allowlists.
+
+`maintenance` contains `latest`, `unacknowledgedFailure`, and
+`unacknowledgedFailureCount`. Reports retain state/deletedCount/historyLimit/
+deferredCount/error. A later successful pass does not clear an earlier sticky
+failure. The CLI never acknowledges failures or requests an implicit retry.
+Only explicit `history prune` requests maintenance. Deferred work is normal
+protection, not a failure. `storageClose` reports actual `state` and safe `error`;
+`closeUnconfirmed`/cleanupUnconfirmed never claim released ownership.
+
+Offline commands latch signals and output failure too: work already admitted to
+SQLite settles before close, preserving any committed result. Their
+`hostCleanup` is `not_required`, `succeeded` or `failed` for the real signal
+subscription; its safe cancellation failure is an additional host fact. A
+synchronous pre-admission signal starts no storage operation.
+After the storage barrier settles, a known maintenance/close failure selects
+`storage_finalization_failure`/74 before signal-subscription cancellation starts,
+unless an earlier cause is already latched. A later cancellation failure leaves
+that primary intact and reports `hostCleanup: "failed"` plus its safe host error
+in `additionalFailures`. Committed data and usable export JSON remain independent
+of both failures.
+For offline open/operation errors, `failure` describes a business error only when
+that error selects the primary reason/code. If SIGINT, SIGTERM or output failure
+is already effective, the later core error instead appears in
+`additionalFailures` with its stable code/source, in both ordinary envelopes and
+export metadata. A failed admitted operation still reports
+`operationSucceeded: false` and `committed: false` in ordinary envelopes; moving
+its error to the additional list does not change that fact. An export that fails
+to generate has no summary JSON, regardless of which cause is primary.
+
+The final barrier observes logical/actual core and host cleanup/all saves,
+waits for already requested maintenance while open, retains the history object,
+then awaits storage.close. Close covers post-done recording admission/unpin and
+its final maintenance as well as the actual DB close. After close starts there
+are no new repository/query/maintain/wait calls or reopened owner. Only retained
+in-memory maintenance getters are read afterward. Queued output drains before
+the unique final object and again afterward. A failed save/maintenance/close
+never changes a successful logical/committed fact or the saved task reason.
+
+| Primary condition | Process exit |
+| --- | ---: |
+| Syntax/lexical/business invalid_input or required reference not_found | 64 |
+| conflict (including stale revision/protected delete), data_directory_busy | 69 |
+| storage_open_failed/read_failed/write_failed, unsupported_database_version, database_corrupt | 74 |
+| Body-file or output I/O; necessary save, independent maintenance or DB close failure without an earlier cause | 74 |
+| Expected device/task/actual core or host cleanup failure | 69 |
+| Effective external SIGINT / SIGTERM | 130 / 143 |
+| Unexpected program/coordination error after safe cleanup, reported at process boundary | 70 |
+
+Core errors expose `domain: "storage"`, controlled `source`, stable `code` and
+`cleanupUnconfirmed`, never exception text. New final reasons are
+`business_failure`, `host_io_failure`, `recording_save_failure`, `storage_finalization_failure`,
+plus existing `completed`, `task_failure`, `cleanup_failure`, `sigint`, `sigterm`,
+`output_failure`. An ordinary 74 is not automatically output_failure. Additional
+failures retain their own source/domain and cannot erase an earlier primary.
+
+Storage admission and registration follow observation order too. If SIGINT,
+SIGTERM or output failure is already effective while open/resolution/prepared is
+pending, a subsequently observed storage failure does not replace that reason or
+exit code. It retains its stable code/source in additionalFailures; recording
+also retains the failed registration/save block and its error. A failed prepared
+transaction still has null logical result, later saves notAttempted and no device
+start. Conversely, a storage or registration failure observed before a later
+signal remains primary. The frozen non-canceled task/session rule below remains
+an independent precedence guarantee.
+
+Datagram signal ownership starts after syntax/independent lexical validation,
+before storage open. SIGINT/SIGTERM and source errors remain observed during
+open, parameter resolution, native cleanup, maintenance and the actual database
+close. An admitted storage Future settles before close; a stop latched before
+device admission prevents later transport construction or recording. The final
+result then has null logical result (and null recording block in record mode),
+without inventing a canceled device task.
+
+The invocation owns the real process-signal source until storage finalization
+completes, then awaits its actual cancellation Future. The runner/coordinator
+owns a separate real forwarding observer. Its cleanup proves observer removal;
+it does not claim that the invocation's process watches have been released.
+Recorded output adds `signalCleanup: {state, error}` for that independent source
+cleanup, with state `notRequired`, `succeeded` or `failed`. A source cancellation
+failure prevents exit 0 and appears in additionalFailures without changing saved
+core cleanup or fullySuccessful. Unrecorded successful output keeps its existing
+envelope; source cancellation failure adds signalCleanup and participates in the
+existing CLI cleanup aggregate. Pre-device storage/cancellation results also
+include signalCleanup. No source cancellation is requested before the storage
+barrier, including when storage close fails.
+
+External intents are latched during synchronous subscription and all pending
+cleanup phases; first signal/output intent stays authoritative unless earlier
+frozen task/session evidence has priority. A final non-canceled task failure or
+retained non-canceled session failure corrects provisional signal/output priority.
+Sometimes the task's canceled result still contains the earlier session failure;
+the CLI preserves that result and reports the session failure as primary. It
+never infers SIGINT from canceled, rewrites a saved result, or waits for native
+release before diagnosing logical failure. Later persistence/maintenance/close
+failures remain additional facts after effective cancellation. Logical success
+with real cleanup failure or required save failure cannot return 0.
+`RecordedResult.fullySuccessful` alone excludes invocation signal cleanup, maintenance/DB close/output and
+therefore cannot determine process success.
+
+The existing final-flush limitation still applies: an object already written
+with exitCode 0 cannot be revised if its flush later fails. The process returns
+74 without a second terminal object; the actual process exit is authoritative.
+No code awaits an indefinitely open stdout.done. The existing bounded output
+queues and independent subscription cancellation Futures remain in use.
+
+
 ## Commands and options
 
 ```text
@@ -237,7 +584,8 @@ short circuit. Top-level help wins, followed by group help, leaf help, then
 top-level version. Help remains text with `--json` and requires no business
 options. Invalid syntax returns 64 even with help/version. Content-command
 syntax errors use a generic safe summary rather than quoting parser input.
-All semantic validation precedes transport construction and signal registration.
+Independent lexical validation precedes signal registration. Storage-dependent
+semantic validation runs while signals are owned, before transport construction.
 
 | Operation | Behavior | `--json` stdout |
 | --- | --- | --- |
@@ -431,7 +779,7 @@ B's return routes independently; do not copy receive metadata or the remote slot
 Terminal B, start the finite responder first:
 
 ```bash
-meshctl datagram respond --port "$B_PORT" --json \
+meshctl --data-dir /tmp/meshchan-example-b datagram respond --port "$B_PORT" --json \
   --send-channel "$B_SEND_SLOT" --receive-channel "$B_RECEIVE_SLOT" \
   --local-id "$B_TEST_ID" --peer-id "$A_TEST_ID" \
   --route-descriptor "$B_RETURN_DESCRIPTOR" --path-hex "$B_RETURN_PATH_HEX" \
@@ -443,7 +791,7 @@ meshctl datagram respond --port "$B_PORT" --json \
 Terminal A, after B is ready for the operator's trial:
 
 ```bash
-meshctl datagram ping --port "$A_PORT" --json \
+meshctl --data-dir /tmp/meshchan-example-a datagram ping --port "$A_PORT" --json \
   --send-channel "$A_SEND_SLOT" --receive-channel "$A_RECEIVE_SLOT" \
   --local-id "$A_TEST_ID" --peer-id "$B_TEST_ID" \
   --route-descriptor "$A_FORWARD_DESCRIPTOR" --path-hex "$A_FORWARD_PATH_HEX" \
@@ -458,10 +806,10 @@ Use `--text "$TEST_TEXT"` instead of content-hex if desired, supplying exactly
 one. Single-operation raw examples:
 
 ```bash
-meshctl datagram send --port "$PORT" --json --send-channel "$SEND_SLOT" \
+meshctl --data-dir /tmp/meshchan-example-raw datagram send --port "$PORT" --json --send-channel "$SEND_SLOT" \
   --data-type "$DATA_TYPE" --route-descriptor "$ROUTE_DESCRIPTOR" \
   --path-hex "$PATH_HEX" --payload-hex "$PAYLOAD_HEX" --task-timeout "$TASK_SECONDS"
-meshctl datagram listen --port "$PORT" --json --receive-channel "$RECEIVE_SLOT" \
+meshctl --data-dir /tmp/meshchan-example-raw datagram listen --port "$PORT" --json --receive-channel "$RECEIVE_SLOT" \
   --duration "$LISTEN_SECONDS" --max-entries "$ENTRY_LIMIT" --task-timeout "$TASK_SECONDS"
 ```
 

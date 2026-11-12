@@ -4,7 +4,7 @@
 
 Use American English for project documentation, code comments, CLI output, and configuration text. Keep identifiers in English.
 
-The root `pubspec.yaml` lists `packages/meshcore_link`, `packages/meshchan_core`, and `apps/meshctl`. All three members use `resolution: workspace`; all packages use `publish_to: none` and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`. Do not create member lockfiles or add Flutter SDK dependencies. The CLI resolves `meshcore_link` to the local workspace member without overrides. Check membership with `dart pub workspace list` (which also displays the root package).
+The root `pubspec.yaml` lists `packages/meshcore_link`, `packages/meshchan_core`, and `apps/meshctl`. All three members use `resolution: workspace`; all packages use `publish_to: none` and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`. Do not create member lockfiles or add Flutter SDK dependencies. The CLI resolves `meshcore_link` and `meshchan_core` to local workspace members without overrides. Check membership with `dart pub workspace list` (which also displays the root package).
 
 The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the communication core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. The offline business package declares `drift`/`sqlite3` and the workspace
 `meshcore_link` dependency for pure route/capacity validation, plus `drift_dev`, `build_runner`, and `test` for development. No Flutter engine or platform project is involved.
@@ -16,8 +16,10 @@ recording/recovery rules, and acceptance requirements for subsequent 1C steps.
 The later [1C.3 implementation](#production-storage-and-migration-baseline-1c3)
 adds production storage; [1C.4](#persistent-draft-repository-1c4) adds draft CRUD
 and pagination. [1C.5](#profiles-settings-and-typed-resolution-1c5) adds persistent
-profiles/settings and core typed parameter resolution. Recording, history
-services, and CLI business wiring remain future work.
+profiles/settings and core typed parameter resolution. [1C.6](#diagnostic-recording-lifecycle-coordination-and-recovery-1c6) adds recording/recovery,
+[1C.7](#bounded-diagnostic-history-and-safe-export-1c7) adds bounded history/retention/export,
+and [1C.8](#business-cli-entry-points-and-recording-integration-1c8) wires these into the product CLI.
+Dev.3 packaging and broader distribution acceptance remain 1C.9.
 
 ## SDK and native toolchain baseline
 
@@ -2994,3 +2996,509 @@ power-loss acceptance. Existing CLI bundles still do not execute business
 SQLite, so their smoke is not SQLite product AOT distribution acceptance. Linux
 and other-platform native acceptance were not run on this Mac. No 1C.8 CLI work,
 release or dev.3 delivery was started.
+
+## Business CLI entry points and recording integration (1C.8)
+
+Implemented from clean `master` at `8f2165eceae7f9aeab26b552b55f60f9e47defc0`.
+GitHub PR #24 was rechecked as merged on November 12, 2026; its head remains
+`17cf7f78aae537e05c3c99d4c45a4c803ba132e6`, and its merge commit is this baseline.
+No reset, checkout, history rewrite, merge, tag, release or upload was performed.
+The dated 1C.7 and earlier records above remain historical.
+
+The CLI adds one local workspace dependency, `meshchan_core: ^0.1.0-dev.2`.
+Locked pub resolution succeeds without any lockfile or third-party/SDK/native
+version change. Production CLI imports only the public core barrel; no private
+SQL, codec, RawOperation or RunStore is used there. Link remains independent of
+business/CLI/database code. Database schema/snapshot 1, safe-summary format 1,
+CLI schemaVersion 1 and all package versions remain unchanged. New commands and
+opt-in recording blocks extend the existing CLI schema-1 contract explicitly.
+
+| Implementation | Responsibility |
+| --- | --- |
+| `business_storage.dart` | Host platform directory policy; stable core error mapping; one awaited wait/close barrier and post-close memory-only sticky/latest maintenance reads |
+| `business_input.dart` | Strict decimal/LocalId input, calendar-checked UTC with up to six fractional digits, reusable typed two-field cursors |
+| `business_command.dart` | Offline parser/validation and public repository calls; exact strict UTF-8 file input, partial draft/settings merge, full profile/settings replacement, one final business envelope/raw export |
+| `business_projection.dart` | Explicit local draft/profile/settings projections and separate safe typed diagnostic/cleanup/save allowlists |
+| `datagram_options.dart` | Presence-aware lexical requests, profile parameter declarations and pure effective-to-legacy-runner adaptation |
+| `datagram_command.dart` | Retained no-record device runner; final object deferred until storage finalization, legacy success envelope unchanged |
+| `recorded_datagram_command.dart` | One public recording coordinator; early host intent latch, all terminal observations/bounded save attempts, real signal ownership and pending cleanup, independent final facts |
+| `meshctl.dart` | Complete syntax/help/version ordering, safe parser errors, multiline inline option values, one opener/policy seam and business dispatch |
+| `process_io.dart` | Start every owned signal-watch cancellation independently and observe all Futures |
+
+See the [CLI guide](cli.md#offline-business-commands-and-storage-1c8) for complete
+commands, copyable isolated examples, schemas, cursor/export metadata and exit
+mapping. Defaults use the specified absolute macOS/Linux/Windows base policy;
+relative paths are explicit only. Every finite datagram resolves default/explicit
+presets, with exact port and per-run content required before opening storage.
+Actual complete route/capacity validation precedes any transport factory.
+Only `--record` inserts a diagnostic run. Recorded listen emits one final end;
+no-record listen retains per-entry NDJSON and uses the previous runner.
+
+Recording registration commits before device/subscription-plan construction.
+The datagram invocation owns its process-signal source before storage open and
+through resolution, execution, maintenance and actual DB close. The coordinator
+owns a real forwarding observer; invocation-source cancellation is awaited after
+the storage barrier and reported separately as signalCleanup. Pending or failed
+source cancellation never becomes successful saved core cleanup. A latched stop
+before device admission skips transport/recording while still closing any
+returned handle. No task-owned subscription/session is consumed or closed twice.
+Final typed non-canceled task/session evidence corrects provisional external
+priority without rewriting core's saved canceled result. All necessary cleanup
+and saves settle without a retry or artificial release deadline.
+
+After op.done the handle still drains its recording admission, unpin and final
+maintenance. The CLI waits while open, closes once, then reads only retained
+history memory getters. Latest success never clears an earlier sticky failure.
+Settings/recording commits, logical outcome, two cleanup scopes, maintenance,
+DB close and output remain independent; otherwise independent storage/host I/O
+failure returns 74. Safe unexpected errors still reach the existing process
+boundary as 70 after cleanup. Safe summary export uses core's original JSON
+string and an independent stderr metadata line, even when later close fails.
+
+Offline commands also latch cancellation/output failure before admission or
+while a real commit/close is pending. Already admitted SQLite work settles;
+committed data is preserved, actual close and signal cancellation are awaited,
+and their independent failures remain visible.
+
+The existing datagram virtual-clock/acceptance callers use a real isolated
+SQLite directory per invocation. New CLI tests use real files, exact parser
+paths, controlled SQL/native/save/cleanup barriers and small delegated audit
+wrappers. A test-only core history Fixture can take an explicit temporary
+directory, allowing the controlled process tests to reuse its real executor/fault
+seams without adding production bypasses or another dependency. The finite RF
+plan generator now emits isolated directories for future product datagram argv;
+validation/summarization retain legacy-argv support. No RF plan was executed.
+
+### Handoff to 1C.9
+
+- Keep the package/version boundary explicit: prepare the intended dev.3 version
+  delivery only in 1C.9, with reviewed version constants/manifests and release
+  materials. No version bump or release artifacts were produced here.
+- Package the whole CLI bundle with serial **and SQLite** native assets. Preserve
+  the new real business smoke when preparing notices, dependency/license/native
+  asset inventories, integrity manifests and archives.
+- Complete clean-machine/relocation and supported OS/architecture distribution
+  matrices. Same-host macOS source/AOT/relocated SQLite execution does not prove
+  Linux/Windows lock/native/product behavior or arbitrary moved-machine support.
+- Observe remote CI for the final change and preserve failed/blocked runs. The
+  existing job already runs generation/schema/all suites and the updated smoke;
+  no redundant CI workflow was added.
+- Continue outstanding RF/USB unplug/relay and historical delivery investigations
+  on their authorized tracks. Synthetic transports/loopback and SQLite process
+  tests establish software facts only. No new radio configuration writes,
+  Flutter UI, backup/import, replay, event store, unbounded export or retry was added.
+
+### 1C.8 local validation on November 12, 2026
+
+Actual host: macOS **27.2.1 (26B131)** arm64. The installed Flutter cache records
+**3.47.9 stable**, revision `c197ca5199e9ee5661e865596c9c07294dfab51c`;
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --version` reports
+**Dart 3.13.7**. Apple Clang is **21.0.0**, `clang-2100.4.1.1`. Before project
+Python execution, `/opt/homebrew/bin/python3` was verified as stable **3.15.2**;
+actual `sys.executable` is `/opt/homebrew/opt/python@3.15/bin/python3.15`.
+Dart/native runs used an Apple-compiler-first process-local PATH
+`/usr/bin:/bin:/opt/homebrew/bin:$PATH` and the explicit installed Dart path.
+Python scripts used the explicit Homebrew entry; subprocess tooling continues to
+use `sys.executable`. No SDK/channel/interpreter/global PATH upgrade or native
+system-library substitution was made.
+
+| Actual command/check | Observed result |
+| --- | --- |
+| Root `dart pub get --enforce-lockfile` | Passed; only the necessary CLI workspace dependency declaration changed, lockfile unchanged |
+| Core `dart run build_runner build` | Passed, including the final run after host-example edits; generated artifacts unchanged |
+| Core `dart run tool/check_schema.dart` | Passed; production schema 1, frozen snapshot and generated helpers match |
+| Root `dart format --output=none --set-exit-if-changed .` | Passed; **132 files, zero changes** |
+| Root `dart analyze --fatal-infos` | Passed; no issues |
+| Complete `packages/meshchan_core` `dart test` | **362 passed** |
+| Complete `packages/meshcore_link` `dart test` | **180 passed** |
+| Complete final `apps/meshctl` `dart test` with local loopback access | **166 passed**, including **69 added** business/directory/recording/history/process/cancellation cases and all 97 prior regressions |
+| `/opt/homebrew/bin/python3 -m unittest discover -s tool -p '*_test.py'` | **49 passed**, including three new generated-directory/legacy-argv/invalid-base cases |
+| Fresh final product CLI `dart build cli` | Passed; copies serial and SQLite build assets through their normal hooks |
+| Fresh final serial observation `dart build cli` | Passed; serial asset retained |
+| Fresh final development datagram acceptance `dart build cli` | Passed; serial and SQLite assets retained; synthetic scenarios use isolated storage |
+| Updated shared source/AOT smoke | **90 process checks passed on macOS**; seven actual business SQLite checks each in source, product AOT and relocated complete product bundle, plus retained legacy/synthetic gates |
+| Frozen/dependency/new-file/whitespace review | Schema, snapshot, generated files, lockfile and package versions unchanged; only one dependency declaration added; `git diff --check` passed |
+| Remote CI / RF / clean-machine / other-platform native acceptance | **NOT_RUN**; these local results do not establish them |
+
+Commands used the repository root unless a member directory is shown. The final
+build/smoke commands were executed sequentially:
+
+```bash
+MESHCHAN_DART=/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart
+(cd apps/meshctl && "$MESHCHAN_DART" build cli \
+  --target=bin/meshctl.dart --output=../../build/phase-1c8/final/meshctl)
+(cd packages/meshcore_link && "$MESHCHAN_DART" build cli \
+  --target=example/serial_transport_check.dart \
+  --output=../../build/phase-1c8/final/observation)
+(cd apps/meshctl && "$MESHCHAN_DART" build cli \
+  --target=tool/datagram_acceptance.dart \
+  --output=../../build/phase-1c8/final/datagram-acceptance)
+/opt/homebrew/bin/python3 tool/smoke_cli.py --dart "$MESHCHAN_DART" \
+  --cli-bundle build/phase-1c8/final/meshctl/bundle \
+  --observation-bundle build/phase-1c8/final/observation/bundle \
+  --datagram-acceptance-bundle build/phase-1c8/final/datagram-acceptance/bundle
+```
+
+The smoke committed actual `meshchan.sqlite` files and loaded SQLite through the
+new product bundle. A second process read exact Chinese/emoji/CR/LF draft content
+and settings from the same directory. Empty history export decoded as the core
+object. The complete bundle was also copied outside the checkout and exercised
+from a different cwd. Databases were at explicit isolated paths, not in cwd or
+bundles. Product assets are `bin/meshctl`, `lib/liblibserialport_plus.dylib` and
+`lib/libsqlite3.dylib`; do not infer this inventory for other platforms.
+
+Failures and development iterations remain visible. An initial native source
+invocation before selecting the documented PATH chose Homebrew Clang 18.1.8 and
+failed with `ld: library 'System' not found`; selecting the existing Apple compiler
+resolved it. An early legacy datagram harness run preceded its isolation wrapper,
+failed to open the managed default location (74), and inspection showed the user
+default business directory remained absent. The final harness/probe and every
+valid business test use explicit temporary directories or a delegated real opener.
+The initial complete sandbox CLI run had **141 passed, 17 failed**: 16 existing
+loopback binds returned Operation not permitted; one new process test incorrectly
+expected source build-hook stderr to start with JSON. That test now removes only
+the exact known build-hook prefix. Final full execution with local loopback
+permission passed all 166 cases. Neither native probing permissions nor system
+settings were changed. Earlier successful interim bundles/smoke were retained;
+the `final/` bundles were rebuilt from the final implementation, not replaced
+with an older artifact.
+
+Evidence is retained under ignored `build/phase-1c8/`, including:
+
+```text
+pub-get.log
+build-runner-final.log
+schema-check-final.log
+format.log
+analyze.log
+core-tests.log
+link-tests.log
+cli-tests.log
+cli-tests-final.log
+python-tests.log
+python-toolchain.json
+dart-toolchain.log
+flutter-cache-toolchain.json
+clang-toolchain.log
+host-toolchain.log
+cli-build-final.log
+observation-build-final.log
+datagram-acceptance-build-final.log
+smoke-final.log
+final/meshctl/bundle/
+final/observation/bundle/
+final/datagram-acceptance/bundle/
+```
+
+1C.8 code/tests/docs and the local source/AOT wiring gate are complete. No package
+version, database/summary format, release/tag/publication state or hardware
+acceptance conclusion changed. The concrete remaining delivery work is listed
+in the 1C.9 handoff above.
+
+### 1C.8 review fix: signal ownership across storage phases
+
+The subsequent review correctly identified a gap in the initial 1C.8 wiring:
+datagram runners subscribed only after storage open/resolution and canceled the
+real source before storage finalization. A broadcast signal during either initial
+await was lost; a late signal during DB close was also ignored. With actual
+process watches these gaps could restore default termination while a handle was
+still owned. The earlier dated validation above did not cover those windows.
+
+`stored_datagram_command.dart` now owns the full host pipeline through the same
+public core APIs. `DatagramSignals` subscribes once after independent lexical
+validation and before open, latches synchronous/early signal and output intent,
+and retains the real source through resolution, execution, maintenance and close.
+A stop before device admission waits for any admitted storage Future, closes its
+returned handle and skips transport/recording. During execution the runner owns
+an actual forwarding subscription; the invocation keeps observing after that
+observer is canceled. Late stop/source-error notifications and final replay feed
+the existing primary-failure rules before the unique terminal output.
+
+The actual source is canceled and awaited after the storage barrier, on success,
+CoreException and unexpected-error paths. Recording's saved host scope describes
+its forwarding observer, not the invocation's longer process-watch lifetime.
+The new opt-in `signalCleanup` block describes actual invocation-source release;
+its failed cancellation prevents success without rewriting core cleanup or
+`RecordedResult.fullySuccessful`. Unrecorded normal envelopes stay unchanged;
+source-cancellation failures retain the CLI cleanup aggregate plus the independent
+signalCleanup block. Pre-device cancellation has null result/recording facts.
+No core repositories, SQL/schema, dependencies, versions or device retries changed.
+
+Validation on the same macOS 27.2.1 arm64 host used bundled Dart 3.13.7, installed
+Flutter cache 3.47.9, Apple Clang 21.0.0, and the reverified explicit Homebrew
+Python 3.15.2. Native/test commands kept the Apple-compiler-first process PATH.
+
+| Review-fix check | Actual observed result |
+| --- | --- |
+| New gated reproductions against the pre-fix implementation | **All 12 failed**, reproducing SIGINT/SIGTERM loss in open, resolution and close, with and without recording |
+| Focused datagram/storage/recording/legacy acceptance files | **91 passed**, including 26 new gated storage/source/error/priority/cancellation-Future cases |
+| Complete CLI suite with required local loopback access | **200 passed**, including eight additional child-process tests using actual SIGINT/SIGTERM |
+| Root format / fatal-info analyze | **137 Dart files, zero formatting changes**; no analysis issues |
+| Python unittest discovery via `/opt/homebrew/bin/python3` | **49 passed** |
+| Three fresh sequential native bundles | Product CLI, serial observation and development datagram acceptance all built successfully through normal native hooks |
+| Shared source/AOT/relocated-bundle smoke | **90 process checks passed**, including real business SQLite and all five retained synthetic datagram scenarios |
+| Patch/frozen-artifact review | `git diff --check` passed; schema/snapshot/generated files and lockfile unchanged |
+
+The child-process protocol waits for a storage gate, sends the actual OS signal,
+waits for acknowledgment of delivery, proves directory ownership is still held,
+and only then releases storage. No scheduling sleeps or real devices are used.
+Gated tests also retain earlier device failure, preserve signal/output ordering,
+propagate source errors only after cleanup, and hold the real source cancel
+Future pending after DB close to prove output/exit do not finish prematurely.
+Existing pre-start tests now expect unknown/null device results when cancellation
+prevents storage/device admission, rather than inventing a canceled task.
+
+The exact commands were the existing `dart test`, root format/analyze and
+`/opt/homebrew/bin/python3 -m unittest discover -s tool -p '*_test.py'` commands.
+Fresh builds used `dart build cli` with the same three targets as the original
+record and output roots under `build/phase-1c8-signal-review/final/`. The updated
+`tool/smoke_cli.py` used those complete bundles with the explicit installed Dart.
+Review-fix logs are retained under ignored `build/phase-1c8-signal-review/`:
+`before-fix.log`, `targeted-third.log`, `cli-tests.log`, `format.log`, `analyze.log`,
+`python-tests.log`, `cli-build.log`, `observation-build.log`,
+`datagram-acceptance-build.log`, and `smoke.log`. The original records/artifacts
+remain retained. Core implementation was unchanged, so its package suites were
+not rerun for this host-only review fix. Remote CI, other-platform native and
+hardware/RF acceptance were not run; the 1C.9 delivery boundary is unchanged.
+
+### 1C.8 review fix: observation order and serialized process suites
+
+A further review identified two remaining host/test issues. The admission error
+branch selected a CoreException after all cleanup, unconditionally replacing an
+earlier effective signal/output intent. Failed registration likewise assigned a
+new primary code even when cancellation had already been observed. Separately,
+the two CLI subprocess suites could launch SDK native-asset bundling at the same
+time under default test-file concurrency. The reviewer observed `otool` failing
+to open the shared `.dart_tool/lib/liblibserialport_plus.dylib`; a later passing
+run did not remove that structural race.
+
+The admission catch now freezes whether that failure was primary at its actual
+observation point. Earlier SIGINT/SIGTERM/output intent keeps its reason/code;
+a later admission failure retains its stable code/source in additionalFailures.
+Conversely, an admission failure observed first remains primary if a signal
+arrives while close is pending. Registration/save reporting uses the existing
+first-cause chooser too and adds nonprimary save failures independently. Failed
+registration still has no device/logical result, logical/cleanup saves remain
+notAttempted, and its failed RecordingSave remains explicit. Existing frozen
+non-canceled task/session precedence is unchanged.
+
+`apps/meshctl/dart_test.yaml` now sets `concurrency: 1`, following the existing
+core-package configuration. Default `dart test` therefore serializes test files,
+preventing the two source-process suites from bundling into `.dart_tool/lib`
+concurrently. No tests were skipped, child failures retried, native files
+replaced or timeouts loosened. Ownership fixtures still keep the already-started
+owner alive while a probe runs; readiness acknowledges that owner's native-asset
+startup has completed before the next child launch.
+
+`datagram_failure_priority_test.dart` adds 18 real-storage cases: delayed SQLite
+creation failure, public resolver rejection, delayed registration-transaction
+rollback, and reverse-order failure/signal controls. SIGINT, SIGTERM and output
+failure are tested before later faults; both recorded and unrecorded admission
+paths retain the correct primary and independent storage facts. Registration
+rollback asserts zero transport and subscription-plan factories and reopens the
+file to confirm no diagnostic committed. Against the pre-fix implementation,
+**15 cases failed and the three reverse-order controls passed**; after the fix,
+all cases and the related storage-signal/recording regressions passed.
+
+Validation used the reverified installed toolchain: macOS 27.2.1 (26B131) arm64,
+Flutter cache 3.47.9 stable, direct bundled Dart 3.13.7, Apple Clang 21.0.0, and
+`/opt/homebrew/bin/python3` 3.15.2 with actual executable
+`/opt/homebrew/opt/python@3.15/bin/python3.15`. The native/test process PATH kept
+Apple's compiler first; no global settings or toolchain versions changed.
+
+- Focused priority/storage-signal/recording files: **79 passed**.
+- Two consecutive complete **default `dart test`** executions from apps/meshctl:
+  **218 passed each**, with the authorized local loopback fixtures. The second
+  deliberate verification ran only after the first succeeded; this was not a
+  retry of a failed run. Both subprocess suites executed in each run without
+  native-asset preparation failures.
+- Root `dart format --output=none --set-exit-if-changed .`: **138 files, zero
+  changes**; `dart analyze --fatal-infos`: no issues.
+- Explicit Homebrew Python unittest discovery: **49 passed**.
+- Three fresh sequential `dart build cli` bundles: product CLI, serial
+  observation and development datagram acceptance all built successfully through
+  the normal native hooks. Product and acceptance bundles include SQLite assets.
+- Shared source/AOT/relocated-bundle smoke: **90 process checks passed**, including
+  committed and reopened real SQLite through each product entry and all five
+  retained synthetic datagram scenarios in source and AOT.
+- Patch/frozen review: `git diff --check` passed; lockfile, schema/snapshot and
+  generated verification artifacts unchanged. Core implementation, dependencies
+  and package versions were unchanged; core/link suites were not rerun for these
+  CLI/reporting/test-runner changes.
+
+The exact package test command remained `dart test`, without a command-line
+concurrency override. Fresh builds used the same three documented targets and
+output roots under `build/phase-1c8-review-priority/final/`. The shared smoke ran
+with the explicit installed Dart and all three complete bundles:
+
+```sh
+/opt/homebrew/bin/python3 tool/smoke_cli.py \
+  --dart /opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart \
+  --cli-bundle build/phase-1c8-review-priority/final/meshctl/bundle \
+  --observation-bundle build/phase-1c8-review-priority/final/observation/bundle \
+  --datagram-acceptance-bundle build/phase-1c8-review-priority/final/datagram-acceptance/bundle
+```
+
+Reproduction and validation logs are retained under ignored
+`build/phase-1c8-review-priority/`: `before-fix.log`, `targeted-tests.log`,
+`cli-tests-default.log`, `cli-tests-default-repeat.log`, `format.log`,
+`analyze.log`, `python-tests.log`, `cli-build.log`, `observation-build.log`,
+`datagram-acceptance-build.log`, `smoke.log`, and `frozen-artifacts.diff`. Earlier
+validation records and failures remain historical. Remote CI, other-platform
+native and hardware/RF acceptance were not run; the 1C.9 release/distribution
+boundary remains unchanged.
+
+### 1C.8 review fix: offline finalization failure priority
+
+A further review reproduced an offline-command ordering defect: known
+maintenance/DB-close failures were selected only after signal-subscription
+cancellation. If that cancellation failed too, its later cleanup_failure/69
+replaced the earlier storage-finalization failure that should have selected 74.
+
+`runOffline` now selects storage_finalization_failure immediately after its
+awaited BusinessStorage.finish barrier, before canceling signals. The existing
+first-cause chooser preserves an already effective signal/output/business cause.
+Later signal cancellation still runs and retains hostCleanup=failed with its
+safe additionalFailures entry. Committed results, raw core export JSON, actual
+storageClose and maintenance facts remain independent. No storage owner is
+reopened or quarantine cleared to collect these reports.
+
+Four new cases cover this ordering. Real settings commits trigger retention
+delete failure followed by failed signal cancellation, with a gated earlier
+SIGTERM control. Two child-process cases reject actual native DB close before
+failing signal cancellation, checking draft and export output, process exit,
+closeUnconfirmed, quarantine until process exit, and committed draft reopen
+after exit. Against the old order, the three reproductions returned 69 instead
+of 74; the earlier-SIGTERM control passed. After the fix, both affected files
+passed all **23 tests**. Tests use real SQLite and explicit gates, no hardware or
+scheduling sleeps.
+
+The installed toolchain was reverified as macOS 27.2.1 (26B131) arm64, bundled
+Dart 3.13.7, Apple Clang 21.0.0, and `/opt/homebrew/bin/python3` 3.15.2. Native
+test commands retain the Apple-compiler-first process PATH. Root
+`dart format --output=none --set-exit-if-changed .` checked **138 files with zero
+changes** and `dart analyze --fatal-infos` found no issues.
+
+The complete default `dart test` from apps/meshctl passed **222 tests**, including
+both subprocess suites and the synthetic loopback fixtures, with local socket
+access enabled. From apps/meshctl, the targeted command and new-only pre-fix
+selection were:
+
+```sh
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart test test/business_history_test.dart test/business_process_test.dart
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart test test/business_history_test.dart test/business_process_test.dart --name 'offline maintenance failure precedes|before signal cleanup failure|and signal cleanup fails'
+```
+
+Reproduction and validation logs are retained under ignored
+`build/phase-1c8-offline-finalization-review/`:
+`before-fix.log`, `targeted-tests.log`, `cli-tests.log`, `format.log`, and
+`analyze.log`.
+
+`git diff --check` and frozen lockfile/schema/generated-artifact checks passed.
+This small CLI finalization change did not alter core APIs/implementation,
+dependencies, schemas or package versions. Core/link/Python suites, fresh AOT
+builds, remote CI and hardware/RF acceptance were not rerun for this fix; the
+earlier validation records remain historical. No release/distribution action
+was taken and the 1C.9 handoff boundary is unchanged.
+
+### 1C.8 review fix: required offline IDs and revisions
+
+Review identified that prepareOffline used ArgResults.options to decide which
+fields to validate. That collection contains supplied/defaulted options, not all
+declared options, so omitted IDs/revisions bypassed validation. A profile update
+could therefore pass a null ID to core's intentional create form of save; other
+actions could reach null assertions after opening storage. A missing draft
+mutation field could also allow body-file I/O before rejecting the request.
+
+Shared group/action predicates now determine ID and revision requirements for
+both parser setup and preparation. Every applicable show/update/delete validates
+its ID even when omitted; draft update/delete similarly validate the expected
+revision. The existing validators reject these requests with 64 before body-file
+reads, directory selection, storage ownership, signal subscription or devices.
+Create/settings/list/export/prune and normal help/version behavior retain their
+existing requirements. Core's save semantics and typed revision handling are
+unchanged.
+
+The new parser matrix covers 14 malformed argument combinations in text and
+JSON mode, plus one help/version control. An additional product-entry process
+test covers the reported complete profile-update preset without an ID, draft
+show without an ID, and draft delete without a revision, requiring no isolated
+data directory/database to appear. Before the fix, **29 regressions failed**
+and the help/version control passed; the product profile-update child returned
+0 instead of 64. After the fix, the two affected test files passed all
+**50 tests**, retaining the actual SQLite persistence and native-close cases.
+Tests also assert zero opener/policy/transport/subscription/enumeration calls
+and safe option-only errors for the invalid-input paths.
+
+Validation used the reverified macOS 27.2.1 (26B131) arm64 host, direct bundled
+Dart 3.13.7 and Apple Clang 21.0.0 with Apple's compiler first in the native-test
+process PATH. `/opt/homebrew/bin/python3` was reverified as 3.15.2; no Python
+tooling changed. Root `dart format --output=none --set-exit-if-changed .` checked
+**138 files, zero changes**, and `dart analyze --fatal-infos` found no issues.
+
+The complete default CLI `dart test` passed **252 tests** with local loopback
+access enabled, including all subprocess and synthetic transport suites.
+From apps/meshctl, targeted and pre-fix selection commands were:
+
+```sh
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart test test/business_cli_test.dart test/business_process_test.dart
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart test test/business_cli_test.dart test/business_process_test.dart --name 'missing --|missing required options still|product entry rejects missing'
+```
+
+Logs are retained under ignored `build/phase-1c8-required-options-review/`:
+`before-fix.log`, `targeted-tests.log`, `cli-tests.log`, `format.log` and
+`analyze.log`. `git diff --check` and frozen lockfile/schema/generated-artifact
+checks passed. This fix did not change core APIs/implementation, dependencies,
+schemas or package versions. Core/link/Python suites, fresh AOT builds, remote
+CI and hardware/RF acceptance were not rerun for this parser-only change; earlier
+validation records remain historical. The 1C.9 release/distribution boundary is
+unchanged.
+
+### 1C.8 review fix: offline primary and additional failure fields
+
+Review found that offline commands retained an earlier signal/output reason and
+exit code but unconditionally assigned a later CoreException to the primary
+failure field. Export metadata had the same mismatch and omitted the later
+error from additionalFailures.
+
+`runOffline` now keeps the safe business error separately from the primary
+failure, assigning the primary field only when that business error wins. A later
+business error joins the shared additionalFailures list used by ordinary output
+and export metadata. The independent business error still drives failed
+operation/commit facts and safe stderr diagnostics, so moving an error to the
+additional list cannot turn a failed admitted operation's committed=false into
+unknown. Earlier business errors stay primary when a signal/output failure is
+observed during final close. Raw export JSON and core lifecycle behavior are
+unchanged.
+
+`offline_failure_priority_test.dart` adds 18 real-SQLite cases. Twelve gate
+creation, draft transaction or export-read failure until SIGINT/SIGTERM/output
+failure is observed and require null primary failure plus the later core error
+in additionalFailures. Six reverse-order controls observe the operation error
+before injecting external intent while close is pending. They also verify safe
+diagnostics, actual cleanup, reopened empty data, false commit facts and no
+invented export. Before the fix, **12 reproductions failed and six controls
+passed**. After the fix, the new file and related offline/datagram priority files
+passed **98 tests**.
+
+The reverified environment remains macOS 27.2.1 (26B131) arm64, direct bundled
+Dart 3.13.7 and Apple Clang 21.0.0 with the Apple-compiler-first native-test PATH.
+`/opt/homebrew/bin/python3` was reverified as 3.15.2. Root formatting checked
+**139 files with zero changes**; `dart analyze --fatal-infos` found no issues.
+
+The complete default CLI `dart test` passed **270 tests** with local loopback
+access enabled, including subprocess and synthetic transport suites. From
+apps/meshctl, the reproduction and focused commands were:
+
+```sh
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart test test/offline_failure_priority_test.dart
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart test test/offline_failure_priority_test.dart test/business_history_test.dart test/business_cli_test.dart test/datagram_failure_priority_test.dart
+```
+
+Logs are retained under ignored `build/phase-1c8-offline-envelope-review/`:
+`before-fix.log`, `targeted-tests.log`, `cli-tests.log`, `format.log` and
+`analyze.log`. Patch whitespace and frozen lockfile/schema/generated-artifact
+checks passed. This CLI projection fix did not change core APIs/implementation,
+schemas, dependencies or package versions. Core/link/Python suites, fresh AOT
+builds, remote CI and hardware/RF acceptance were not rerun; earlier validation
+records remain historical. The 1C.9 release/distribution boundary is unchanged.

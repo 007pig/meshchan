@@ -118,7 +118,7 @@ void main() {
         expect(code, 64, reason: '$arguments');
         expect(output.toString(), isEmpty);
         expect(error.toString(), contains('positional arguments'));
-        expect(error.toString(), contains(arguments.last));
+        expect(error.toString(), isNot(contains(arguments.last)));
         expect(error.toString(), contains('meshctl --help'));
         expect(error.toString(), isNot(contains('#0')));
         expect(ports.listCalls, 0);

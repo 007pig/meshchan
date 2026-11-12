@@ -17,8 +17,9 @@ inspectHistory(
   LocalId? explicitlySelectedRunToDelete,
 }) async {
   final storage = await CoreStorage.open(dataDirectory: hostDataDirectory);
+  final history = storage.history;
+  late DiagnosticSummaryPage summary;
   try {
-    final history = storage.history;
     final startup = history.latestMaintenance!;
     // A host can display startup.error independently of opening or saving.
     if (startup.state == HistoryMaintenanceState.failed) {
@@ -32,10 +33,7 @@ inspectHistory(
     if (first.nextCursor case final cursor?) {
       await history.query(filter: filter, size: PageSize(50), after: cursor);
     }
-    final summary = await history.exportSummary(
-      filter: filter,
-      size: PageSize(50),
-    );
+    summary = await history.exportSummary(filter: filter, size: PageSize(50));
     // Continue exports explicitly with summary.nextCursor and the same filter.
     if (explicitlySelectedRunToDelete case final id?) {
       // The host must select a particular run. Core checks current eligibility
@@ -43,15 +41,17 @@ inspectHistory(
       await history.delete(id);
     }
     await history.waitForMaintenance();
-    final maintenance = await history.maintain();
-    return (
-      summary: summary,
-      maintenance: maintenance,
-      unacknowledgedFailure: history.unacknowledgedFailure,
-    );
-    // After displaying/handling failures, a long-lived host may explicitly call
-    // history.acknowledgeMaintenanceFailures(). Success never acknowledges them.
+    await history.maintain();
+    // A long-lived host may acknowledge after handling failures. This finite
+    // host preserves the sticky report through the actual close barrier.
   } finally {
     await storage.close();
   }
+  // Only in-memory getters after close. The barrier includes recording's final
+  // unpin/maintenance continuation, which may be later than operation.done.
+  return (
+    summary: summary,
+    maintenance: history.latestMaintenance!,
+    unacknowledgedFailure: history.unacknowledgedFailure,
+  );
 }

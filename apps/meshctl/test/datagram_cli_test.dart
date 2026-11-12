@@ -4,7 +4,9 @@ import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:meshcore_link/meshcore_link.dart';
-import 'package:meshctl/meshctl.dart';
+
+import 'support/isolated_cli.dart';
+
 import 'package:test/test.dart' hide test;
 import 'package:test/test.dart' as testing show test;
 
@@ -247,7 +249,7 @@ void main() {
         expect(transport.closes, 0);
         final record = jsonDecode(out.toString());
         expect(record['reason'], 'sigint');
-        expect(record['result']['reason'], 'canceled');
+        expect(record['result'], null);
         expect(record['cleanup']['state'], 'notRequired');
       });
     });
@@ -424,11 +426,17 @@ void main() {
         reason: '$arguments',
       );
       expect(factories, 0);
-      expect(subscribed, 0);
+      expect(subscribed, code == 64 && out.isNotEmpty ? 1 : 0);
       expect(ports.listCalls, 0);
       expect(ports.checkedPaths, isEmpty);
       if (code == 64) {
-        expect(out.toString(), isEmpty);
+        // Complete/profile-dependent validation now runs through real storage.
+        if (out.isNotEmpty) {
+          expect(
+            jsonDecode(out.toString())['failure']['code'],
+            'invalid_input',
+          );
+        }
         expect(err.toString(), contains('Error:'));
       }
       for (final secret in [

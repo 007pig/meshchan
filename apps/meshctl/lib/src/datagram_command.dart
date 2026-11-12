@@ -5,18 +5,21 @@ import 'dart:typed_data';
 import 'package:meshcore_link/meshcore_link.dart';
 
 import 'cli_display.dart';
+import 'business_storage.dart';
 import 'cli_output.dart';
 import 'datagram_options.dart';
 import 'datagram_projection.dart';
+import 'datagram_signals.dart';
 import 'session_command.dart';
 
 Future<int> runDatagramCommand(
   DatagramOptions options,
   CliOutput io,
   CompanionTransport Function(String) createTransport,
-  Stream<CliStopRequest>? stopRequests, {
+  DatagramSignals stopRequests, {
   Duration Function()? elapsed,
   Uint8List Function()? nonceFactory,
+  BusinessStorage? storage,
 }) async {
   final report = _Report(options, io);
   MeshCoreSession? session;
@@ -29,6 +32,9 @@ Future<int> runDatagramCommand(
   }
 
   io.onFailure = () => stop('output_failure', 74);
+  stopRequests.onIdleStop = (request) =>
+      stop(request.name, request == CliStopRequest.sigint ? 130 : 143);
+  stopRequests.onIdleError = report.unexpected;
   try {
     if (io.failed) stop('output_failure', 74);
     if (report.code == 0) {
@@ -91,15 +97,53 @@ Future<int> runDatagramCommand(
         );
       }
     }
-    // CLI subscriptions are settled by the runners before the final snapshot.
+    // Runner subscriptions have settled. The invocation source stays owned
+    // through storage finalization and its own real cancellation below.
     await io.drain();
     if (io.failed) stop('output_failure', 74);
+    await storage?.finish();
+    if (storage?.failed ?? false) {
+      report.choose('storage_finalization_failure', 74);
+      report.storageFacts = {
+        ...report.storageFacts,
+        'maintenance': storage!.maintenance,
+        'storageClose': storage.closeResult,
+        'additionalFailures': storage.failures,
+      };
+      for (final failure in storage.failures) {
+        io.err('Error: Storage finalization failed: ${jsonEncode(failure)}');
+      }
+    }
+    await stopRequests.finish();
+    stopRequests.replay(
+      (request) =>
+          stop(request.name, request == CliStopRequest.sigint ? 130 : 143),
+      report.unexpected,
+    );
+    if (stopRequests.cancellationError != null) {
+      report.cleanupFailure(
+        'signalSubscription',
+        stopRequests.cancellationError,
+      );
+      report.cleanupState = 'failed';
+      report.storageFacts = {
+        ...report.storageFacts,
+        'signalCleanup': stopRequests.fields,
+      };
+    }
     report.rethrowInternal();
     report.finish();
     await io.drain();
     return report.code;
   } finally {
-    io.onFailure = null;
+    try {
+      await storage?.finish();
+    } finally {
+      await stopRequests.finish();
+      stopRequests.onIdleStop = null;
+      stopRequests.onIdleError = null;
+      io.onFailure = null;
+    }
   }
 }
 
@@ -113,6 +157,7 @@ final class _Report {
   String reason = 'completed';
   Map<String, Object?>? failure;
   Map<String, Object?>? result;
+  Map<String, Object?> storageFacts = const {};
   final cleanupFailures = <Map<String, Object?>>[];
   String cleanupState = 'notRequired';
   Object? internalError;
@@ -230,6 +275,7 @@ final class _Report {
       },
       'failure': failure,
       'result': result,
+      ...storageFacts,
     };
     if (options.operation == 'listen') {
       event('end', envelope);
@@ -253,6 +299,9 @@ final class _Report {
       io.out(
         'cleanup: $cleanupState (failureCount: ${cleanupFailures.length})',
       );
+      if (storageFacts.isNotEmpty) {
+        io.out('storage: ${safeText(jsonEncode(storageFacts))}');
+      }
     }
   }
 }
@@ -277,7 +326,7 @@ Future<void> _runTask(
   Future<DiagnosticTaskResult> Function() cancel,
   Future<DiagnosticTaskResult> done,
   Future<DiagnosticCleanupResult> cleanupDone,
-  Stream<CliStopRequest>? requests,
+  DatagramSignals requests,
   void Function(String, int) stop,
   void Function(void Function()) installInterrupt,
 ) async {
@@ -326,11 +375,11 @@ Future<void> _runTask(
   );
   StreamSubscription<CliStopRequest>? signals;
   try {
-    signals = requests?.listen(
+    signals = requests.listen(
       (request) {
         stop(request.name, request == CliStopRequest.sigint ? 130 : 143);
       },
-      onError: (Object error, StackTrace stack) {
+      (Object error, StackTrace stack) {
         report.unexpected(error, stack);
         interrupt();
       },
@@ -367,7 +416,7 @@ Duration _timerDelay(Duration duration) => Duration(
 Future<void> _runRaw(
   _Report report,
   MeshCoreSession session,
-  Stream<CliStopRequest>? requests,
+  DatagramSignals requests,
   void Function(String, int) stop,
   void Function(void Function()) installInterrupt,
   Duration Function()? elapsed,
@@ -552,11 +601,11 @@ Future<void> _runRaw(
   }
 
   try {
-    signals = requests?.listen(
+    signals = requests.listen(
       (request) => guard(
         () => stop(request.name, request == CliStopRequest.sigint ? 130 : 143),
       ),
-      onError: fail,
+      fail,
     );
     events = session.events.listen(
       (event) => guard(() {
@@ -594,9 +643,11 @@ Future<void> _runRaw(
     await closing;
     await working;
     await receptionDone;
-    await _cancelSubscription(report, entries, 'entriesSubscription');
-    await _cancelSubscription(report, events, 'sessionSubscription');
-    await _cancelSubscription(report, signals, 'signalSubscription');
+    await Future.wait([
+      _cancelSubscription(report, entries, 'entriesSubscription'),
+      _cancelSubscription(report, events, 'sessionSubscription'),
+      _cancelSubscription(report, signals, 'signalSubscription'),
+    ]);
     for (final failure in session.cleanupFailures) {
       report.cleanupFailure(failure.stage.name, failure);
     }

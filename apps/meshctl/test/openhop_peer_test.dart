@@ -406,6 +406,16 @@ void main() {
     },
   );
   test('configuration and URI validation are inert and do not echo input', () {
+    for (final option in [
+      '--profile=SECRET_PROFILE',
+      '--record',
+      '--all-data-types',
+    ]) {
+      final json = _json(Uri.parse('http://127.0.0.1:1/'), 'ping');
+      (json['datagramArguments'] as List).add(option);
+      expect(() => OpenHopPeerConfig(json, 'ping'), throwsFormatException);
+    }
+
     for (final url in [
       'file:///private',
       'http://user:secret@host/',

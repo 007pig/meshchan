@@ -74,13 +74,17 @@ final class OpenHopPeerConfig {
       final arguments = (json['datagramArguments'] as List).cast<String>();
       if (arguments.any(
         (s) =>
-            s == '--port' ||
-            s.startsWith('--port=') ||
+            const {
+              '--port',
+              '--profile',
+              '--record',
+              '--all-data-types',
+            }.any((option) => s == option || s.startsWith('$option=')) ||
             s == '--help' ||
             s == '-h',
       )) {
         throw const FormatException(
-          'Port overrides and help are not configuration.',
+          'Product business options, port overrides and help are not peer configuration.',
         );
       }
       final parsed = datagramParser().parse([

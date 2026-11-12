@@ -118,8 +118,9 @@ def main():
         if op == 'respond':
             result += ['--max-responses=1']
         return result
-    def a_command(op, params):
-        return [str(product), 'datagram', op, '--port=' + data['aPort'], '--json',
+    def a_command(case, op, params):
+        return [str(product), '--data-dir=' + str(args.output / 'cli-data' / case),
+                'datagram', op, '--port=' + data['aPort'], '--json',
                 '--timeout=5', '--init-timeout=15', '--startup-delay=0',
                 '--task-timeout=' + ('60' if op == 'ping' else '90'), *params]
     plan = []
@@ -137,7 +138,7 @@ def main():
         a_params = common('a', a_op, ids, content)
         if case == 'H7':
             a_params[a_params.index('--max-responses=1')] = '--max-responses=2'
-        a_cmd = a_command(a_op, a_params)
+        a_cmd = a_command(case, a_op, a_params)
         b_cmd = peer_command(case, b_op, common('b', b_op, ids, content),
                              content if b_op == 'listen' else None) if b_op else None
         plan.append({'id': case, 'status': 'NOT_RUN', 'aTestId': ids[0], 'bTestId': ids[1],

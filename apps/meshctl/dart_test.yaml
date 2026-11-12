@@ -1,0 +1,3 @@
+# Process suites launch dart run children that bundle assets into the same
+# workspace .dart_tool/lib directory. Keep suites sequential, as in core tests.
+concurrency: 1

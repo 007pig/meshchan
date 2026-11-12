@@ -19,6 +19,7 @@ Future<void> main(List<String> args) async {
     return;
   }
   final storage = await CoreStorage.open(dataDirectory: Directory(args.single));
+  final history = storage.history;
   RecordedOperation? operation;
   try {
     // open has already completed exclusive startup recovery.
@@ -58,12 +59,22 @@ Future<void> main(List<String> args) async {
   } finally {
     // An external cancellation source can call operation.cancel immediately;
     // it must not wait for any database save to do so.
-    if (operation != null) {
-      operation.cancel().ignore();
-      await operation.done;
+    try {
+      if (operation != null) {
+        operation.cancel().ignore();
+        await operation.done;
+      }
+      await history.waitForMaintenance();
+    } finally {
+      await storage.close();
     }
-    await storage.close();
   }
+  // done precedes the storage continuation that unpins and requests retention.
+  // Read these memory getters after the actual close barrier, without new I/O.
+  stdout.writeln('Final maintenance: ${history.latestMaintenance?.state.name}');
+  stdout.writeln(
+    'Unacknowledged maintenance failures: ${history.unacknowledgedFailureCount}',
+  );
 }
 
 final class _ExampleTransport implements CompanionTransport {

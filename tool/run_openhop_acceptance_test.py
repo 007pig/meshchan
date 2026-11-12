@@ -48,6 +48,34 @@ class AcceptancePlanTest(unittest.TestCase):
         change(config)
         path.write_text(json.dumps(config))
 
+    def test_generated_product_commands_use_isolated_absolute_business_directories(self):
+        directories = []
+        for case in self.plan['cases']:
+            argv = case['aArgv']
+            if case['id'] == 'H0':
+                self.assertEqual(argv[1], 'info')
+                continue
+            self.assertTrue(argv[1].startswith('--data-dir='))
+            directory = Path(argv[1].split('=', 1)[1])
+            self.assertTrue(directory.is_absolute())
+            self.assertTrue(directory.is_relative_to(self.folder / 'generated' / 'cli-data'))
+            self.assertFalse(directory.exists())
+            directories.append(directory)
+        self.assertEqual(len(set(directories)), 7)
+        acceptance.validate_plan(self.plan)
+
+    def test_retained_legacy_product_arguments_remain_readable(self):
+        for case in self.plan['cases']:
+            case['aArgv'] = [v for v in case['aArgv'] if not v.startswith('--data-dir=')]
+        acceptance.validate_plan(self.plan)
+
+    def test_invalid_business_directory_is_rejected_before_execution(self):
+        for directory in ('', ' ', 'relative', '/tmp/bad\0path'):
+            with self.subTest(directory=directory):
+                self.case('H2')['aArgv'][1] = '--data-dir=' + directory
+                with self.assertRaises(ValueError):
+                    acceptance.validate_plan(self.plan, 'H2')
+
     def test_generated_matrix_and_b15_followups_have_derived_limits(self):
         cases, limits = acceptance.validate_plan(self.plan)
         self.assertEqual([c['id'] for c in cases], list(acceptance._CASE_OPERATIONS))

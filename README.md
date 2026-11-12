@@ -2,12 +2,16 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
-The offline business core now covers **Phase 1 / 1C / Step 6**: persistent drafts,
-profiles/settings, validated parameter resolution, finite diagnostic recording,
-and exclusive startup recovery. Hosts can observe logical facts, real cleanup
-and persistence separately through the [public core API](packages/meshchan_core/README.md#finite-diagnostic-recording-and-startup-recovery-1c6).
-History query/pruning/export and CLI business wiring remain later steps. Package
-versions remain `0.1.0-dev.2`; this is not a new release or hardware acceptance.
+The offline business core and product CLI now cover **Phase 1 / 1C / Step 8**:
+persistent drafts, complete operation presets, typed settings, default/explicit
+profile resolution, opt-in diagnostic recording, recovery, bounded history,
+protected deletion, retention and safe single-page export. The [CLI guide](docs/cli.md#offline-business-commands-and-storage-1c8)
+explains data directories, revision/cursor inputs and independent logical,
+cleanup, save, maintenance and close results. All finite datagrams open business
+storage; only `--record` adds a diagnostic run. Recorded listen emits one final
+summary, while unrecorded listen keeps its per-entry NDJSON. Package versions
+remain `0.1.0-dev.2`; dev.3 delivery and clean-machine distribution remain 1C.9.
+These are software/source/AOT results, not new hardware acceptance.
 
 The current implementation covers **Phase 1 / 1B / Step 9: finite USB/openHop development acceptance and a local `0.1.0-dev.2` candidate**. The product remains USB-only. A source-only [openHop peer](docs/openhop-acceptance.md) reuses Meshchan's existing core for a selected virtual Companion over binary WebSocket. It is excluded from the product bundle and is not an independent application-protocol oracle. The fresh [software gate](docs/development.md#1b9-software-validation-on-november-10-2026) and source/AOT synthetic checks passed. [Real Direct acceptance](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) established exact round trips in both directions, the binary boundary, and no-responder timeout. A later [authorized H2/H7 comparison](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026) passed local acceptance and active cancellation with B command=15 s/A=5 s. Every basic case now has a passing record, with all earlier failures retained; relay paths and physical unplug remain untested. See the [dev.2 local delivery record](docs/releases/phase-1b-dev2.md).
 
@@ -26,8 +30,8 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | Package | Responsibility and current status |
 | --- | --- |
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
-| `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery; bounded history queries, guarded deletion, automatic retention and safe JSON summary export (1C.7). SQLite schema 1 remains unchanged. CLI wiring (1C.8) remains next. See the [offline history API and example](packages/meshchan_core/README.md#diagnostic-history-retention-and-safe-export-1c7). |
-| `apps/meshctl` | Asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
+| `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery; bounded history queries, guarded deletion, automatic retention and safe JSON summary export (1C.7). SQLite schema 1 remains unchanged. The public host API is now wired into meshctl (1C.8). See the [offline history API and example](packages/meshchan_core/README.md#diagnostic-history-retention-and-safe-export-1c7). |
+| `apps/meshctl` | Offline draft/profile/settings/history commands and asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
 
 Local Python scripts and tests use the latest installed stable Python **3.15 or
 newer**. On this Mac, `/opt/homebrew/bin/python3` is the verified 3.15.2 entry;
@@ -86,7 +90,7 @@ build/dist/bundle/bin/meshctl info --help
 build/dist/bundle/bin/meshctl watch --help
 ```
 
-Move or copy the entire `apps/meshctl/build/dist/bundle/` directory, including `bin/meshctl` and `lib/liblibserialport_plus.dylib` on macOS. Do not distribute the executable alone. Build output is ignored by Git. This bundle was checked on local macOS arm64, including after moving it outside the repository; clean-machine compatibility and other platforms remain unverified, with the runtime restrictions described above.
+Move or copy the entire `apps/meshctl/build/dist/bundle/` directory, including `bin/meshctl` and all serial/SQLite native assets under `lib/` on macOS. Do not distribute the executable alone. Build output is ignored by Git. This bundle was checked on local macOS arm64, including after moving it outside the repository; clean-machine compatibility and other platforms remain unverified, with the runtime restrictions described above.
 
 See the [Developer Guide](docs/development.md) for toolchain requirements, reproducible checks, dependency sources and licenses, and CI details. The [Validation Record](docs/hardware-validation.md) separates verified software and selected-port checks from remaining validation.
 

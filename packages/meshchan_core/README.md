@@ -14,7 +14,8 @@ checks, and bounded cursor pagination through `CoreStorage.drafts`.
 `CoreStorage.resolveParameters`. 1C.6 adds `CoreStorage.record`, explicit typed
 whitelist projections, independent logical/cleanup saves, and exclusive startup
 recovery. 1C.7 implements `CoreStorage.history` and independent maintenance
-reports. CLI wiring (1C.8) remains unimplemented.
+reports. The product CLI now uses these public entry points in 1C.8; see the
+[CLI host contract](../../docs/cli.md#offline-business-commands-and-storage-1c8).
 Opening storage never accesses devices; it archives incomplete
 diagnostic records from the previous owner before returning a usable handle.
 The [1C.1 contract](../../docs/architecture/offline-core.md) remains authoritative.
@@ -723,3 +724,26 @@ Schema/snapshot 1, diagnostic summary format 1, CLI schema 1, dependencies and
 package version remain unchanged. CLI flags, directories, explicit ports,
 output destinations, maintenance error precedence and exit wiring belong to
 1C.8; native SQLite product distribution and dev.3 acceptance remain later work.
+
+## Product host integration (1C.8)
+
+`meshctl` chooses a platform default or explicit `--data-dir` and holds one
+exclusive handle per business invocation, including query/export and unrecorded
+datagrams. It calls the public resolver for all four finite operations, preserving
+presence, explicit port authorization and per-run content. Only `--record` calls
+the recording coordinator. Offline CLI operations never supply a transport.
+No link-layer/database dependency direction changes are needed.
+
+After recording done, the CLI waits for already requested maintenance while open,
+then awaits close to cover recording admission, final unpin maintenance and DB
+release. It retains history only to read memory getters after close, including
+sticky failures. Committed repository/recording results remain separate from
+maintenance, close, output and the host's cancellation source/exit code. Recorded
+listen offers one finite logical/cleanup/persistence summary; core exposes no
+per-packet observation stream to reconstruct. The product export writes the
+returned core JSON string verbatim and sends its cursor separately to stderr.
+
+The 1C.8 source/AOT gate exercises real business SQLite in a fresh complete CLI
+bundle and after same-host bundle relocation. This does not establish clean-machine
+redistribution, other-platform native support or RF acceptance. Schema/snapshot 1,
+summary format 1 and package versions remain unchanged; dev.3 delivery is 1C.9.

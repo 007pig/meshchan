@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 
 from prepare_openhop_acceptance import validated_passive_report
-from run_openhop_acceptance import attempt_accounting, case_send_limits, validate_content_length, _send_limit
+from run_openhop_acceptance import attempt_accounting, case_send_limits, validate_content_length, _send_limit, product_datagram_arguments
 
 BUILD_ID = '0.1.0-dev.2-macos-arm64-20261110T193252Z'
 TRIAL_DIRECTORIES = [
@@ -61,10 +61,11 @@ def _check_boundary_content(case):
         raise ValueError('Boundary evidence requires an actual 131-byte initiating command.')
     for record in initiators:
         argv = record['argv']
-        if argv[1:3] != ['datagram', 'ping']:
+        arguments = product_datagram_arguments(argv)
+        if arguments[:2] != ['datagram', 'ping']:
             raise ValueError('Boundary evidence requires the expected A ping command.')
-        _send_limit('ping', argv[3:], 1)
-        validate_content_length('H5', 'ping', argv[3:], case['contentBytes'])
+        _send_limit('ping', arguments[2:], 1)
+        validate_content_length('H5', 'ping', arguments[2:], case['contentBytes'])
 
 
 def _reconcile_process_metadata(directory, cases):

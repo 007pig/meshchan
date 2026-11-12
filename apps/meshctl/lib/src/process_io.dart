@@ -6,7 +6,7 @@ import 'package:meshcore_link/meshcore_link.dart';
 import '../meshctl.dart';
 import 'cli_output.dart';
 
-/// Lazily register supported signals only when a validated session subscribes.
+/// Lazily register supported signals only when a validated invocation subscribes.
 Stream<CliStopRequest> processStopRequests({
   bool? windows,
   Stream<ProcessSignal> Function(ProcessSignal)? watch,
@@ -36,16 +36,18 @@ Stream<CliStopRequest> processStopRequests({
     onCancel: () async {
       Object? failure;
       StackTrace? failureStack;
-      for (final subscription in subscriptions) {
-        try {
-          await subscription.cancel();
-        } catch (error, stack) {
-          failure ??= error;
-          failureStack ??= stack;
-        }
-      }
+      await Future.wait([
+        for (final subscription in subscriptions)
+          Future.sync(subscription.cancel).then<void>(
+            (_) {},
+            onError: (Object error, StackTrace stack) {
+              failure ??= error;
+              failureStack ??= stack;
+            },
+          ),
+      ]);
       if (failure != null) {
-        Error.throwWithStackTrace(failure, failureStack!);
+        Error.throwWithStackTrace(failure!, failureStack!);
       }
     },
   );

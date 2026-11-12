@@ -5,7 +5,8 @@ import 'dart:typed_data';
 import 'package:fake_async/fake_async.dart';
 import 'package:meshcore_link/src/transport/native_serial_connection.dart';
 import 'package:meshcore_link/src/transport/serial_transport.dart';
-import 'package:meshctl/meshctl.dart';
+
+import 'isolated_cli.dart';
 
 // Development-only support: no test registration, test runner, real signals,
 // environment lookup, native constructor fallback, or production encoder.

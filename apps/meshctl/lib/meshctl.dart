@@ -1,12 +1,16 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:args/args.dart';
+import 'package:meshchan_core/meshchan_core.dart';
 import 'package:meshcore_link/meshcore_link.dart';
 
+import 'src/business_command.dart';
+import 'src/business_storage.dart';
+import 'src/stored_datagram_command.dart';
 import 'src/cli_display.dart';
 import 'src/cli_output.dart';
-import 'src/datagram_command.dart';
 import 'src/datagram_options.dart';
 import 'src/session_command.dart';
 import 'src/version.dart';
@@ -24,6 +28,8 @@ Future<int> runCli(
   Stream<CliStopRequest>? stopRequests,
   Duration Function()? diagnosticElapsed,
   Uint8List Function()? diagnosticNonceFactory,
+  Future<CoreStorage> Function(Directory directory)? openStorage,
+  String Function(String? explicit)? selectDataDirectory,
 }) async {
   final io = CliOutput(output, error);
   try {
@@ -35,6 +41,8 @@ Future<int> runCli(
       stopRequests,
       diagnosticElapsed,
       diagnosticNonceFactory,
+      openStorage,
+      selectDataDirectory,
     );
     await io.drain();
     return code == 0 && io.failed ? 74 : code;
@@ -51,8 +59,14 @@ Future<int> _run(
   Stream<CliStopRequest>? stopRequests,
   Duration Function()? diagnosticElapsed,
   Uint8List Function()? diagnosticNonceFactory,
+  Future<CoreStorage> Function(Directory directory)? openStorage,
+  String Function(String? explicit)? selectDataDirectory,
 ) async {
   final parser = _helpParser()
+    ..addOption(
+      'data-dir',
+      help: 'Persistent business data directory; relative explicit paths use caller cwd.',
+    )
     ..addFlag(
       'version',
       negatable: false,
@@ -74,11 +88,14 @@ Future<int> _run(
   );
 
   parser.addCommand('datagram', datagramParser());
+  for (final group in offlineGroups) {
+    parser.addCommand(group, offlineParser(group));
+  }
 
   final ArgResults options;
   final ArgResults? command;
   try {
-    options = parser.parse(arguments);
+    options = parser.parse(_literalOptionValues(parser, arguments));
     command = options.command;
     final rest = <String>[];
     for (ArgResults? level = options; level != null; level = level.command) {
@@ -89,12 +106,10 @@ Future<int> _run(
         'Unknown command or unexpected positional arguments: ${safeText(rest.join(' '))}',
       );
     }
-  } on FormatException catch (exception) {
+  } on FormatException {
     return _usageError(
       io,
-      arguments.contains('datagram')
-          ? 'Invalid datagram command syntax or unexpected positional arguments.'
-          : exception.message,
+      'Invalid command syntax, unknown option or unexpected positional arguments.',
     );
   }
 
@@ -107,6 +122,17 @@ Future<int> _run(
     io.out(
       datagramHelp(
         parser.commands['datagram']!,
+        command.flag('help') ? null : command.command?.name,
+      ),
+    );
+    return 0;
+  }
+  if (offlineGroups.contains(command?.name) &&
+      (command!.flag('help') || (command.command?.flag('help') ?? false))) {
+    io.out(
+      offlineHelp(
+        command.name!,
+        parser.commands[command.name]!,
         command.flag('help') ? null : command.command?.name,
       ),
     );
@@ -138,26 +164,70 @@ Future<int> _run(
   }
 
   final name = command.name!;
-  if (name == 'datagram') {
+  if (offlineGroups.contains(name) || name == 'datagram') {
     final leaf = command.command;
     if (leaf == null) {
-      io.out(datagramHelp(parser.commands['datagram']!));
+      io.out(
+        name == 'datagram'
+            ? datagramHelp(parser.commands[name]!)
+            : offlineHelp(name, parser.commands[name]!),
+      );
       return 0;
     }
-    final DatagramOptions datagram;
+    final DatagramInput? datagram;
+    final OfflineCommand? offline;
+    final String directory;
     try {
-      datagram = DatagramOptions(leaf);
-    } on FormatException catch (exception) {
-      return _usageError(io, exception.message);
+      datagram = name == 'datagram' ? DatagramInput(leaf) : null;
+      offline = datagram == null ? await prepareOffline(name, leaf) : null;
+      directory =
+          selectDataDirectory?.call(options.option('data-dir')) ??
+          dataDirectoryPath(explicit: options.option('data-dir'));
+    } on FormatException catch (e) {
+      return _usageError(io, e.message);
+    } on CoreException catch (e) {
+      return _usageError(io, 'Invalid business input (${e.code.code}).');
+    } on HostIoFailure catch (e) {
+      io.err('Error: Host I/O failed (${e.source}).');
+      if (leaf.flag('json')) {
+        io.out(
+          jsonEncode({
+            'schemaVersion': 1,
+            'command': name,
+            'action': leaf.name,
+            'operationSucceeded': false,
+            'committed': false,
+            'reason': 'host_io_failure',
+            'exitCode': 74,
+            'failure': {
+              'domain': 'host',
+              'source': e.source,
+              'code': 'io_failure',
+            },
+            'maintenance': null,
+            'storageClose': null,
+            'additionalFailures': const [],
+          }),
+        );
+      }
+      return 74;
     }
-    return runDatagramCommand(
-      datagram,
+    Future<CoreStorage> open() =>
+        openStorage?.call(Directory(directory)) ??
+        CoreStorage.open(dataDirectory: Directory(directory));
+    if (offline != null) return runOffline(offline, io, open, stopRequests);
+    return runStoredDatagram(
+      datagram!,
       io,
-      createTransport ?? (path) => SerialTransport(portPath: path),
+      open,
+      createTransport ?? (String path) => SerialTransport(portPath: path),
       stopRequests,
       elapsed: diagnosticElapsed,
       nonceFactory: diagnosticNonceFactory,
     );
+  }
+  if (options.wasParsed('data-dir')) {
+    return _usageError(io, '--data-dir does not apply to this command.');
   }
   SessionOptions? sessionOptions;
   try {
@@ -333,7 +403,11 @@ void _writeHelp(CliOutput io, ArgParser parser) {
     '  port-check  Open and close one explicitly specified port.\n'
     '  info        Initialize once, close, and print a device snapshot.\n'
     '  watch       Initialize once and observe session summaries.\n'
-    '  datagram    Finite raw or diagnostic datagram operations.\n\n'
+    '  datagram    Finite raw or diagnostic datagram operations.\n'
+    '  draft       Create, view, revise, delete and page local drafts.\n'
+    '  profile     Manage complete operation presets.\n'
+    '  settings    View, set or reset two typed settings.\n'
+    '  history     Query, inspect, delete, prune or export one summary page.\n\n'
     'info/watch send two initialization commands and may change device session state.\n'
     'Run "meshctl <command> --help" for command usage.',
   );
@@ -341,3 +415,41 @@ void _writeHelp(CliOutput io, ArgParser parser) {
 
 String _usbId(int? value) =>
     value == null ? '-' : value.toRadixString(16).padLeft(4, '0').toUpperCase();
+
+// args' inline-value regex does not accept embedded line breaks. Convert only
+// declared value options to its separate-token form, keeping value tokens opaque.
+List<String> _literalOptionValues(ArgParser parser, List<String> arguments) {
+  final names = <String>{};
+  void collect(ArgParser p) {
+    names.addAll(p.options.values.where((o) => !o.isFlag).map((o) => o.name));
+    for (final child in p.commands.values) {
+      collect(child);
+    }
+  }
+
+  collect(parser);
+  final result = <String>[];
+  var valueNext = false, positional = false;
+  for (final argument in arguments) {
+    if (valueNext || positional) {
+      result.add(argument);
+      valueNext = false;
+      continue;
+    }
+    if (argument == '--') positional = true;
+    final equals = argument.indexOf('=');
+    final name = argument.startsWith('--')
+        ? argument.substring(2, equals < 0 ? argument.length : equals)
+        : '';
+    if (names.contains(name)) {
+      if (equals >= 0) {
+        result.add('--$name');
+        result.add(argument.substring(equals + 1));
+        continue;
+      }
+      valueNext = true;
+    }
+    result.add(argument);
+  }
+  return result;
+}

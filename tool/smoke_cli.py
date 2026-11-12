@@ -177,7 +177,7 @@ class Checks:
         arguments = [command, "--help"] if command else ["--help"]
         expected = {"help", "json"}
         if command is None:
-            expected = {"help", "version"}
+            expected = {"help", "version", "data-dir"}
         elif command != "ports":
             expected.add("port")
             if command in ("info", "watch"):
@@ -191,8 +191,10 @@ class Checks:
         arguments = ["datagram"] + ([operation] if operation else []) + ["--help"]
         expected = {"help"}
         if operation:
-            expected.update(("json", "verbose", "port", "timeout", "init-timeout",
+            expected.update(("json", "verbose", "profile", "record", "port", "timeout", "init-timeout",
                              "startup-delay", "task-timeout"))
+            if operation == "listen":
+                expected.add("all-data-types")
             if operation != "listen":
                 expected.update(("send-channel", "route-descriptor", "path-hex"))
             if operation != "send":
@@ -210,6 +212,59 @@ class Checks:
             if operation == "respond":
                 expected.add("max-responses")
         self.check(name, prefix + arguments, cwd, out="Usage: meshctl datagram ", options=expected)
+
+
+
+def business_checks(checks, label, prefix, cwd, data):
+    """Exercise product SQLite in distinct processes, always outside the bundle."""
+    start = prefix + ["--data-dir", str(data)]
+    def invoke(name, arguments, validate):
+        return json.loads(checks.check(
+            f"{label}: SQLite {name}", start + arguments, cwd,
+            out="", validate=validate,
+        ))
+    def envelope(value):
+        result = json.loads(value)
+        if (result.get("schemaVersion") != 1
+                or result.get("operationSucceeded") is not True
+                or result.get("exitCode") != 0
+                or result.get("storageClose", {}).get("state") != "closed"):
+            raise ValueError("Expected successful operation and completed storage close")
+        return result
+    body = "test draft 中文😀\r\nexact\rnext\n"
+    def draft(value):
+        result = envelope(value)
+        if (result["draft"]["body"] != body or result["draft"]["revision"] != 1
+                or result["draft"]["bodyUtf8ByteLength"] != len(body.encode("utf-8"))):
+            raise ValueError("Draft text/revision/UTF-8 length changed")
+    created = invoke("create draft", ["draft", "create", "--title=example",
+                     "--body", body, "--json"], draft)
+    if not (data / "meshchan.sqlite").is_file():
+        raise ValueError("Business command did not commit a real SQLite file")
+    invoke("read draft after process reopen", ["draft", "show", "--id", created["draft"]["id"], "--json"], draft)
+    profile = invoke("create profile", ["profile", "create", "--name=example listen",
+                     "--operation=listen", "--receive-channel=2", "--duration=1",
+                     "--task-timeout=5", "--json"], envelope)
+    profile_id = profile["profile"]["id"]
+    invoke("set typed settings", ["settings", "set", "--default-profile-id", profile_id,
+           "--history-limit=2", "--json"], envelope)
+    def settings(value):
+        result = envelope(value)
+        if result["settings"] != {"defaultProfileId": profile_id, "diagnosticHistoryLimit": 2}:
+            raise ValueError("Settings did not persist across processes")
+    invoke("read settings after process reopen", ["settings", "show", "--json"], settings)
+    def empty_history(value):
+        if envelope(value)["items"] != []:
+            raise ValueError("Offline commands unexpectedly recorded diagnostics")
+    invoke("query empty history", ["history", "list", "--json"], empty_history)
+    def export(value):
+        result = json.loads(value)
+        if (set(result) != {"diagnosticSummaryFormatVersion", "exportedAt", "runs"}
+                or result["diagnosticSummaryFormatVersion"] != 1 or result["runs"] != []):
+            raise ValueError("Expected raw, empty core summary envelope")
+    invoke("export one empty summary page", ["history", "export"], export)
+    if (Path(cwd) / "meshchan.sqlite").exists():
+        raise ValueError("Business data unexpectedly appeared in cwd")
 
 
 def main():
@@ -243,11 +298,11 @@ def main():
             (["watch", "--startup-delay=-1"], "--startup-delay"),
             (["port-check"], "--port"),
             (["port-check", "--port", " \t "], "--port"),
-            (["unknown-command"], "Unknown command"),
-            (["--unknown-option"], "unknown-option"),
+            (["unknown-command"], "Invalid command syntax"),
+            (["--unknown-option"], "Invalid command syntax"),
             (["datagram", "send"], "--port"),
-            (["datagram", "unknown"], "Invalid datagram command syntax"),
-            (["datagram", "listen", "--help", "extra"], "Invalid datagram command syntax"),
+            (["datagram", "unknown"], "Invalid command syntax"),
+            (["datagram", "listen", "--help", "extra"], "Invalid command syntax"),
             (["datagram", "ping", "--port=unused", "--task-timeout=0"], "--task-timeout"),
         ]
         for label, prefix in (
@@ -268,6 +323,8 @@ def main():
                     f"{label}: reject {arguments!r}", prefix + arguments, CLI,
                     code=64, err=("Error:", "meshctl --help", diagnostic),
                 )
+            with tempfile.TemporaryDirectory(prefix=f"meshchan {label} sqlite ") as data:
+                business_checks(checks, label, prefix, CLI, Path(data))
             if sys.platform == "linux":
                 for arguments in (["ports"], ["ports", "--json"]):
                     checks.check(
@@ -304,6 +361,8 @@ def main():
                 "relocated: missing port", relocated + ["info"], destination,
                 code=64, err=("Error:", "--port", "meshctl --help"),
             )
+            business_checks(checks, "relocated", relocated, destination,
+                            destination / "explicit business data")
             checks.check(
                 "source: datagram synthetic acceptance",
                 [str(args.dart), "run", "tool/datagram_acceptance.dart"], CLI,
@@ -315,7 +374,8 @@ def main():
             )
         print(f"PASS: {checks.count} process checks on {sys.platform}; "
               "CLI, observation, and development acceptance bundles contain native assets; "
-              "five datagram scenarios passed in source and AOT.")
+              "five datagram scenarios passed in source and AOT; "
+              "product source/AOT/relocated entries committed and reopened real SQLite.")
         return 0
     except (OSError, ValueError, argparse.ArgumentTypeError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

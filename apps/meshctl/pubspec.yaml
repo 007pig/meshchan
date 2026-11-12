@@ -9,6 +9,7 @@ environment:
 
 dependencies:
   args: ^2.7.0
+  meshchan_core: ^0.1.0-dev.2
   meshcore_link: ^0.1.0-dev.2
 
 dev_dependencies:

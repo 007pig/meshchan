@@ -156,6 +156,19 @@ def _protocol_uint8_option(arguments, name):
     return number
 
 
+def product_datagram_arguments(argv):
+    """Accept retained legacy argv and the new explicit isolated directory form."""
+    if not isinstance(argv, list) or not all(isinstance(v, str) for v in argv):
+        raise ValueError('Require native product argument strings.')
+    start = 1
+    if len(argv) > 1 and argv[1].startswith('--data-dir='):
+        directory = argv[1].split('=', 1)[1]
+        if not directory.strip() or '\0' in directory or not Path(directory).is_absolute():
+            raise ValueError('Require an absolute isolated business directory.')
+        start += 1
+    return argv[start:]
+
+
 def validate_plan(plan, only_case=None):
     """No processes/devices/secrets: inspect both actual roles and B config."""
     if not isinstance(plan, dict) or not isinstance(plan.get('cases'), list):
@@ -187,15 +200,16 @@ def validate_plan(plan, only_case=None):
         a_operation, b_operation = _CASE_OPERATIONS[case_id]
         a = case['aArgv']
         if (not isinstance(a, list) or len(a) < 3 or not all(isinstance(v, str) for v in a)
-                or a[1:3] != ['datagram', a_operation] or not Path(a[0]).is_absolute()
+                or product_datagram_arguments(a)[:2] != ['datagram', a_operation] or not Path(a[0]).is_absolute()
                 or Path(a[0]).name != 'meshctl' or Path(a[0]).parent.name != 'bin'):
             raise ValueError('Require the expected native A operation.')
         if executable is not None and a[0] != executable:
             raise ValueError('Use one native candidate throughout the matrix.')
         executable = a[0]
-        a_limit = _send_limit(a_operation, a[3:], 2 if case_id == 'H7' else 1)
-        initiating_operation, initiating_arguments = a_operation, a[3:]
-        receive = None if a_operation == 'send' else _protocol_uint8_option(a[3:], 'receive-channel')
+        a_arguments = product_datagram_arguments(a)[2:]
+        a_limit = _send_limit(a_operation, a_arguments, 2 if case_id == 'H7' else 1)
+        initiating_operation, initiating_arguments = a_operation, a_arguments
+        receive = None if a_operation == 'send' else _protocol_uint8_option(a_arguments, 'receive-channel')
         b = case.get('bArgv')
         b_limit = 0
         if b_operation is None:

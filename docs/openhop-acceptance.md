@@ -502,3 +502,14 @@ boundary. Both actual initiating arguments and contentBytes must agree with the
 empty H4 boundary before execution; evaluation also rejects a nonzero H4 count.
 Empty content still carries the diagnostic header and nonce. See the
 [offline cancellation/exit record](development.md#runner-cancellation-exits-and-empty-content-fixes-on-november-11-2026).
+
+
+### Business-storage isolation in new plans (1C.8)
+
+Newly generated product datagram argv includes an absolute `--data-dir` per
+case under the plan output's `cli-data/` directory. Use a current product CLI
+that supports that option. The source-only B peer retains its separate
+configuration/transport path. H0 info still opens no business storage. Validation
+and evidence summarization accept retained older argv for historical records;
+this does not authorize replaying or altering an old RF plan. Generation/tests
+perform no device work, and no new RF result is claimed by 1C.8.

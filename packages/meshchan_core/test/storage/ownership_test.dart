@@ -257,7 +257,13 @@ void main() {
           mode == 'fail-close' ? 'storage_write_failed' : 'database_corrupt',
         );
         expect(report['unconfirmed'], isTrue);
-        if (mode == 'fail-close') expect(report['state'], 'closeUnconfirmed');
+        if (mode == 'fail-close') {
+          expect(report['state'], 'closeUnconfirmed');
+          expect(report['draftErrors'], [
+            'storage_read_failed',
+            'storage_write_failed',
+          ]);
+        }
         expect(await child.line(), 'data_directory_busy');
         await busyProcess();
         child.send('release');

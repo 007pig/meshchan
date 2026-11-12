@@ -1,7 +1,7 @@
 import 'validation.dart';
 
 /// An opaque local 128-bit identifier, not an article or protocol identifier.
-/// Generation and insertion uniqueness checks belong to later storage work.
+/// Core generates draft IDs and checks uniqueness on insertion.
 final class LocalId {
   LocalId(this.value) {
     requireValid(RegExp(r'^[0-9a-f]{32}$').hasMatch(value));

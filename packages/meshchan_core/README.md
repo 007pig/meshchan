@@ -1,14 +1,16 @@
 # meshchan_core
 
-Pure Dart offline business values, repository/history contracts, and a controlled
-production Drift/SQLite storage lifecycle. Import
+Pure Dart offline business values, persistent drafts, repository/history
+contracts, and a controlled production Drift/SQLite storage lifecycle. Import
 `package:meshchan_core/meshchan_core.dart`. All packages remain `0.1.0-dev.2`.
 
 1C.2 established immutable business values and interfaces. 1C.3 adds the real
 schema 1, internal row codecs, directory ownership, file opening/closing, and a
-migration baseline. Repository interfaces remain unimplemented: there is no draft
-CRUD, profile/settings service, ID generation, communication-result mapper,
-recorder, business recovery, history query/retention/export service, or CLI wiring.
+migration baseline. 1C.4 implements draft CRUD, secure local IDs, revision
+checks, and bounded cursor pagination through `CoreStorage.drafts`.
+Profile/settings repositories, the communication-result mapper, recorder,
+business recovery, history query/retention/export service, and CLI wiring remain
+unimplemented.
 Opening storage never accesses devices or changes diagnostic business records.
 The [1C.1 contract](../../docs/architecture/offline-core.md) remains authoritative.
 
@@ -19,14 +21,16 @@ The host chooses a data directory explicitly and awaits:
 ```dart
 final storage = await CoreStorage.open(dataDirectory: hostDataDirectory);
 try {
-  // Future repositories will compose with this owned lifecycle.
+  final draft = await storage.drafts.create(const DraftContent());
+  // Use the returned revision for the next mutation.
+  await storage.drafts.delete(draft.id, expectedRevision: draft.revision);
 } finally {
   await storage.close();
 }
 ```
 
 `hostDataDirectory` is a host-supplied `dart:io` Directory, not a default chosen
-by core. The public handle exposes only lifecycle/state; it exports no arbitrary
+by core. The public handle exposes lifecycle/state and drafts; it exports no arbitrary
 SQL executor or lock bypass. The internal `StorageHandle.useDatabase` admits work
 only while open and tracks each returned Future through all queries/transactions.
 Later package services must use that seam and must not retain its database.
@@ -42,6 +46,87 @@ the same failure; there is no forced release or timeout. Earlier committed data
 is not declared lost. An open failure preserves its primary category and adds
 `CoreException.cleanupUnconfirmed` if resource release cannot be confirmed.
 Unconfirmed resources remain quarantined until process exit.
+
+## Persistent drafts (1C.4)
+
+Only the public package import is needed for the complete business flow:
+
+```dart
+import 'dart:io';
+import 'package:meshchan_core/meshchan_core.dart';
+
+Future<void> editDraft(Directory hostDataDirectory) async {
+  final storage = await CoreStorage.open(dataDirectory: hostDataDirectory);
+  try {
+    final drafts = storage.drafts;
+    final created = await drafts.create(
+      const DraftContent(title: 'Local note', body: 'First version'),
+    );
+    final current = await drafts.read(created.id);
+    final saved = await drafts.update(
+      current.id,
+      const DraftContent(title: 'Local note', body: 'Revised version'),
+      expectedRevision: current.revision,
+    );
+    final page = await drafts.list(size: PageSize(50));
+    if (page.nextCursor != null) {
+      await drafts.list(size: PageSize(50), after: page.nextCursor);
+    }
+    await drafts.delete(saved.id, expectedRevision: saved.revision);
+  } finally {
+    await storage.close();
+  }
+}
+```
+
+Concurrent edits can make an expected revision stale. The caller must handle
+`CoreException` with code `conflict`, for example by reading the latest version
+and letting the user resolve the edit; core never retries with a newer revision.
+Missing reads/updates/deletes are `not_found`, including a repeated hard delete.
+Expected revisions must be positive. Each mutation completes only after its
+short transaction commits. A rejected write or commit rolls back the complete
+version and fails the call; there is no asynchronous save queue or memory cache.
+
+Creation uses `Random.secure()` to generate 16 bytes, encoding each as two
+lowercase hexadecimal digits (32 total). SQLite enforces uniqueness. Only an
+`id` conflict retries, for at most **8 total attempts**; exhaustion, unavailable
+entropy, or a failed ID/clock source is `storage_write_failed`. Other constraints
+and commit errors never trigger ID retries. Changed updates increment revision
+once. At **9223372036854775807**, a changed update cannot generate another version
+and fails as `storage_write_failed`; reads, no-ops, and version-matched deletes
+still work. Initial revision is 1.
+
+Titles and bodies preserve empty text, Unicode, whitespace, and mixed newline
+sequences without normalization, trimming, or a radio-sized byte cap. The input
+boundary rejects unpaired UTF-16 surrogates as `invalid_input` before writing,
+rather than accepting UTF-8 replacement. Valid emoji, combining characters, and
+explicit U+FFFD remain exact. `bodyUtf8ByteLength` remains the derived getter.
+Core takes one clock reading at creation (`createdAt == updatedAt`), and a new
+reading only for changed content. Times convert to UTC and retain integer
+microseconds; equal or backward clock readings are saved as observed. ID and
+createdAt never change. Exact title/body comparison determines no-op, **after**
+the expected revision check; stale identical text still conflicts.
+
+Lists default to 50 items, with page sizes 1..200. SQL orders by
+`updated_at_us DESC, id DESC` using `drafts_updated`, applies the bound row-value
+comparison `(updated_at_us, id) < (?, ?)` to seek directly from the two-key
+cursor, and fetches at most size + 1 rows. When more rows exist, `nextCursor`
+uses the last item actually returned; empty, terminal, and exactly full terminal pages
+have no cursor. Deleting the cursor's row does not invalidate continuation.
+Separate calls share no snapshot: concurrent edits can move records between
+pages. All fetched rows, including the extra probe row, undergo strict decoding;
+damaged storage fails as `database_corrupt` instead of skipping records.
+
+The getter returns the same repository instance without SQL. Each method enters
+the owning `StorageHandle.useDatabase` once, spanning validation, queries,
+transactions/commit, decoding, and result construction. Mutations use the write
+failure category; read/list use the read category. Business errors, recognized
+corruption, and `cleanupUnconfirmed` retain their existing semantics. Default
+errors contain no draft text, paths, SQL, or raw native causes; normal calls log
+nothing. Close stops new admission and drains accepted operations before actual
+connection close and ownership release. Old repositories fail in closing,
+closed, or closeUnconfirmed states; opening another storage never revives them.
+There is no second connection, repository close, or ownership mechanism.
 
 ## Directory and file boundary
 

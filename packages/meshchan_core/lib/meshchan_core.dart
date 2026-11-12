@@ -1,5 +1,5 @@
 /// Offline business values and asynchronous persistence contracts.
-/// Controlled production storage lifecycle; no repository implementation or device I/O.
+/// Persistent drafts and a controlled storage lifecycle without device I/O.
 library;
 
 export 'src/storage/database.dart' show databaseSchemaVersion;

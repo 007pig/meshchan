@@ -67,14 +67,28 @@ Future<void> main(List<String> args) async {
       return;
     }
     if (mode == 'fail-close') {
+      final drafts = storage.drafts;
       try {
         await storage.close();
       } on CoreException catch (e) {
+        final rejected = <String>[];
+        for (final action in [
+          () => drafts.list(),
+          () => drafts.create(const DraftContent()),
+        ]) {
+          try {
+            await action();
+            rejected.add('unexpected_success');
+          } on CoreException catch (failure) {
+            rejected.add(failure.code.code);
+          }
+        }
         stdout.writeln(
           jsonEncode({
             'code': e.code.code,
             'unconfirmed': e.cleanupUnconfirmed,
             'state': storage.state.name,
+            'draftErrors': rejected,
           }),
         );
       }

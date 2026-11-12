@@ -6,15 +6,17 @@ import 'models/draft.dart';
 import 'validation.dart';
 import 'values.dart';
 
-/// Contracts only: no storage implementation is provided in 1C.2.
+/// Persistent drafts are available through CoreStorage.drafts (1C.4).
 ///
 /// Every mutation succeeds only after its transaction commits. Failures use
 /// CoreException's stable categories and preserve the prior complete version.
 /// The host supplies storage resources and exclusive directory ownership. All
 /// business access, including reads, requires that ownership; contention fails
-/// immediately with data_directory_busy. Directory identity and locks are 1C.3.
+/// immediately with data_directory_busy. Directory identity and locks are owned
+/// by CoreStorage. Other repository/history interfaces remain future work.
 abstract interface class DraftRepository {
-  /// Generates an ID and initial revision 1. Empty exact text is valid.
+  /// Generates a secure random ID and initial revision 1; awaits commit.
+  /// Empty exact text is valid. Unpaired UTF-16 surrogates are invalid_input.
   Future<Draft> create(DraftContent content);
 
   /// Missing IDs fail with not_found.
@@ -22,6 +24,8 @@ abstract interface class DraftRepository {
 
   /// Positive expected revision is required. Mismatch is conflict. Changed
   /// content increments revision once; unchanged content retains revision/time.
+  /// Revision is checked before no-op detection. A changed save at the signed
+  /// 64-bit revision limit fails with storage_write_failed.
   Future<Draft> update(
     LocalId id,
     DraftContent content, {
@@ -32,6 +36,7 @@ abstract interface class DraftRepository {
   Future<void> delete(LocalId id, {required int expectedRevision});
 
   /// updatedAt DESC, id DESC; omitted size means 50, allowed range 1..200.
+  /// The cursor need not identify a live row. Calls are not a shared snapshot.
   Future<Page<Draft, UpdatedCursor>> list({
     PageSize? size,
     UpdatedCursor? after,

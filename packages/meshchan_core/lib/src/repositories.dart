@@ -13,7 +13,7 @@ import 'values.dart';
 /// The host supplies storage resources and exclusive directory ownership. All
 /// business access, including reads, requires that ownership; contention fails
 /// immediately with data_directory_busy. Directory identity and locks are owned
-/// by CoreStorage. Other repository/history interfaces remain future work.
+/// by CoreStorage. Diagnostic history remains future work.
 abstract interface class DraftRepository {
   /// Generates a secure random ID and initial revision 1; awaits commit.
   /// Empty exact text is valid. Unpaired UTF-16 surrogates are invalid_input.
@@ -71,8 +71,8 @@ abstract interface class SettingsRepository {
 
   /// Validates a nonnull defaultProfileId in the same transaction as the save.
   /// No coercion/clamping. Success means commit, including both setting fields.
-  /// Later bounded eligible-history pruning is scheduled on limit changes;
-  /// pruning failure is reported without undoing an already committed save.
+  /// Persists the limit only. 1C.7 will trigger bounded eligible-history pruning
+  /// after commit; pruning failure must not undo a committed settings save.
   Future<AppSettings> save(AppSettings settings);
 
   /// Explicitly restores the two defaults, preserving unrelated business data.

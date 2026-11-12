@@ -1,5 +1,5 @@
 /// Offline business values and asynchronous persistence contracts.
-/// Persistent drafts and a controlled storage lifecycle without device I/O.
+/// Persistent drafts/profiles/settings and typed resolution without device I/O.
 library;
 
 export 'src/storage/database.dart' show databaseSchemaVersion;
@@ -74,3 +74,20 @@ export 'src/values.dart'
         UpdatedCursor,
         HistoryCursor,
         Page;
+
+export 'src/models/effective_parameters.dart'
+    show
+        BudgetOverrides,
+        RouteOverrides,
+        EndpointOverrides,
+        DataTypeOverride,
+        SendOverrides,
+        ListenOverrides,
+        PingOverrides,
+        RespondOverrides,
+        EffectiveParameterRequest,
+        SendParameterRequest,
+        ListenParameterRequest,
+        PingParameterRequest,
+        RespondParameterRequest,
+        EffectiveParameters;

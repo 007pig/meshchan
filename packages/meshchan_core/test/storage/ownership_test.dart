@@ -263,6 +263,14 @@ void main() {
             'storage_read_failed',
             'storage_write_failed',
           ]);
+          expect(report['profileSettingsErrors'], [
+            'storage_read_failed',
+            'storage_write_failed',
+            'storage_read_failed',
+            'storage_write_failed',
+            'storage_write_failed',
+            'storage_read_failed',
+          ]);
         }
         expect(await child.line(), 'data_directory_busy');
         await busyProcess();

@@ -16,6 +16,8 @@ import '../storage/ownership_test.dart' show CloseBarrier;
 // One-shot hooks wrap the real executor, including its transaction executors.
 // A commit rejection occurs before send(), leaving Drift to perform rollback.
 class Control extends QueryInterceptor {
+  Control({this.readTable = 'stored_drafts'});
+  final String readTable;
   Future<void> Function()? afterRead;
   Future<void> Function(QueryExecutor)? afterWrite;
   Future<void> Function()? beforeCommit;
@@ -30,7 +32,7 @@ class Control extends QueryInterceptor {
     String statement,
     List<Object?> args,
   ) async {
-    if (statement.startsWith('SELECT') && statement.contains('stored_drafts')) {
+    if (statement.startsWith('SELECT') && statement.contains(readTable)) {
       final failure = readFailure;
       readFailure = null;
       if (failure != null) throw failure;
@@ -50,7 +52,7 @@ class Control extends QueryInterceptor {
       return rows;
     }
     final rows = await executor.runSelect(statement, args);
-    if (statement.startsWith('INSERT INTO "stored_drafts"')) {
+    if (statement.startsWith('INSERT INTO "$readTable"')) {
       await _written(executor);
     }
     return rows;
@@ -60,6 +62,17 @@ class Control extends QueryInterceptor {
     final action = afterWrite;
     afterWrite = null;
     await action?.call(executor);
+  }
+
+  @override
+  Future<int> runInsert(
+    QueryExecutor executor,
+    String statement,
+    List<Object?> args,
+  ) async {
+    final id = await executor.runInsert(statement, args);
+    await _written(executor);
+    return id;
   }
 
   @override

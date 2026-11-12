@@ -599,3 +599,46 @@ record remains unchanged; actual 1C.4 local results and remote-CI limitations ar
 recorded separately in the developer guide. Existing native CLI smoke remains
 hardware-free evidence for the current bundles, which do not yet use business
 SQLite; it is not a SQLite product-distribution or power-loss guarantee.
+
+## Profiles, settings, and effective parameters (1C.5)
+
+Run the same member generation/schema guard and full core command; the existing
+CI suite discovers these tests. Targeted local command:
+
+```bash
+(cd packages/meshchan_core && dart test --reporter expanded \
+  test/repositories/profile_public_test.dart \
+  test/repositories/profile_settings_test.dart \
+  test/repositories/profile_validation_test.dart \
+  test/repositories/parameter_resolver_test.dart)
+```
+
+No additional test framework or CI job was added. `profile_fixtures.dart` supplies
+complete legal presets for success paths; older codec-only fixtures keep their
+original structural scope. The existing real QueryInterceptor is minimally
+parameterized by actual read table and additionally intercepts insert-on-conflict
+settings writes. It still defaults to stored_drafts for previous tests. All
+native hook/generation/test/build gates remain sequential.
+
+| Test file/group | Evidence |
+| --- | --- |
+| `profile_public_test.dart` | Business work imports only the public entry; all four operation presets, duplicate names/exact Unicode, secure ID shape, settings/default resolution with binary bytes, listing/deletion/reset and actual file reopen. |
+| `profile_validation_test.dart` | Parameterized lower/upper invalid bounds across all operations, inclusive legal boundaries, startup/init relationship, no task-budget ordering restriction, endpoint range/distinctness, send/listen dataType zero difference, exact helper-validated routes, no byte truncation, and unpaired surrogate rejection before clock/write. NUL-name regressions check the real SQLite schema predicate, reject incompatible create/update before transactions/queries/clock/ID, preserve compatible NUL text through update/reopen, and classify stored constraint violations as corrupt. |
+| `profile_settings_test.dart`: save | Canonical deep no-op with reordered/indented stored JSON performs no UPDATE/time call; operation replacement clears irrelevant fields. UTC microseconds/equal/backward clocks, missing update target, independent draft ID seam, targeted collision retry/exhaustion, non-ID trigger failure without retry, and protected entropy/clock exceptions. Concurrent valid profile saves both succeed in order. |
+| Settings/default references | Absent read does not insert; save/reset and 1..100000 limits; dangling references fail but explicit null/reset repair them. Delete clears only default reference while retaining a nondefault limit, drafts, and exact stored run/association. Controlled concurrent save/delete orders produce the contracted null or not_found outcomes. |
+| Pagination/damage | Default/1/50/200 page sizes, tied timestamps, exact terminal pages, deleted cursor continuation and corrupt probe. EXPLAIN of actual intercepted SQL requires two-key profiles_updated SEARCH, rejecting full scan/temp sort. Raw type, JSON, operation, semantic route/budget and settings damage fail as database_corrupt at accessed boundaries. |
+| Mutation atomicity | Create/update/delete/settings-save/reset each reject a real write and separately reject before actual COMMIT, observe rollback, immediately read complete old state on the same handle, then write normally and reopen. Deleting the default rolls both profile and reference back on failure. |
+| Lifecycle/errors | Close barriers cover admitted profile mutation, settings read/save and resolver (closing between settings and profile SQL); accepted work finishes and new/old handles fail appropriately. Existing process closeUnconfirmed test now covers new repositories/resolution. SELECT failures in mutations use write fallback; read/list/settings/resolver use read fallback. |
+| `parameter_resolver_test.dart`: selection | Explicit > default > no preset; explicit selection bypasses unrelated dangling/corrupt settings. Missing selected/default references and wrong operation cannot be bypassed by complete overrides. Complete invalid stored profiles fail before overrides. |
+| Presence/merge | Per-field budgets/endpoints, zero channel/descriptor/startup, listen filter inherit/null/zero, inherited versus explicit empty paths, descriptor-only mismatch, final cross-field failure and every required diagnostic field without invented defaults. |
+| Content/capacity | Missing versus explicit empty send/PING bytes, arbitrary binary, UTF-8 byte-count boundary, Flood and all legal zero-hop Direct forms, 0x60/64-byte path raw 107 versus diagnostic 73 and one-over-limit; Flood 165 versus 131. Respond resolves without unknown future content. |
+| Snapshots/no side effects | Mutable path/payload are changed immediately after async call and while SQL waits; result remains copied/unmodifiable. Later operation edit/delete leaves the resolved result unchanged. Successful/failed resolution preserves all profile/settings/draft/run rows and consumes no ID/clock. |
+
+See the separate [1C.5 validation record](development.md#1c5-local-validation-on-november-12-2026)
+for observed command results/toolchain. Schema 1 and frozen artifacts are
+unchanged. Retention selection/pruning/export (1C.7), diagnostic snapshot mapping,
+registration/recovery/coordinator (1C.6), and CLI parsing/explicit-port/execution
+wiring (1C.8) remain unimplemented. Current native CLI smoke has no business
+SQLite execution path and does not establish SQLite product AOT distribution.
+No device enumeration, transport/session/task construction, RF trial, arbitrary
+power-loss test, or remote CI success is inferred from this coverage.

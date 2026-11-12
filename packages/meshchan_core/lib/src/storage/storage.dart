@@ -9,6 +9,10 @@ import 'package:path/path.dart' as p;
 import '../errors.dart';
 import '../repositories.dart';
 import '../repositories/draft_repository.dart';
+import '../repositories/profile_repository.dart';
+import '../repositories/settings_repository.dart';
+import '../models/effective_parameters.dart';
+import '../parameter_resolver.dart' as resolver;
 import '../values.dart';
 import 'database.dart';
 import 'ownership.dart';
@@ -26,6 +30,16 @@ abstract interface class CoreStorage {
   /// Persistent drafts bound to this handle. Getting it performs no I/O.
   /// Close rejects new calls and waits for already admitted operations.
   DraftRepository get drafts;
+
+  /// Stable offline repositories on this same owned connection.
+  ProfileRepository get profiles;
+  SettingsRepository get settings;
+
+  /// Resolves a consistent profile/settings snapshot and validates invocation
+  /// bytes without device I/O or writes. The result is not a safe run snapshot.
+  Future<EffectiveParameters> resolveParameters(
+    EffectiveParameterRequest request,
+  );
   Future<void> close();
 }
 
@@ -38,11 +52,13 @@ final class StorageHooks {
     this.executorFactory,
     this.afterCreate,
     this.draftId,
+    this.profileId,
     this.clock,
   });
   final FutureOr<QueryExecutor> Function(File file)? executorFactory;
   final FutureOr<void> Function()? afterCreate;
   final LocalId Function()? draftId;
+  final LocalId Function()? profileId;
   final DateTime Function()? clock;
 }
 
@@ -130,11 +146,25 @@ final class StorageHandle implements CoreStorage {
       generateId: hooks.draftId,
       clock: hooks.clock,
     );
+    profiles = PersistentProfileRepository(
+      this,
+      generateId: hooks.profileId,
+      clock: hooks.clock,
+    );
+    settings = PersistentSettingsRepository(this);
   }
   final DirectoryOwnership _owner;
   final CoreDatabase _db;
   @override
   late final DraftRepository drafts;
+  @override
+  late final ProfileRepository profiles;
+  @override
+  late final SettingsRepository settings;
+  @override
+  Future<EffectiveParameters> resolveParameters(
+    EffectiveParameterRequest request,
+  ) => resolver.resolveParameters(this, request);
   StorageState _state = StorageState.open;
   int _active = 0;
   Completer<void>? _idle;

@@ -13,7 +13,8 @@ defines the `meshchan_core` boundary, local business objects, diagnostic
 recording/recovery rules, and acceptance requirements for subsequent 1C steps.
 1C.2 added the package, values/interfaces, and dependency probe described below.
 The later [1C.3 implementation](#production-storage-and-migration-baseline-1c3)
-adds production storage; recording and CLI business behavior remain future work.
+adds production storage; [1C.4](#persistent-draft-repository-1c4) adds draft CRUD
+and pagination. Recording and CLI business behavior remain future work.
 
 ## SDK and native toolchain baseline
 
@@ -2082,6 +2083,10 @@ newer database structures fail as `unsupported_database_version` before Drift.
 
 ### Handoff to 1C.4
 
+This is the preserved 1C.3 handoff. Its draft work is now implemented in
+[1C.4](#persistent-draft-repository-1c4); profiles/settings and the later services
+remain pending.
+
 Use `storage/storage.dart`'s owned `StorageHandle.useDatabase` for the complete
 Future of each short transaction, `database.dart`/`schema.drift` for SQL, and
 `codec.dart` for exact typed row conversions. Do not retain a database from the
@@ -2180,3 +2185,173 @@ locking/path/journal tests are configured for CI but were not run on this Mac.
 Existing CLI bundles have no business SQLite wiring: their passing native smoke
 is not SQLite product AOT packaging, a real historical upgrade, diagnostic
 recovery, hardware/RF acceptance, or completion of any later 1C step.
+
+## Persistent draft repository (1C.4)
+
+Implementation started from clean `master` at
+`950b59f43a460c9257755c10b2100dd1af649c8d`, containing merged PR #20 and its 1C.3
+storage prerequisites. No checkout/reset, history rewrite, or dependency/version
+change was needed. Production schema 1, the saved snapshot, generated helpers,
+root lockfile, ownership/preflight policy, and connection close ordering remain
+unchanged.
+
+The public `CoreStorage.drafts` getter returns one lifecycle-bound
+`DraftRepository`. The [package example](../packages/meshchan_core/README.md#persistent-drafts-1c4)
+demonstrates host-supplied directory, create/read/update/list/delete, returned
+revisions, caller conflict handling, and awaited close in `finally`. No CLI or
+platform directory selection is introduced. Only drafts are implemented.
+
+`lib/src/repositories/draft_repository.dart` contains the concrete implementation.
+Every call has one outer `StorageHandle.useDatabase` callback. Short mutations
+read/compare/write inside the same Drift transaction, and the Future includes
+actual commit; private reads take the admitted database instead of reentering
+admission. This lets close reject new work while draining accepted operations.
+There is no connection, cache, queue, or close method owned by the repository.
+Strict `storedDrafts` readers and `encodeDraft`/`decodeDraft` remain the storage
+boundary, including during list decoding. Read/list select the read fallback;
+create/update/delete explicitly select the write fallback, preserving business
+errors, corruption, and existing unconfirmed-cleanup facts.
+
+Production IDs use `Random.secure()`: 16 bytes, each padded to two lowercase hex
+digits. `INSERT ... ON CONFLICT(id) DO NOTHING RETURNING ...` checks actual
+insertion; only that conflict retries, at most eight total attempts in the same
+transaction. No exception-code heuristic, pre-insert lookup, replacement, or
+broad ignore is used. Other constraints, I/O, or commit failures exit immediately.
+Clock/ID failures are converted to a safe write error before the generic storage
+boundary could mistake a source's TypeError/FormatException for row corruption.
+Internal `StorageHooks.draftId` and `clock` supply deterministic test inputs;
+these hooks and the implementation are not exported by the public package.
+
+Creation reads the clock once, converts to UTC, preserves microseconds, and sets
+revision 1 with equal creation/update times. Changed updates preserve ID and
+createdAt, compare revisions before exact title/body no-op detection, and add
+one revision only after checking the signed 64-bit maximum. A changed save at
+9223372036854775807 fails with `storage_write_failed` because another version
+cannot be generated; no-op/read/delete still work. Equal/backward clock readings
+are not clamped. UTF-16 surrogate validation at the input boundary prevents
+lossy UTF-8 replacement. Valid Unicode, explicit U+FFFD, empty text, whitespace,
+and mixed newlines are preserved; there is no radio-sized body cap or cached
+byte count.
+
+Lists use `drafts_updated` order `updated_at_us DESC, id DESC` with the bound
+row-value comparison `(updated_at_us, id) < (?, ?)` and SQL limit size + 1. This
+preserves the strict two-key cursor semantics while allowing a direct composite
+index seek instead of rescanning earlier entries or sorting an OR result. The
+next cursor is the last returned item only when the probe proves more rows exist. Deleted
+cursor rows remain valid sort values. Separate calls share no snapshot. Even
+the probe row is strictly decoded before returning a page.
+
+### Handoff to 1C.5
+
+Start with `lib/src/storage/storage.dart`, `lib/src/repositories/draft_repository.dart`,
+`lib/src/storage/{database.dart,schema.drift,codec.dart}`, and
+`test/repositories/draft_repository_test.dart`. Reuse the single-admission,
+private-read, short-transaction, safe-error pattern and the real executor
+interceptor/Completer tests. The current ID generation and clock protection are
+small private draft helpers; extract only demonstrated shared needs when
+profiles require them. Do not expose deterministic hooks to hosts or add a
+second connection/owner. The existing settings FK is still infrastructure;
+profile/settings repositories and their validation/default behavior belong to
+1C.5. Diagnostic recording/recovery, history/pruning/export, effective parameter
+merging, CLI wiring, and SQLite product AOT distribution remain later work.
+
+### 1C.4 local validation on November 11, 2026
+
+Actual environment: macOS **27.2.1 (26B131), arm64**;
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` **3.13.7 stable**.
+The installed Flutter metadata reports **3.47.9 stable**, framework revision
+`c197ca5199e9ee5661e865596c9c07294dfab51c`. Native commands used a process-local
+Apple-compiler-first PATH and `/usr/bin/clang` **21.0.0** (`clang-2100.4.1.1`),
+with the installed Xcode/macOS SDK. Python was explicitly verified before project
+execution: `/opt/homebrew/bin/python3` **3.15.2**, resolving `sys.executable` to
+`/opt/homebrew/opt/python@3.15/bin/python3.15`. No SDK, interpreter, channel,
+global configuration, dependency, or package version was installed or changed.
+
+| Check | Observed result |
+| --- | --- |
+| Root `dart pub get --enforce-lockfile` | Passed; single root lockfile unchanged. |
+| Member `dart run build_runner build` | Passed; production/probe generated sources unchanged. |
+| Member `dart run tool/check_schema.dart` | Passed; formal schema 1, saved snapshot, and generated helper set/bytes match. |
+| Root `dart format --output=none --set-exit-if-changed .` | Passed; 89 Dart files, zero changes. |
+| Root `dart analyze --fatal-infos` | Passed; no issues. |
+| New repository tests | **33 passed**, including public-only CRUD and both failure stages for create/update/delete. |
+| Full `meshchan_core` | **76 passed**; all prior 43 value/probe/storage/preflight/ownership cases retained, with closeUnconfirmed draft rejection added to the existing process case. |
+| Full `meshcore_link` | **180 passed**. |
+| Full `meshctl` | **97 passed** with local loopback permitted. The initial sandbox attempt failed its 127.0.0.1 server binds with Operation not permitted; that separate failed log is retained. No device or external peer was used. |
+| Python development tools | **46 passed** under the verified Python 3.15.2. |
+| Native build gates | Three fresh bundles passed sequentially: product CLI, serial observation fixture, and development datagram acceptance fixture. |
+| Shared source/AOT smoke | **69 passed on macOS**, including native assets, broken pipe, complete-bundle relocation, and five synthetic scenarios in both source and AOT. |
+| Final diff/artifact review | Patch whitespace, new-file whitespace, conflict-marker scan, generated/schema/lockfile equality, and changed-file review passed. |
+| Remote CI / Linux | **NOT_RUN** for this local change; no push/dispatch or remote result was observed. The existing CI full-suite command discovers the new tests without a workflow change. |
+
+Logs, generated-artifact hashes, actual toolchain output, and fresh bundles are
+retained locally in ignored `build/phase-1c4/local-20261111/`:
+
+```text
+pub-get.log
+codegen.log
+schema-check.log
+generated-diff.log
+generated.sha256
+format.log
+analyze.log
+draft-tests.log
+meshchan-core-tests.log
+meshcore-link-tests.log
+meshctl-tests.log
+meshctl-tests-network-enabled.log
+python-tests.log
+python-toolchain.json
+toolchain.log
+build-meshctl.log
+build-observation.log
+build-datagram-acceptance.log
+smoke.log
+final-review.log
+```
+
+The committed schema artifacts and root lockfile compare unchanged to the actual
+starting HEAD. These repository tests exercise controlled SQLite transaction
+failures and normal reopen durability, not arbitrary power-loss safety. The
+current CLI still has no business SQLite wiring; passing its native bundles and
+smoke does not establish SQLite product AOT distribution. No hardware/RF check,
+release/tag, 1C.5 implementation, or diagnostic business recovery was performed.
+
+### 1C.4 pagination review follow-up on November 11, 2026
+
+The review identified a real cursor-query planning defect. On the actual
+SQLite **3.54.1**, a regression using the repository's generated SQL and bound
+arguments reproduced `SCAN stored_drafts USING INDEX drafts_updated` at page
+size 50. At size 2, the OR predicate instead produced `MULTI-INDEX OR` followed
+by `USE TEMP B-TREE FOR ORDER BY`. Neither plan directly traversed the composite
+index from the cursor in the required order; LIMIT alone did not bound the
+preceding index work.
+
+The continuation now uses `(updated_at_us, id) < (?, ?)` with generated column
+expressions and Drift-bound integer/string variables. The small private
+`_BeforeDraftCursor` expression supplies row-value syntax absent from the locked
+Drift query builder. Strict table readers, the one-admission operation boundary,
+ordering, page limit, and cursor semantics remain intact.
+
+The new test explains the actual intercepted SELECT rather than a handwritten
+copy. For sizes 2 and 50, with both a live and deleted cursor row, it requires
+`SEARCH` through `drafts_updated` with the two-column range, rejects a table/index
+scan and temporary sort, and checks returned records across a timestamp tie.
+The test failed before the fix and passed afterward. No performance benchmark or
+large stress fixture was added.
+
+Follow-up validation used the installed
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` **3.13.7 stable** on
+macOS arm64. The targeted query-plan regression passed, repository tests passed
+**34/34**, the complete offline-core suite passed **77/77**, root formatting
+reported **89 files, zero changes**, and root fatal-info analysis reported no
+issues. The schema guard passed; schema 1, generated artifacts, root lockfile,
+and dependency/version manifests remain unchanged. Existing communication/CLI,
+Python, native bundle and smoke checks were not repeated for this confined
+query/test/documentation fix; their preceding dated results remain above.
+No remote CI result was observed.
+
+The before-fix failing plan, after-fix result, complete tests, formatting,
+analysis, schema guard, and final review logs are retained under ignored
+`build/phase-1c4/pagination-review-20261111/`. This follow-up preserves all existing
+uncommitted 1C.4 work and does not implement 1C.5.

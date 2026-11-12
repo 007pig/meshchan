@@ -7,6 +7,9 @@ import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 
 import '../errors.dart';
+import '../repositories.dart';
+import '../repositories/draft_repository.dart';
+import '../values.dart';
 import 'database.dart';
 import 'ownership.dart';
 import 'preflight.dart';
@@ -19,6 +22,10 @@ abstract interface class CoreStorage {
       openStorage(dataDirectory);
 
   StorageState get state;
+
+  /// Persistent drafts bound to this handle. Getting it performs no I/O.
+  /// Close rejects new calls and waits for already admitted operations.
+  DraftRepository get drafts;
   Future<void> close();
 }
 
@@ -27,9 +34,16 @@ enum StorageState { open, closing, closed, closeUnconfirmed }
 /// Package-internal fault seams. The factory is invoked only after ownership
 /// and successful preflight. Returned executors transfer close responsibility.
 final class StorageHooks {
-  const StorageHooks({this.executorFactory, this.afterCreate});
+  const StorageHooks({
+    this.executorFactory,
+    this.afterCreate,
+    this.draftId,
+    this.clock,
+  });
   final FutureOr<QueryExecutor> Function(File file)? executorFactory;
   final FutureOr<void> Function()? afterCreate;
+  final LocalId Function()? draftId;
+  final DateTime Function()? clock;
 }
 
 // Strongly retain ambiguous failures, including their native connections. Never
@@ -79,7 +93,7 @@ Future<CoreStorage> openStorage(
       throw const CoreException(CoreErrorCode.storageOpenFailed);
     }
     await db.customSelect('SELECT 1').get();
-    return StorageHandle._(owner, db);
+    return StorageHandle._(owner, db, hooks);
   } catch (error) {
     final primary = classifyStorageError(
       error,
@@ -107,12 +121,20 @@ Future<CoreStorage> openStorage(
   }
 }
 
-/// Internal access for later repositories and fixtures. Every operation must
+/// Internal access for repositories and fixtures. Every operation must
 /// return a Future spanning all its queries/transactions; never retain [db].
 final class StorageHandle implements CoreStorage {
-  StorageHandle._(this._owner, this._db);
+  StorageHandle._(this._owner, this._db, StorageHooks hooks) {
+    drafts = PersistentDraftRepository(
+      this,
+      generateId: hooks.draftId,
+      clock: hooks.clock,
+    );
+  }
   final DirectoryOwnership _owner;
   final CoreDatabase _db;
+  @override
+  late final DraftRepository drafts;
   StorageState _state = StorageState.open;
   int _active = 0;
   Completer<void>? _idle;

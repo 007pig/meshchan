@@ -118,7 +118,10 @@ build. No command here supplies a valid port or enumerates on macOS.
   "$MESHCHAN_DART" pub get --enforce-lockfile
   "$MESHCHAN_DART" pub workspace list
   (cd packages/meshchan_core && "$MESHCHAN_DART" run build_runner build)
-  git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
+  (cd packages/meshchan_core && "$MESHCHAN_DART" run tool/check_schema.dart)
+  git diff --exit-code -- packages/meshchan_core/lib/src/storage/database.g.dart \
+    packages/meshchan_core/test/support/dependency_probe_database.g.dart \
+    packages/meshchan_core/drift_schemas packages/meshchan_core/test/storage/generated
   "$MESHCHAN_DART" format --output=none --set-exit-if-changed .
   "$MESHCHAN_DART" analyze --fatal-infos
   python3 -m unittest discover -s tool -p '*_test.py'
@@ -561,3 +564,38 @@ This configuration is not itself evidence of a remote passing run. The local
 records the actual environment/results. Existing CLI bundles still do not call
 business SQLite, so their source/AOT smoke is not product SQLite distribution
 acceptance. Linux CI coverage intent is separate from macOS local lock evidence.
+
+## Persistent draft repository (1C.4)
+
+After locked dependency resolution, generation, and the schema guard, run:
+
+```bash
+(cd packages/meshchan_core && dart test --reporter expanded test/repositories)
+(cd packages/meshchan_core && dart test --reporter expanded)
+```
+
+Keep the existing `concurrency: 1` and two-minute per-test timeout. The new
+repository tests use independent temporary real databases and await handle
+cleanup. They reuse existing storage fixtures, representation/error assertions,
+and the native close barrier. No sleep, device operation, user directory, or
+cross-page long transaction is used.
+
+| Test group | Behavior verified |
+| --- | --- |
+| `draft_repository_public_test.dart` | Only the public package import opens a real file and obtains `storage.drafts`. Exact empty/large Unicode text, combining characters, explicit U+FFFD, mixed newlines/whitespace, generated ID shape, initial revision/time, byte length, complete CRUD/list, and committed update/delete survive close/reopen. |
+| Time/text/version | Fixed clocks preserve non-millisecond UTC values, equal/backward updates, immutable ID/createdAt, title-only/body-only/both changes, and no-op without a clock read. Unpaired high/low UTF-16 surrogates in either field fail before writing. Positive expected revision, missing, stale identical content, explicit hard delete, and unrelated tables retain their contracted behavior. |
+| Concurrency | A Completer pauses the first changed update's real transaction after reading. Another changed update with the same revision conflicts; a separately controlled stale delete also conflicts and cannot remove the new version. Complete versions survive reopen. |
+| Pagination | Empty/default pages, sizes 1/50/200, adjacent microseconds, tied IDs, static full traversal without duplicates/omissions, exactly full terminal pages, last/empty cursors, and continuation after deleting the previous cursor row. The damaged extra probe row fails the whole page. |
+| Continuation query plan | The real executor interceptor runs EXPLAIN QUERY PLAN on the actual generated SQL and bound arguments. Sizes 2/50, before and after deleting the cursor row, must use a composite range SEARCH on drafts_updated with both keys, without a full table/index scan or temporary sorting. Returned items also cross a tied timestamp boundary correctly. |
+| ID/revision boundaries | A known ID collision retries without replacement; eight collisions exhaust safely. Entropy/clock StateError, UnsupportedError, TypeError, and FormatException remain safe write failures. Real trigger failures from a different table's primary key or CHECK do not retry IDs. Revision max-1 increments to max; changed overflow fails while no-op/read/delete still work. |
+| Mutation failures | Each of create/update/delete writes to the real transaction before an injected constraint rejection, and separately reaches the commit interceptor before COMMIT is rejected. Drift's actual rollback is awaited/observed. The same open storage immediately reads the complete old version, completes a normal mutation, then closes/reopens and reads the durable result. Failed create leaves no new row. |
+| Lifecycle | Read and commit barriers pause an admitted update while close starts. New read/list/create/update/delete calls fail; the accepted operation still completes or rolls back. Native close has not started before settlement and ownership remains busy. After actual close/reopen, the old repository remains rejected. The existing close-failure process fixture additionally checks draft read/write rejection in closeUnconfirmed. |
+| Error boundary | Damaged raw field types and invalid stored revisions remain database_corrupt in read/list/update/delete. Ordinary read failures map to read or write according to the outer operation. Source failures cannot masquerade as corruption. Safe default text omits test content/raw causes, and a typed cleanupUnconfirmed error retains its flag. |
+
+The existing CI full `meshchan_core` test command discovers both new files and
+continues running values, dependency probe, schema, preflight, and ownership
+regressions. No duplicate job or matrix is needed. The 1C.3 historical validation
+record remains unchanged; actual 1C.4 local results and remote-CI limitations are
+recorded separately in the developer guide. Existing native CLI smoke remains
+hardware-free evidence for the current bundles, which do not yet use business
+SQLite; it is not a SQLite product-distribution or power-loss guarantee.

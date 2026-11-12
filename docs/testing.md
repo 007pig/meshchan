@@ -642,3 +642,57 @@ wiring (1C.8) remain unimplemented. Current native CLI smoke has no business
 SQLite execution path and does not establish SQLite product AOT distribution.
 No device enumeration, transport/session/task construction, RF trial, arbitrary
 power-loss test, or remote CI success is inferred from this coverage.
+
+## Recording and startup recovery (1C.6)
+
+Run `dart test test/recording` from packages/meshchan_core for the focused suite,
+then the complete core suite (including repositories, ownership and subprocesses).
+Recording tests use real SQLite files, public core/link operation paths and real
+session/tasks with fake transport. Internal imports inspect rows, inject storage
+failures and exercise protected transitions. No private link constructors,
+alternate inbox consumer or real device is used.
+
+| Test under meshchan_core/test/recording | Evidence |
+| --- | --- |
+| projection_test.dart | Four snapshots, byte/path lengths, units/policies, explicit enums, null versus false/zero, absent reception, RTT/aggregate semantics and contradictory facts. |
+| recording_test.dart | Prepared barrier; zero factory on insert/commit/ID/clock failure; factory/host failure; queued send versus preceding read; early PONG then late write failure; success plus native/host cleanup failure; partial host cleanup while another Future hangs; raw send success/write/rejection/timeout/cancel, listen trailing/filter/ordinary counts, responder limits and sensitive-field exclusion. |
+| run_store_test.dart | Equal facts/different times, conflict/archived guards, cumulative failures, eight-attempt collision limit; real write/SELECT/pre-COMMIT failures, same-handle rollback and subsequent writes; clock captured before blocked SQL while cleanup already starts. |
+| recovery_test.dart | Recovery matrix, partial PONG/nulls, first-time idempotence; multiple batches/ties/unchanged complete rows; later batch rollback preserving prior commits; damaged JSON/semantics/newer format/read/write/clock categories; independent prepared/logical-committed process interruption windows. |
+
+The controlled child in test/storage/process_peer.dart stops after the actual
+registration commit with no transport, or uses the public recorder while native
+close hangs after logical commit. New exclusive open archives only committed
+evidence without replay. Existing ownership tests stay intact; no duplicate lock
+matrix is added. Pending-cleanup tests begin storage.close, verify a contender
+is busy, then release cleanup and inspect saved facts after reopen.
+
+The synchronous-cancellation regressions in recording_test.dart cover raw send
+and listen when the first subscribe callback cancels before returning, including
+repeated cancellation and a second returned subscription. They verify exactly
+one cancellation per source, persisted pending cleanup while another source is
+blocked, retained failures, close/owner protection, and final facts after reopen.
+Separate cases throw during later registration and verify all already returned
+subscriptions are still canceled. Operation cancellation stays immediate; only
+host cleanup settlement waits for the synchronous registration pass to finish.
+
+The raw cancellation-precedence tests inject a transport error and immediately
+cancel in the same turn, before session events or command continuations run.
+Both send and listen are covered during initialization and ready-state work.
+They assert the earlier failure's reason/stage and root evidence, frozen send or
+reception facts, logical commit while native cleanup is blocked, and exact
+summary preservation after cleanup/reopen. Reverse-order controls cancel first
+and then inject an error, confirming the frozen canceled result stays unchanged.
+
+Old codec fixtures intentionally contain structurally valid but business-invalid
+records, including descriptor 0x12 with two path bytes. They still round trip on
+the same handle. Reopen/isolation uses separate legal terminal fixtures with
+0x02/two bytes. Explicit residual fixtures exercise recovery; production open has
+no testing bypass. Fixture corrections preserve original structural coverage.
+
+After locked pub get, run build_runner/check_schema, root format/fatal-info
+analysis, full core/link/CLI, Python tests, the three native builds and shared
+smoke sequentially, as in CI. The runnable public fake example adds no hardware
+claim. Current CLI has no business SQLite execution: bundles/smoke do not establish
+SQLite product AOT distribution. No arbitrary power-loss, real RF/hardware, Linux
+or remote CI result is inferred. See the dated
+[1C.6 local record](development.md#1c6-local-validation-on-november-12-2026).

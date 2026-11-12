@@ -7,7 +7,13 @@ import 'package:drift/native.dart';
 import 'package:meshchan_core/meshchan_core.dart';
 import 'package:meshchan_core/src/storage/ownership.dart';
 import 'package:meshchan_core/src/storage/storage.dart';
+import 'package:meshchan_core/src/recording/run_store.dart';
+import 'package:meshchan_core/src/recording/projection.dart';
 import 'package:sqlite3/sqlite3.dart';
+
+import 'dart:async';
+
+import '../recording/support.dart' as recording;
 
 class RefuseClose extends QueryInterceptor {
   @override
@@ -61,6 +67,42 @@ Future<void> main(List<String> args) async {
             : null,
       ),
     );
+    if (mode == 'record-prepared' || mode == 'record-logical') {
+      final parameters = recording.input(DiagnosticOperation.send);
+      if (mode == 'record-prepared') {
+        // Stop at the real committed registration boundary before any device
+        // resource exists. The process deliberately never starts an operation.
+        await (storage as StorageHandle).useDatabase(
+          (db) => RunStore(db).register(
+            appVersion: 'process-test',
+            configuration: projectConfiguration(parameters),
+            profileId: null,
+            hostRequired: true,
+          ),
+        );
+      } else {
+        final transport = recording.FakeCompanionTransport();
+        transport.closing = () => Completer<void>().future;
+        transport.sending = (bytes, _) async {
+          scheduleMicrotask(() {
+            if (bytes[0] == 0x16) transport.receive(recording.deviceInfo());
+            if (bytes[0] == 0x01) transport.receive(recording.selfInfo());
+            if (bytes[0] == 0x3e) transport.receive([0]);
+          });
+        };
+        final operation = storage.record(
+          parameters: parameters,
+          appVersion: 'process-test',
+          createTransport: () => transport,
+        );
+        final saved = await operation.logicalSaved;
+        if (saved.state != RecordingSaveState.committed) exit(24);
+      }
+      stdout.writeln('ready');
+      await stdout.flush();
+      await stdin.first;
+      exit(23);
+    }
     if (mode == 'try') {
       await storage.close();
       stdout.writeln(jsonEncode({'code': 'opened', 'factories': factories}));

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
+import 'package:meshcore_link/meshcore_link.dart' show CompanionTransport;
 
 import '../errors.dart';
 import '../repositories.dart';
@@ -14,6 +15,10 @@ import '../repositories/settings_repository.dart';
 import '../models/effective_parameters.dart';
 import '../parameter_resolver.dart' as resolver;
 import '../values.dart';
+import '../profile_validation.dart';
+import '../validation.dart';
+import '../recording/recording.dart';
+import '../recording/recovery.dart';
 import 'database.dart';
 import 'ownership.dart';
 import 'preflight.dart';
@@ -40,6 +45,17 @@ abstract interface class CoreStorage {
   Future<EffectiveParameters> resolveParameters(
     EffectiveParameterRequest request,
   );
+
+  /// Admits one entire finite operation before any asynchronous work. The
+  /// transport factory must return a fresh, unused transport and is invoked
+  /// only after prepared commits. No port hint authorizes this factory.
+  /// Invalid input or a closing handle is rejected before device construction.
+  RecordedOperation record({
+    required EffectiveParameters parameters,
+    required String appVersion,
+    required CompanionTransport Function() createTransport,
+    List<RecordingSubscription> subscriptions = const [],
+  });
   Future<void> close();
 }
 
@@ -53,12 +69,14 @@ final class StorageHooks {
     this.afterCreate,
     this.draftId,
     this.profileId,
+    this.runId,
     this.clock,
   });
   final FutureOr<QueryExecutor> Function(File file)? executorFactory;
   final FutureOr<void> Function()? afterCreate;
   final LocalId Function()? draftId;
   final LocalId Function()? profileId;
+  final LocalId Function()? runId;
   final DateTime Function()? clock;
 }
 
@@ -109,6 +127,7 @@ Future<CoreStorage> openStorage(
       throw const CoreException(CoreErrorCode.storageOpenFailed);
     }
     await db.customSelect('SELECT 1').get();
+    await recoverRuns(db, clock: hooks.clock);
     return StorageHandle._(owner, db, hooks);
   } catch (error) {
     final primary = classifyStorageError(
@@ -141,6 +160,7 @@ Future<CoreStorage> openStorage(
 /// return a Future spanning all its queries/transactions; never retain [db].
 final class StorageHandle implements CoreStorage {
   StorageHandle._(this._owner, this._db, StorageHooks hooks) {
+    _hooks = hooks;
     drafts = PersistentDraftRepository(
       this,
       generateId: hooks.draftId,
@@ -155,6 +175,7 @@ final class StorageHandle implements CoreStorage {
   }
   final DirectoryOwnership _owner;
   final CoreDatabase _db;
+  late final StorageHooks _hooks;
   @override
   late final DraftRepository drafts;
   @override
@@ -165,6 +186,39 @@ final class StorageHandle implements CoreStorage {
   Future<EffectiveParameters> resolveParameters(
     EffectiveParameterRequest request,
   ) => resolver.resolveParameters(this, request);
+
+  @override
+  RecordedOperation record({
+    required EffectiveParameters parameters,
+    required String appVersion,
+    required CompanionTransport Function() createTransport,
+    List<RecordingSubscription> subscriptions = const [],
+  }) {
+    validateEffectiveParameters(parameters);
+    requireValid(appVersion.trim().isNotEmpty);
+    validateUnicode(appVersion);
+    if (_state != StorageState.open) {
+      throw const CoreException(CoreErrorCode.storageWriteFailed);
+    }
+    final recording = Recording(
+      input: parameters,
+      appVersion: appVersion,
+      createTransport: createTransport,
+      subscriptions: subscriptions,
+      generateId: _hooks.runId,
+      clock: _hooks.clock,
+    );
+    _active++;
+    // This admission is deliberately outside useDatabase's row classification:
+    // all device/host boundaries are observed by the recording coordinator.
+    unawaited(
+      recording.run(_db).whenComplete(() {
+        if (--_active == 0) _idle?.complete();
+      }),
+    );
+    return recording;
+  }
+
   StorageState _state = StorageState.open;
   int _active = 0;
   Completer<void>? _idle;

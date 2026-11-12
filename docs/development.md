@@ -2573,3 +2573,252 @@ their earlier dated results remain above. No hardware or later-step work ran.
 Before/after regression logs, full core tests, formatting, analysis, schema guard
 and final review are retained in ignored
 `build/phase-1c5/nul-review-20261112/`.
+
+## Diagnostic recording, lifecycle coordination and recovery (1C.6)
+
+This step starts from clean master `93d933bc74959da8242a3c2432ec412cb9247f15`,
+which merges PR #22 and includes its reviewed head
+`0bad2980706fc9a9a47c55596e78e232031703e7`. The preceding 1C.5 handoff and dated
+validation records above remain historical evidence. Recording and startup
+recovery are now implemented; this step stops before 1C.7.
+
+The public `CoreStorage.record` entry accepts EffectiveParameters, the host's
+actual appVersion, a synchronous factory for a fresh unused public
+CompanionTransport, and an immutable subscription responsibility plan. It
+revalidates execution values through the same validation as the resolver. The
+[runnable synthetic example](../packages/meshchan_core/example/record_diagnostic.dart)
+and [API guide](../packages/meshchan_core/README.md#finite-diagnostic-recording-and-startup-recovery-1c6)
+show open/recovery, resolve, recording, separate observations, cancellation and
+finally-close without a real device. No CLI flags or execution wiring changed.
+
+| File under meshchan_core/lib/src | Responsibility |
+| --- | --- |
+| recording/projection.dart | Explicit configuration/result whitelist and exhaustive enum mapping. Reads only direct typed evidence, never cause chains/sessionInfo. |
+| recording/validation.dart | Stored/caller semantic distinction, lifecycle consistency, counts/budgets, final facts and two-scope cleanup aggregation. |
+| recording/run_store.dart | Targeted run_id collision handling, canonical idempotence, field-specific transactions and a nonpoisoning per-run queue. |
+| recording/raw_operation.dart | Finite raw send/listen, normal trailing-event consumption, immediate terminal close and logical facts before native release. |
+| recording/recording.dart | Public handles/results, task ownership, complete subscription plan, independent cleanup observers and save outcomes. |
+| recording/recovery.dart | Startup-only recovery, 128-row short transactions, stable state/time/ID cursors and preserved prior facts. |
+| storage/storage.dart | One existing owner/connection; full recording admission survives closing; owner release only after actual database close. |
+
+Prepared commits before the transport factory; entropy/clock and commit failure
+permit no device start. Logical observation time is captured before enqueueing;
+frozen facts commit independently of cleanup. Equal facts retain the first
+stored time. Cleanup can commit when logical save failed and the row remains
+prepared. Cumulative scope snapshots preserve two same-category source failures
+without duplicating callbacks. A failed write does not poison the queue or
+trigger resend. Native close and subscription cancellation start before database
+writes and cannot be held behind them.
+
+PING/responder reuse existing tasks, observing done and cleanupDone before start;
+only task.cancel controls an accepted task. Raw send/listen use public
+session/reception APIs with one inbox consumer. Normal listen waits for trailing
+entries/onDone; abnormal termination closes immediately and settles commands
+without waiting for native cleanup. Internal task subscriptions stay in core;
+raw/host subscription cleanup stays in hostSubscriptions. Failed subscription
+creation cleans every returned resource; an unclaimed task remains not_required.
+Rejected cleanup observations retain unconfirmed release.
+
+PONG before local failure remains observed/exact with its first monotonic
+microsecond elapsed time; roundTripSucceeded is false and application RTT null.
+Successful logical RTT stays successful after cleanup failure. Send matching
+response means OK, not PONG. A queued send and a preceding failed read retain
+distinct command/root evidence. Missing reception stays null; publication and
+processing remain distinct. Zero responder responses establish no round trip.
+Sensitive content, nonce, exact path, endpoint labels, ports, device metadata,
+exception text/stacks never enter run JSON. Historical profile ID requires no
+active profile lookup.
+
+Open runs recovery after SELECT 1, before returning a handle. Prepared rows
+archive interrupted, retaining partial/null results and null logical end.
+Settled rows with unresolved cleanup archive cleanup_unconfirmed, preserving
+final result/time and changing only unresolved scopes to unconfirmed_after_exit.
+Terminal cleanup, including actual failed cleanup, survives; fully settled rows
+remain unchanged. Archived rows are not scanned/rewritten. No task reason,
+PONG false, zeros, logical end, release confirmation or RF replay is inferred.
+Batches are individually atomic; a failed later batch leaves earlier commits
+for idempotent continuation. Accessed damage is database_corrupt; higher summary
+format remains storage_read_failed. Mutation/commit/dependency failures retain
+storage_write_failed through open's close/release/quarantine path.
+
+### Handoff to 1C.7
+
+DiagnosticHistory is still an unwired read/query contract in repositories.dart.
+Implement bounded history access, terminal deletion eligibility, real bounded
+history-limit pruning and safe export next. Use the strict decoder plus
+validateStoredRun and protect recovered facts. Eligible settled rows require
+both scopes terminal; recovered_archived is independently eligible. Pending
+live rows stay protected. Connect pruning after successful exclusive recovery
+and open, terminal logical/cleanup commits and settings-limit commits. Report
+pruning failure separately from committed saves. No placeholder scheduler,
+public replacement CRUD, event table or schema v2 is installed.
+
+1C.8 subsequently owns CLI wasParsed presence, content lexical conversion,
+explicit nonblank port with exact forwarding, host directory, recording entry,
+signal subscriptions and output/exit precedence. Current CLI remains unconnected
+to business SQLite. This step includes no 1C.7 or 1C.8 implementation.
+
+### 1C.6 local validation on November 12, 2026
+
+Validation ran on macOS 27.2.1 arm64 with the existing Homebrew Flutter 3.47.9
+stable cache and its bundled Dart 3.13.7. Commands invoked
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` directly: the Flutter
+wrapper attempted an SDK-cache stamp refresh outside the sandbox's writable
+roots, so the installed bundled executable was used without updating the SDK.
+Native commands used process-local Apple-compiler-first PATH and
+`/usr/bin/clang` 21.0.0 (`clang-2100.4.1.1`) with the installed Xcode macOS SDK.
+No SDK/channel, interpreter, global PATH or global setting was changed.
+
+Before project Python scripts, `/opt/homebrew/bin/python3` was verified as stable
+3.15.2. Its actual sys.executable was
+`/opt/homebrew/opt/python@3.15/bin/python3.15`, resolving to
+`/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/bin/python3.15`.
+The exact interpreter/version/platform output is in python-toolchain.json;
+Flutter cache, Dart, compiler and SDK evidence is in toolchain.json.
+
+| Gate | Observed result |
+| --- | --- |
+| Root dart pub get --enforce-lockfile | Passed; root lockfile and manifests unchanged. |
+| build_runner build | Passed; tracked production/probe generated artifacts unchanged. |
+| check_schema.dart | Passed; production schema 1 and frozen/generated helpers match. |
+| Root format check | Passed, 112 files, zero changes. |
+| dart analyze --fatal-infos | Passed, no issues. |
+| Full meshchan_core dart test | **304 passed**, including **66 new** recording/projection/write/recovery tests and all prior repository/resolver/NUL-name/ownership regressions. The additional legal-business reopen test preserves separate structural codec coverage. |
+| meshcore_link dart test | **180 passed**; communication implementation unchanged. |
+| meshctl dart test | Initial sandbox run: 81 passed, 16 failed because loopback bind returned Operation not permitted. Rerun with loopback permission: **97 passed**. Both logs retained. |
+| Python unittest discovery | **46 passed** using the verified 3.15.2 interpreter. |
+| Native CLI, serial observation and datagram-acceptance bundles | All three fresh builds passed sequentially with existing targets and isolated ignored output directories. |
+| Shared source/AOT smoke | **69 passed** on macOS, including five synthetic datagram cases in source/AOT, native assets, broken pipe and bundle relocation. |
+| Public fake recording example | Passed: registration/logical/final-cleanup commits, actual cleanup succeeded and fullySuccessful true; no real device. |
+| Final diff/new-file review | Passed: tracked and new-file whitespace, conflict/unmerged markers, sole root lockfile and unchanged schema/snapshot/generated/dependency/version/CLI/link/CI boundaries. |
+| Remote CI, Linux, real RF/hardware | **NOT_RUN**: no push/dispatch or observed remote CI result; this host is macOS and no device was authorized/used. |
+
+Initial full-core runs identified old structurally valid fixtures that cannot
+be used as business-recovery examples. Their descriptor 0x12/two-byte route was
+preserved in structural tests; legal terminal reopen fixtures now use 0x02/two
+bytes. Original codec/null/large-integer coverage remains. The final full suite
+also explicitly verifies cleanup arriving before logical done, and real cleanup
+observation while a logical SQL write is blocked. Final formatting resolved only
+missing control-flow braces in new code/tests; the analyzer is clean.
+
+Logs, exact toolchain records, generated hashes, final review and fresh bundles
+are retained locally under ignored `build/phase-1c6/local-20261112/`, including:
+
+```text
+pub-get.log
+codegen.log
+schema-check.log
+format.log
+analyze.log
+recording-tests.log
+cleanup-observation-test.log
+fixture-regression.log
+meshchan-core-tests.log
+meshcore-link-tests.log
+meshctl-tests.log
+meshctl-tests-network-enabled.log
+python-tests.log
+example.log
+build-meshctl.log
+build-observation.log
+build-datagram-acceptance.log
+smoke.log
+toolchain.json
+python-toolchain.json
+generated.sha256
+final-review.json
+meshctl/bundle/
+observation/bundle/
+datagram-acceptance/bundle/
+```
+
+Focused recording-tests.log records the earlier 62-test run; the final 66-test
+set is included in the 304-test full-core result. Controlled write/COMMIT faults
+are injected before commit takes effect, with immediate same-handle rollback and
+later successful work verified. Child exits establish only the two tested
+interruption windows, not every power-loss failure. Bounded recovery commits
+batches individually. CLI bundles/smoke still have no business SQLite execution
+path and do not establish complete SQLite product AOT distribution. Schema 1,
+summary format 1, CLI schema 1, app/package versions, dependencies, frozen snapshots
+and CI remain unchanged. The existing CI full-suite/generation/schema gates
+naturally discover the new tests; no redundant job or remote success is claimed.
+No 1C.7 history/deletion/pruning/export or 1C.8 CLI wiring was started.
+
+### 1C.6 synchronous-cancellation review follow-up on November 12, 2026
+
+The review reproduced a host-subscription leak in raw send/listen. A subscribe
+callback could call cancelOperation synchronously before returning its
+subscription. Raw cancellation immediately called host cleanup, which marked
+empty registration slots finished and not_required. Subscriptions returned
+subsequently were never canceled because the host stop pass had already run.
+
+The coordinator now keeps operation cancellation immediate and defers only host
+cleanup while the synchronous subscription-registration pass is in progress.
+A finally boundary ends registration and starts any requested host cleanup,
+including when a later subscribe callback throws. Only then can empty slots be
+classified as having no work. Every returned subscription is canceled and
+observed independently through the existing cleanup path. No public API, SQL
+schema, persisted vocabulary, device behavior or retry policy changed.
+
+Six real-file regressions cover send/listen, two returned subscriptions, repeated
+synchronous cancellation, a cancellation failure while another source remains
+blocked, and later subscription-construction failure. Before the fix all six
+failed with zero actual cancellation calls; afterward all six passed. The
+blocked-source cases also check persisted pending scope/aggregate, exactly one
+cancellation per source, retained failure count, close waiting and owner
+contention, then terminal cleanup after releasing the barrier and reopening.
+
+Validation used the existing bundled
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` 3.13.7 and the
+process-local Apple compiler PATH; `/usr/bin/clang` was reverified as 21.0.0
+(`clang-2100.4.1.1`). The six focused regressions passed, the full meshchan_core
+suite passed **310/310**, root format checked **112 files with zero changes**,
+and fatal-info analysis reported no issues. Tracked diff and the affected new
+source/test files passed whitespace checks. Schema, generated artifacts,
+dependencies, versions, communication/CLI implementations and CI are unchanged.
+No Python scripts were invoked. Generator/schema, link/CLI/Python suites,
+native bundles and smoke were not repeated for this core-only lifecycle fix;
+their preceding dated results remain above. No remote CI or hardware run was
+performed. Reproduction, corrected regressions, full suite, format, analysis
+and verified Dart/compiler logs are retained under ignored
+`build/phase-1c6/synchronous-cancel-review-20261112/`.
+
+### 1C.6 raw cancellation-precedence review follow-up on November 12, 2026
+
+The review reproduced loss of an earlier primary failure in raw send/listen.
+Transport error delivery synchronously commits session.lastFailure and invalidates
+accepted commands, but public session events and command continuations run later.
+Calling recording.cancel in that same turn previously froze a canceled result
+with no primary failure, preventing the asynchronous failure observer from
+retaining the already committed session evidence.
+
+Raw cancellation now checks session.lastFailure before honoring cancellation,
+using the existing stage-specific failure path when evidence is already present.
+The terminal guard still protects frozen results. It does not add a deadline
+check, alter timeout precedence, walk causes, wait for storage/cleanup, or retry
+device work. Failure reason/stage and typed root/command/reception facts remain
+independent of actual cleanup and persistence results.
+
+Six real-file regressions cover both raw operations: earlier transport failure
+during initialization, earlier failure during ready-state work, and the reverse
+ordering where cancellation precedes the error. Before the fix, all four
+failure-first cases reproduced an incorrect canceled reason while both reverse
+controls passed. Afterward all six passed. Tests block actual native close,
+verify logical commit is independently observable, inspect typed session and
+command/reception facts, and compare saved summaries after cleanup and reopen.
+
+Validation used the verified bundled
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart` 3.13.7 with the
+process-local Apple compiler PATH; `/usr/bin/clang` was reverified as 21.0.0
+(`clang-2100.4.1.1`). All six targeted regressions passed, the complete
+meshchan_core suite passed **316/316**, root formatting checked **112 files with
+zero changes**, and fatal-info analysis found no issues. Tracked and affected
+new-file whitespace checks passed, with no unmerged paths. The preceding
+synchronous-subscription cancellation fix remains covered by the complete suite.
+Schema, generated artifacts, dependencies, versions, communication/CLI sources
+and CI remain unchanged. No Python scripts were invoked. Generator/schema,
+link/CLI/Python suites, native bundles and smoke were not repeated for this
+localized core fix; earlier dated results remain above. Remote CI and hardware
+were not run. Before/after regressions, full tests, format, analysis and actual
+Dart/compiler version logs are retained under ignored
+`build/phase-1c6/session-failure-cancel-review-20261112/`.

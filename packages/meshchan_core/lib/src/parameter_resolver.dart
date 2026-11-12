@@ -118,24 +118,11 @@ Future<EffectiveParameters> resolveParameters(
       );
       content = null;
   }
-  validateProfileParameters(effective);
-  if (content != null) {
-    for (final byte in content) {
-      requireValid(byte >= 0 && byte <= 255);
-    }
-    final route = switch (effective) {
-      SendProfileParameters() => effective.route,
-      PingProfileParameters() => effective.route,
-      _ => throw StateError('Unexpected content operation.'),
-    };
-    requireValid(
-      content.length <=
-          routeCapacity(route, diagnostic: effective is PingProfileParameters),
-    );
-  }
-  return EffectiveParameters(
+  final result = EffectiveParameters(
     profileId: profile?.id,
     parameters: effective,
     content: content,
   );
+  validateEffectiveParameters(result);
+  return result;
 });

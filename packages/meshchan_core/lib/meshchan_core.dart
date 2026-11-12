@@ -1,9 +1,18 @@
 /// Offline business values and asynchronous persistence contracts.
-/// Persistent drafts/profiles/settings and typed resolution without device I/O.
+/// Persistent repositories, parameter resolution, finite recording and recovery.
+/// Only explicit recording constructs a host-supplied device transport.
 library;
 
 export 'src/storage/database.dart' show databaseSchemaVersion;
 export 'src/storage/storage.dart' show CoreStorage, StorageState;
+export 'src/recording/recording.dart'
+    show
+        RecordingPhase,
+        RecordingSaveState,
+        RecordingSave,
+        RecordingSubscription,
+        RecordedOperation,
+        RecordedResult;
 
 export 'src/errors.dart' show CoreErrorCode, CoreException;
 export 'src/models/app_settings.dart' show AppSettings;

@@ -161,7 +161,7 @@ final class RespondParameterRequest extends EffectiveParameterRequest {
 
 /// Immutable execution input, NOT a safe diagnostic-history snapshot.
 /// Contains local route/test labels and optional raw send payload/PING content.
-/// 1C.6 must project only its allowed safe fields before recording history.
+/// Recording revalidates these values and projects only its allowed safe fields.
 final class EffectiveParameters {
   EffectiveParameters({
     required this.profileId,

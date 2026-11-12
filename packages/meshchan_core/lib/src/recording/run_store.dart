@@ -39,11 +39,13 @@ final class RunStore {
     this.db, {
     LocalId Function()? generateId,
     DateTime Function()? clock,
+    this.onChanged,
   }) : _generateId = generateId ?? randomLocalId,
        _clock = clock ?? DateTime.now;
   final CoreDatabase db;
   final LocalId Function() _generateId;
   final DateTime Function() _clock;
+  final void Function()? onChanged;
   Future<void> _tail = Future.value();
   DateTime observeTime() => writeDependency(() => _clock().toUtc());
   Future<T> _enqueue<T>(Future<T> Function() action) {
@@ -126,6 +128,7 @@ final class RunStore {
           recordState: Value(DiagnosticRecordState.settled.code),
         ),
       );
+      onChanged?.call();
       return readRun(db, id);
     }),
   );
@@ -167,6 +170,7 @@ final class RunStore {
       )..where((t) => t.runId.equals(id.value))).write(
         StoredRunsCompanion(cleanupJson: Value(encodeCleanupSummary(merged))),
       );
+      onChanged?.call();
       return readRun(db, id);
     }),
   );

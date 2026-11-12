@@ -38,23 +38,28 @@ final class PersistentSettingsRepository implements SettingsRepository {
           settings.diagnosticHistoryLimit >= 1 &&
               settings.diagnosticHistoryLimit <= 100000,
         );
-        return db.transaction(() async {
+        final saved = await db.transaction(() async {
           if (settings.defaultProfileId case final id?) {
             await readStoredProfile(db, id);
           }
           await db
               .into(db.storedSettings)
               .insertOnConflictUpdate(encodeSettings(settings));
+          _storage.invalidateHistorySelection();
           return settings;
         });
+        _storage.requestHistoryMaintenance();
+        return saved;
       }, failureCode: CoreErrorCode.storageWriteFailed);
 
   @override
-  Future<AppSettings> restoreDefaults() => _storage.useDatabase(
-    (db) => db.transaction(() async {
+  Future<AppSettings> restoreDefaults() => _storage.useDatabase((db) async {
+    final saved = await db.transaction(() async {
       await db.delete(db.storedSettings).go();
+      _storage.invalidateHistorySelection();
       return AppSettings();
-    }),
-    failureCode: CoreErrorCode.storageWriteFailed,
-  );
+    });
+    _storage.requestHistoryMaintenance();
+    return saved;
+  }, failureCode: CoreErrorCode.storageWriteFailed);
 }

@@ -1,8 +1,9 @@
 # meshchan_core
 
 Pure Dart offline business values, persistent drafts/profiles/settings, typed
-effective-parameter resolution, finite diagnostic recording/recovery, history
-contracts, and a controlled production Drift/SQLite storage lifecycle. Import
+effective-parameter resolution, finite diagnostic recording/recovery, bounded
+history, guarded deletion, retention, safe summary export, and a controlled
+production Drift/SQLite storage lifecycle. Import
 `package:meshchan_core/meshchan_core.dart`. All packages remain `0.1.0-dev.2`.
 
 1C.2 established immutable business values and interfaces. 1C.3 adds the real
@@ -12,8 +13,9 @@ checks, and bounded cursor pagination through `CoreStorage.drafts`.
 1C.5 implements `CoreStorage.profiles`, `CoreStorage.settings`, and
 `CoreStorage.resolveParameters`. 1C.6 adds `CoreStorage.record`, explicit typed
 whitelist projections, independent logical/cleanup saves, and exclusive startup
-recovery. History query/retention/export (1C.7) and CLI wiring (1C.8) remain
-unimplemented. Opening storage never accesses devices; it now archives incomplete
+recovery. 1C.7 implements `CoreStorage.history` and independent maintenance
+reports. CLI wiring (1C.8) remains unimplemented.
+Opening storage never accesses devices; it archives incomplete
 diagnostic records from the previous owner before returning a usable handle.
 The [1C.1 contract](../../docs/architecture/offline-core.md) remains authoritative.
 
@@ -219,14 +221,12 @@ operation is allowed; matching the invocation happens during resolution.
 History limits are 1..100000, without clamping. A missing referenced profile is
 `not_found`, including a format-valid dangling stored default. An explicit null
 save or `restoreDefaults()` repairs that reference without first reading it.
-`restoreDefaults()` restores null/1000 and affects no other business data.
+`restoreDefaults()` restores null/1000 in its settings transaction.
 Settings reads and their profile validation share one short transaction.
 
-Only the history **limit setting** is implemented. 1C.7 must add eligible-history
-selection, bounded pruning and export, including pruning triggers after settings
-commit, terminal/recovery updates, and open. A later pruning failure cannot imply
-that already committed settings were rolled back. No runs or drafts are pruned
-by this step and no placeholder scheduler is installed.
+Both successful settings mutations now request independent bounded history
+maintenance after commit. A later pruning failure cannot imply that committed
+settings rolled back; see the 1C.7 report contract below. Drafts are never pruned.
 
 Request subtypes explicitly select `send`, `listen`, `ping`, or `respond` and
 permit only applicable fields. `SendParameterRequest` accepts payload;
@@ -579,9 +579,147 @@ open continues idempotently. Failure returns no usable handle and follows existi
 close/owner-release/quarantine rules. This is not cross-batch atomicity or a full
 integrity audit.
 
-1C.7 takes over DiagnosticHistory, deletion eligibility, bounded history-limit
-pruning and safe export. Insertion points are successful open/recovery, terminal
-logical/cleanup commits and settings-limit commit. Pruning failure must not undo
-committed facts; no scheduler is installed here. 1C.8 owns CLI presence/content,
+The 1C.6 handoff is implemented by the 1C.7 history service below. Maintenance
+does not undo committed facts. 1C.8 owns CLI presence/content,
 explicit port/directory, recording entry, signal lifetime and output/exit mapping.
 Current CLI behavior/output remains unchanged.
+
+## Diagnostic history, retention, and safe export (1C.7)
+
+`CoreStorage.history` is a stable, synchronous getter with no I/O. Its `read`,
+`query`, `delete`, `exportSummary`, `maintain` and `waitForMaintenance` methods
+use the same owner, connection and admission/close barrier as the other services.
+There is no repository close, second connection or raw SQL/force API. History
+operations never recover records again, resolve profiles or contact a device.
+The hardware-free [public host example](example/inspect_history.dart) accepts a
+host-selected directory, reads and continues a filtered page, exports a page,
+checks independent maintenance and awaits close in `finally`. Empty storage is
+valid; an optional deletion requires an explicitly selected run ID.
+
+```dart
+final history = storage.history;
+final filter = HistoryQuery(
+  operation: DiagnosticOperation.ping,
+  recordState: DiagnosticRecordState.settled,
+  preparedFromInclusive: DateTime.utc(2026, 11, 1),
+  preparedUntilExclusive: DateTime.utc(2026, 12, 1),
+);
+final page = await history.query(filter: filter, size: PageSize(50));
+if (page.nextCursor case final cursor?) {
+  await history.query(filter: filter, size: PageSize(50), after: cursor);
+}
+final summary = await history.exportSummary(filter: filter, size: PageSize(50));
+// summary.json is a complete JSON string. The host chooses its destination.
+// Continue with the same filter and after: summary.nextCursor, when nonnull.
+final maintenance = await history.maintain();
+if (maintenance.state == HistoryMaintenanceState.failed) {
+  // Display maintenance.error.code separately from any committed save.
+}
+```
+
+All four optional filter fields combine with AND. Registration time is UTC
+`preparedAt`, with an inclusive lower and exclusive upper bound; when both are
+present, lower must precede upper. Filters do not use logical/recovery times or
+deletion eligibility. All legal states, including prepared/pending, are readable.
+Queries order by `prepared_at_us DESC, run_id DESC` with bound epoch microseconds,
+four existing filter-specific indexes and a bound row-value seek, never OFFSET.
+Default size is 50; 1..200 are allowed. The extra size+1 probe is strictly decoded
+and validated too. Only an actual extra row produces a cursor from the last
+returned item. Deleting/pruning the cursor row still permits continuation.
+Independent pages share no snapshot and can reflect intervening state changes,
+insertion or deletion. Missing reads/deletes are `not_found`; damaged accessed
+storage is `database_corrupt`; a higher summary format is `storage_read_failed`.
+
+Explicit deletion validates the current row in its short write transaction,
+checks eligibility and the active pin, deletes exactly one row and awaits commit.
+Eligible means `recovered_archived`, or `settled` with **both** core and
+hostSubscriptions terminal (`succeeded`, `failed`, `not_required`). Real cleanup
+failures and recovery's `unconfirmed_after_exit` are eligible under these rules.
+Prepared with terminal cleanup and settled with either scope pending/unconfirmed
+are ineligible. Known ineligible/pinned records fail with `conflict`. Failed
+deletion rolls back the complete row and cannot change another business object.
+
+A recording pins its committed run ID before prepared is exposed or device work
+starts. The pin lasts through cumulative cleanup snapshots, pending save Futures
+and the final save, including construction/failure paths. Intermediate terminal
+snapshots do not release it. Pin release invalidates selection and requests
+maintenance again. A pin adds a deletion constraint without changing rank: an
+old pinned excess row is deferred, never replaced by deleting a newer retained
+row. This is in-process protection, with no lease, heartbeat or database field.
+
+Retention keeps the newest `diagnosticHistoryLimit` eligible records across all
+operations (default 1000, allowed 1..100000). Missing settings use defaults;
+damaged settings fail visibly and are never clamped. Maintenance reads stored
+settings directly and needs no default-profile resolution. Total row count can
+legitimately exceed the limit because of ineligible rows or pinned excess rows.
+Triggers are successful exclusive recovery/open, eligible logical/cleanup
+commits, final pin release, settings save/restoreDefaults commits, explicit
+deletion and `maintain()`. Duplicate requests join one worker.
+
+Each short transaction scans/validates at most **128** rows in index order and
+deletes at most 128 excess rows. Cursor advancement covers every scanned row.
+Only bounded rows and counters are retained in memory; eligibility requires
+cleanup JSON, so total scanning is proportional to visited history, potentially
+repeated after invalidation. LIMIT 128 is not an O(128) total-work claim.
+Current settings are read in every batch. Settings/run mutations and explicit
+deletions invalidate rank **inside their transaction before commit**; a rollback
+can cause an extra scan but cannot expose committed changes with stale rank.
+The next batch restarts from the newest row after invalidation or a changed
+limit. Worker-owned deletes do not recursively request maintenance. No long
+transaction or lock spans the whole history or waits for a device/pin.
+
+`maintain()` actively requests and awaits the worker; `waitForMaintenance()`
+waits for already requested work without retrying a failure. Both return
+`HistoryMaintenanceReport` with `completed`, `deferred` or `failed`, committed
+`deletedCount`, the last `historyLimit` (null if never read), `deferredCount` and
+a safe `CoreException` on failure. `latestMaintenance` retains startup/automatic
+results. `unacknowledgedFailure` retains the latest failure and
+`unacknowledgedFailureCount` counts failed executions until the host explicitly
+calls `acknowledgeMaintenanceFailures()`. Merely reading/waiting or a later
+automatic success does not clear these fields. This is bounded in-memory state,
+not a persistent event log; observe it before closing the handle.
+
+A bad batch rolls back completely; earlier committed batches remain deleted and
+are counted in the report. Failure ends the execution without automatic failure
+spin; another explicit/external trigger or the next open retries. A deferred
+execution ends without waiting for RF, and unpin triggers another check. Open
+still fails on preflight/schema/recovery errors, but a subsequent retention
+failure returns a usable handle with its independent report. Settings return
+their committed `AppSettings`; `RecordingSave`, logical/cleanup facts and
+`RecordedResult.fullySuccessful` retain their existing meaning. Maintenance
+cannot cause a resend or turn committed work into a failed save.
+
+Automatic work is registered synchronously before the triggering admission is
+released. Closing refuses new external work while admitted recording/settings
+continuations can still register required maintenance. Close awaits recording,
+actual cleanup, saves and maintenance before native close and owner release.
+Maintenance failure releases its admission and preserves its report; it does
+not imply `closeUnconfirmed`. Actual native-close quarantine remains unchanged.
+
+Each export call returns a `DiagnosticSummaryPage` (`json`, typed `nextCursor`)
+using the same bounded filter/order/probe and one admission. The JSON root is:
+
+```json
+{"diagnosticSummaryFormatVersion":1,"exportedAt":"2026-11-12T09:30:00.000000Z","runs":[]}
+```
+
+Each run explicitly contains `runId`, `operation`, `appVersion`,
+`diagnosticSummaryFormatVersion`, `configuration`, `preparedAt`, `logicalEndedAt`,
+`recordState`, `result`, `cleanup`, `recoveredAt`, `recoveryReason`. Nested values
+reuse the typed configuration/result/two-scope-cleanup allowlists, including
+controlled failure codes, routeDescriptor/pathByteCount, byte lengths and integer
+RTT/elapsed `...Us`. Every time has UTC Z and exactly six fractional digits.
+Meaningful null/false/zero and partial/recovery facts remain unchanged, including
+observed PONG plus local failure or logical success plus cleanup failure.
+`profileId` is completely omitted. No profiles/names/ports/exact paths, test IDs,
+nonces, content, credentials, raw frames, chat, device information, argv,
+exception text or stacks are encoded. No whole-row serialization/blacklist is
+used. JSON is returned only after the entire selection, clock and encoding
+succeed; generation failures are safe `storage_read_failed`, distinct from bad
+stored rows. The host must explicitly request further pages. This is a safe
+summary selection, **not a database backup** or import/restore format.
+
+Schema/snapshot 1, diagnostic summary format 1, CLI schema 1, dependencies and
+package version remain unchanged. CLI flags, directories, explicit ports,
+output destinations, maintenance error precedence and exit wiring belong to
+1C.8; native SQLite product distribution and dev.3 acceptance remain later work.

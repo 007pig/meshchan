@@ -74,7 +74,10 @@ export 'src/repositories.dart'
         ProfileRepository,
         SettingsRepository,
         HistoryQuery,
-        DiagnosticHistory;
+        DiagnosticHistory,
+        DiagnosticSummaryPage,
+        HistoryMaintenanceState,
+        HistoryMaintenanceReport;
 export 'src/values.dart'
     show
         LocalId,

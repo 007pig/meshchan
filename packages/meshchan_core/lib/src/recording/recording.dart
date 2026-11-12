@@ -103,6 +103,9 @@ final class Recording implements RecordedOperation {
     required List<RecordingSubscription> subscriptions,
     this.generateId,
     this.clock,
+    this.onRegistered,
+    this.onChanged,
+    this.onCommitted,
   }) : plans = List.unmodifiable(subscriptions) {
     final p = input.parameters;
     _rawSlots = p is ListenProfileParameters
@@ -127,6 +130,10 @@ final class Recording implements RecordedOperation {
   final List<RecordingSubscription> plans;
   final LocalId Function()? generateId;
   final DateTime Function()? clock;
+  final void Function(LocalId)? onRegistered;
+  final void Function()? onChanged;
+  final void Function(DiagnosticRun)? onCommitted;
+  LocalId? get runId => _id;
   late final int _rawSlots;
   late final List<_SubscriptionSlot> _slots;
   final _prepared = Completer<RecordingSave>();
@@ -187,11 +194,15 @@ final class Recording implements RecordedOperation {
     bool finalCleanup = false,
   }) async {
     try {
+      final snapshot = await action();
+      // This callback only registers independent maintenance. It never awaits
+      // pruning or changes the committed save outcome.
+      onCommitted?.call(snapshot);
       return _report(
         RecordingSave(
           phase,
           RecordingSaveState.committed,
-          snapshot: await action(),
+          snapshot: snapshot,
           finalCleanup: finalCleanup,
         ),
       );
@@ -422,7 +433,12 @@ final class Recording implements RecordedOperation {
 
   /// The storage admission spans this Future, including all cleanup and saves.
   Future<void> run(CoreDatabase db) async {
-    _store = RunStore(db, generateId: generateId, clock: clock);
+    _store = RunStore(
+      db,
+      generateId: generateId,
+      clock: clock,
+      onChanged: onChanged,
+    );
     final registration = await _save(
       RecordingPhase.registration,
       () => _store.register(
@@ -432,6 +448,10 @@ final class Recording implements RecordedOperation {
         hostRequired: _slots.isNotEmpty,
       ),
     );
+    if (registration.snapshot case final run?) {
+      _id = run.runId;
+      onRegistered?.call(run.runId);
+    }
     _prepared.complete(registration);
     if (registration.state != RecordingSaveState.committed) {
       _core = CleanupScopeSummary(state: CleanupState.notRequired);

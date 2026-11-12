@@ -4,7 +4,7 @@ The CLI includes the 1A `ports`, `port-check`, `info`, and `watch` diagnostics
 and the 1B.7 finite `datagram send/listen/ping/respond` commands. 1B.8 adds
 [shared serial-byte source/AOT acceptance](testing.md#datagram-cross-layer-coverage-audit-1b8)
 and [software evidence](development.md#1b8-software-validation-on-november-10-2026).
-The application version is `0.1.0-dev.2`. Real-device Direct tests established
+The application version is `0.1.0-dev.3`. Real-device Direct tests established
 exact round trips in both directions, the binary boundary, and no-responder
 timeout. H2 local acceptance and H7 active cancellation subsequently passed an
 explicitly authorized B-command-15-second/A-5-second comparison, retaining all
@@ -36,7 +36,7 @@ may emit native build-hook diagnostics before the application starts.
 The product CLI now imports `meshchan_core` through its public entry. These
 commands and opt-in recording blocks extend CLI `schemaVersion: 1`. Database
 schema/snapshot 1 and `diagnosticSummaryFormatVersion: 1` are independent and
-unchanged. The application remains `0.1.0-dev.2`; this is not dev.3 delivery.
+unchanged. The current `0.1.0-dev.3` local candidate is described in the [1C delivery record](releases/phase-1c-dev3.md).
 
 Put the global directory option before the command:
 
@@ -508,7 +508,7 @@ resource release. There is no forced shutdown deadline or pointer release.
 | 0 | Successful diagnostic/info, or duration completed with successful cleanup/output. |
 | 64 | Syntax, required port, or numeric usage error. |
 | 69 | Expected serial/platform/session failure, including cleanup failure without an earlier primary failure. |
-| 74 | Output failure without an earlier primary failure or signal. |
+| 74 | Host/storage/file/output I/O or finalization failure without an earlier primary cause. |
 | 130 | SIGINT was the first primary termination reason. |
 | 143 | SIGTERM was the first primary termination reason. |
 | 70 | Unexpected program error caught only at the process boundary; safe generic diagnostic. |

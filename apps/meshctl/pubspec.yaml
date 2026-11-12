@@ -1,6 +1,6 @@
 name: meshctl
 description: Command-line diagnostics for the Meshchan project.
-version: 0.1.0-dev.2
+version: 0.1.0-dev.3
 publish_to: none
 resolution: workspace
 
@@ -9,8 +9,8 @@ environment:
 
 dependencies:
   args: ^2.7.0
-  meshchan_core: ^0.1.0-dev.2
-  meshcore_link: ^0.1.0-dev.2
+  meshchan_core: ^0.1.0-dev.3
+  meshcore_link: ^0.1.0-dev.3
 
 dev_dependencies:
   fake_async: ^1.3.3

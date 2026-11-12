@@ -901,3 +901,61 @@ Secret-marked source errors/body data must never appear in diagnostics. No
 scheduling sleeps or device actions are used; reopen checks happen after cleanup.
 See the [offline error-envelope validation record](development.md#1c8-review-fix-offline-primary-and-additional-failure-fields)
 for the reproduction, commands and observed results.
+
+## Final dev.3 delivery checks (1C.9)
+
+The [dev.3 record](releases/phase-1c-dev3.md) binds the final software/native gate
+and extracted archive to actual inputs. `tool/validate_dev_candidate.py` records
+sequential enforced resolution, generation/schema/frozen artifacts, format,
+fatal-info analysis, all Python and three Dart suites, three complete fresh
+bundles and the existing shared smoke. CLI test-file concurrency stays 1.
+`candidate_common_test.py` covers first-party classification, missing originals,
+core input invalidation, required gates and exact recursive assets, safe archive
+members/types/modes/bytes, and the extracted product's shared business gate.
+Historical `revise_dev_candidate_test.py` regressions remain independent.
+
+The development acceptance probe reuses existing fixed serial vectors for three
+real runCli/core recordings: successful send, recorded listen, and later native
+cleanup failure with preserved logical success and committed saves. All checks
+use explicit runtime failures in AOT; VM smoke enables assertions. Closed probe
+files are read/exported by the actual product in separate processes, including
+same-host relocation and final archive extraction. They are synthetic fixtures,
+not product RF-input evidence. Export checks retain null/false/zero, both cleanup
+scopes and microsecond time while excluding sensitive fields.
+
+`tool/check_schema_compatibility.py` generates a genuine schema-1 business file
+with unchanged PR #25 dev.2 production source, preserves the closed original,
+then checks old rows byte-for-byte after dev.3 recording/commit/reopen. It also
+checks explicit future/corrupt-file rejection and preservation. Existing recovery,
+retention and native ownership/process suites remain the detailed contract gate.
+The controlled fixture is not a product import or backup facility.
+
+The 1C.9 delivery-tool review adds `tool/delivery_environment_test.py`. It sends
+an explicit environment to a real child, checks that compatibility passes its
+prepared environment, exercises relative smoke evidence paths across different
+child working directories, and collects exact original SDK notices from synthetic
+SDK/Flutter-launcher/symlink layouts with distinct framework and SDK licenses.
+Incomplete SDK layouts are rejected even when a framework LICENSE exists.
+The [dated review follow-up](development.md#1c9-delivery-tool-environmentpath-review-follow-up-on-november-12-2026)
+records 61 complete Python tests, a real compiler-environment compatibility run,
+101 relative-evidence source/AOT smoke checks and actual installed-launcher
+license collection, around unchanged product inputs and native bytes.
+
+A subsequent schema-path review adds four delivery-tool regressions for escaped
+read-only SQLite URIs (including `#`, `%`, `?`, Unicode and conflicting filenames),
+missing-file/no-stray-file behavior, relative executable use across two real child
+cwds and invalid executable rejection before build work. The
+[dated schema-path follow-up](development.md#1c9-schema-path-review-follow-up-on-november-12-2026)
+records **65 complete Python tests**, **9 targeted tests**, **8 relative-Dart
+compatibility process checks** and **4 special-path database/native checks**.
+The combined legacy-source build under a URI-significant cwd remains blocked by
+the installed Dart native-hook launcher, with the failed attempt retained.
+
+Root `analysis_options.yaml` excludes `build/**` so preserved candidate native
+source fragments and legacy checkouts cannot pollute subsequent workspace gates.
+The [retained-artifact analyzer follow-up](development.md#1c9-retained-artifact-analyzer-review-follow-up-on-november-12-2026)
+reproduced the 28 artifact diagnostics, verified that a deliberate core-library
+type error still fails root analysis, removed that temporary probe and reran
+root fatal-info analysis successfully with every old material file retained.
+Root format (707 files, zero changes), all 65 Python tests and whitespace checks
+also passed. Original manifests retain their original analysis-config hashes.

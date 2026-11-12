@@ -2,6 +2,7 @@
 """Run only fixed, hardware-free source and native process checks."""
 
 import argparse
+import datetime
 import json
 import os
 from pathlib import Path
@@ -90,7 +91,7 @@ def bundle_executable(path, name):
     return executable(str(path / "bin" / name))
 
 
-def run(command, cwd, broken_pipe=False):
+def run(command, cwd, broken_pipe=False, *, env=None):
     """Drain both streams and bound every child, including its build-hook group."""
     write_fd = None
     if broken_pipe:
@@ -100,6 +101,7 @@ def run(command, cwd, broken_pipe=False):
         child = subprocess.Popen(
             command,
             cwd=cwd,
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=write_fd if broken_pipe else subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -123,13 +125,16 @@ def run(command, cwd, broken_pipe=False):
 
 
 class Checks:
-    def __init__(self):
+    def __init__(self, *, env=None):
         self.count = 0
+        self.records = []
+        self.env = dict(env) if env is not None else None
 
     def check(self, name, command, cwd, code=0, out=None, err=(),
               broken_pipe=False, options=None, validate=None):
+        started = datetime.datetime.now(datetime.timezone.utc).isoformat()
         try:
-            actual, stdout, stderr = run(command, cwd, broken_pipe)
+            actual, stdout, stderr = run(command, cwd, broken_pipe, env=self.env)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ValueError(
                 f"{name}: command={shlex.join(map(str, command))}; "
@@ -170,6 +175,10 @@ class Checks:
                 + f"\nactual stdout={stdout!r}\nactual stderr={stderr!r}"
             )
         self.count += 1
+        self.records.append({'name': name, 'argv': list(map(str, command)),
+            'cwd': str(cwd), 'startedUtc': started,
+            'endedUtc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'expectedExit': code, 'actualExit': actual})
         print(f"PASS {self.count}: {name}", flush=True)
         return stdout
 
@@ -253,6 +262,10 @@ def business_checks(checks, label, prefix, cwd, data):
         if result["settings"] != {"defaultProfileId": profile_id, "diagnosticHistoryLimit": 2}:
             raise ValueError("Settings did not persist across processes")
     invoke("read settings after process reopen", ["settings", "show", "--json"], settings)
+    def saved_profile(value):
+        if envelope(value)['profile'] != profile['profile']:
+            raise ValueError('Profile changed after reopen')
+    invoke('read profile after process reopen', ['profile', 'show', '--id', profile_id, '--json'], saved_profile)
     def empty_history(value):
         if envelope(value)["items"] != []:
             raise ValueError("Offline commands unexpectedly recorded diagnostics")
@@ -267,20 +280,91 @@ def business_checks(checks, label, prefix, cwd, data):
         raise ValueError("Business data unexpectedly appeared in cwd")
 
 
+def nonempty_history_checks(checks, label, prefix, cwd, data, version='0.1.0-dev.3'):
+    """Read a closed probe-generated file through the actual product entry."""
+    start = prefix + ['--data-dir', str(data)]
+    def history(value):
+        result = json.loads(value)
+        if (result.get('storageClose', {}).get('state') != 'closed'
+                or not result.get('items') or result.get('exitCode') != 0):
+            raise ValueError('Expected nonempty history and actual close')
+    checks.check(label + ': query recorded history', start + ['history', 'list', '--json'], cwd,
+                 out='', validate=history)
+    def export(value):
+        result = json.loads(value)
+        if (set(result) != {'diagnosticSummaryFormatVersion', 'exportedAt', 'runs'}
+                or result['diagnosticSummaryFormatVersion'] != 1 or not result['runs']):
+            raise ValueError('Expected raw nonempty core envelope')
+        runs = result['runs']
+        if not any(r['appVersion'] == version for r in runs):
+            raise ValueError('Missing current-version recorded run')
+        values = []
+        forbidden = {'profileId', 'payload', 'content', 'port', 'portPath', 'path',
+                     'runNonce', 'senderTestId', 'targetTestId', 'localTestId', 'peerTestId'}
+        def walk(v):
+            if isinstance(v, dict):
+                if forbidden.intersection(v):
+                    raise ValueError('Unsafe export fields')
+                for item in v.values():
+                    walk(item)
+            elif isinstance(v, list):
+                for item in v:
+                    walk(item)
+            else:
+                values.append(v)
+        walk(result)
+        if not (any(v is None for v in values) and any(v is False for v in values)
+                and any(type(v) is int and v == 0 for v in values)):
+            raise ValueError('null/false/zero facts lost')
+        for run in runs:
+            if set(run['cleanup']) != {'core', 'hostSubscriptions', 'aggregate'}:
+                raise ValueError('Cleanup scopes lost')
+            if not re.fullmatch(r'.*\.\d{6}Z', run['preparedAt']):
+                raise ValueError('Microsecond timestamp lost')
+    checks.check(label + ': export recorded history', start + ['history', 'export'], cwd,
+                 out='', validate=export)
+
+
+def archive_business_checks(checks, executable_path, cwd, data, fixture, version):
+    """The final extracted product must execute SQLite, not only help/version."""
+    prefix = [str(executable_path)]
+    def exact_version(value):
+        if value != f'meshctl {version}\n':
+            raise ValueError('Product version mismatch')
+    checks.check('archive: exact version', prefix + ['--version'], cwd, out='', validate=exact_version)
+    checks.check('archive: business help', prefix + ['--help'], cwd, out='history')
+    for args in (['draft', 'show'], ['draft', 'delete', '--id=' + '0' * 31 + '1'],
+                 ['profile', 'update'], ['datagram', 'send'], ['info']):
+        absent = data.parent / 'must not create storage'
+        checks.check('archive: reject required fields', prefix + ['--data-dir', str(absent), *args],
+                     cwd, code=64, err=('Error:',))
+        if absent.exists():
+            raise ValueError('Invalid input opened business storage')
+    business_checks(checks, 'archive', prefix, cwd, data)
+    recorded = data.parent / 'closed probe fixture'
+    recorded.mkdir()
+    shutil.copy2(fixture / 'meshchan.sqlite', recorded / 'meshchan.sqlite')
+    nonempty_history_checks(checks, 'archive', prefix, cwd, recorded, version)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dart", required=True, type=executable)
     parser.add_argument("--cli-bundle", required=True, type=bundle)
     parser.add_argument("--observation-bundle", required=True, type=bundle)
     parser.add_argument("--datagram-acceptance-bundle", required=True, type=bundle)
+    parser.add_argument('--evidence-directory', type=Path)
     args = parser.parse_args()
+    if args.evidence_directory is not None:
+        args.evidence_directory = args.evidence_directory.expanduser().resolve()
     if sys.platform not in ("darwin", "linux"):
         parser.error("This smoke script supports macOS and Linux hosts only.")
     try:
         native = bundle_executable(args.cli_bundle, "meshctl")
         observation = bundle_executable(args.observation_bundle, "serial_transport_check")
         acceptance = bundle_executable(args.datagram_acceptance_bundle, "datagram_acceptance")
-        # Read the existing application constant; do not duplicate a version here.
+        from candidate_common import versions, TARGET_VERSION
+        versions()  # Independent release target, members, constraints and CLI constant.
         definition = (CLI / "lib/src/version.dart").read_text(encoding="utf-8")
         version = re.search(r"const String meshctlVersion = '([^']+)';", definition)
         if version is None:
@@ -365,13 +449,28 @@ def main():
                             destination / "explicit business data")
             checks.check(
                 "source: datagram synthetic acceptance",
-                [str(args.dart), "run", "tool/datagram_acceptance.dart"], CLI,
+                [str(args.dart), "--enable-asserts", "run", "tool/datagram_acceptance.dart"], CLI,
                 out="", validate=datagram_report,
             )
             checks.check(
                 "native: datagram synthetic acceptance outside checkout",
                 [str(acceptance)], destination, out="", validate=datagram_report,
             )
+            evidence = args.evidence_directory or destination / 'recording evidence'
+            evidence.mkdir(parents=True, exist_ok=False)
+            for label, probe in [('source', [str(args.dart), '--enable-asserts', 'run', str(CLI / 'tool/datagram_acceptance.dart')]),
+                                 ('native', [str(acceptance)])]:
+                data = evidence / (label + ' recorded database')
+                def recording_report(value):
+                    report = json.loads(value)
+                    if (report.get('passed') is not True or report.get('closedBeforeReport') is not True
+                            or report.get('appVersion') != TARGET_VERSION or len(report.get('runIds', [])) != 3):
+                        raise ValueError('Recording probe did not validate real content')
+                checks.check(label + ': synthetic runCli/core recording', probe + ['--recording-directory', str(data)],
+                             CLI if label == 'source' else destination, out='', validate=recording_report)
+                nonempty_history_checks(checks, label, [str(native)], destination, data)
+            nonempty_history_checks(checks, 'relocated', relocated, destination, evidence / 'native recorded database')
+            (evidence / 'process-checks.json').write_text(json.dumps(checks.records, indent=2) + '\n')
         print(f"PASS: {checks.count} process checks on {sys.platform}; "
               "CLI, observation, and development acceptance bundles contain native assets; "
               "five datagram scenarios passed in source and AOT; "

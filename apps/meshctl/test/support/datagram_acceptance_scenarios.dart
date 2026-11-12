@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshctl/meshctl.dart' as product;
 import 'package:meshcore_link/src/transport/native_serial_connection.dart';
 import 'package:meshcore_link/src/transport/serial_transport.dart';
 
@@ -595,10 +598,16 @@ final class _WriteClock implements SerialWriteClock {
 /// A fixed byte script, not a firmware emulator. Only accepted prefixes count
 /// as TX. Responses are injected explicitly after a full expected command.
 final class _Connection implements NativeSerialConnection {
-  _Connection(List<String> frames, {required this.shortWrite})
-    : expected = frames.map(_hex).toList();
+  _Connection(
+    List<String> frames, {
+    required this.shortWrite,
+    this.responses,
+    this.failClose = false,
+  }) : expected = frames.map(_hex).toList();
   final List<Uint8List> expected;
   final bool shortWrite;
+  final List<List<int>>? responses;
+  final bool failClose;
   final calls = <String>[];
   final acceptedBytes = <int>[];
   final received = <Uint8List>[];
@@ -651,6 +660,8 @@ final class _Connection implements NativeSerialConnection {
     if (acceptedInFrame == frame.length) {
       completedFrames++;
       acceptedInFrame = 0;
+      final reply = responses?[completedFrames - 1];
+      if (reply != null) scheduleMicrotask(() => receive(reply));
     }
     return count;
   }
@@ -658,6 +669,10 @@ final class _Connection implements NativeSerialConnection {
   @override
   Future<void> stopReader() async {
     calls.add('stop');
+    if (responses != null) {
+      acknowledgeStop();
+      finishReader();
+    }
     await _stopAcknowledged.future;
     await _readerDone.future;
     _stopped = true;
@@ -681,6 +696,7 @@ final class _Connection implements NativeSerialConnection {
   void closePort() {
     _check(_stopped, 'close requires confirmed reader stop');
     calls.add('close');
+    if (failClose) throw StateError('Synthetic native close failure');
   }
 
   @override
@@ -688,4 +704,200 @@ final class _Connection implements NativeSerialConnection {
     _check(_stopped, 'dispose requires confirmed reader stop');
     calls.add('dispose');
   }
+}
+
+/// Real CLI/core recording with the same fixed serial vectors as the legacy
+/// probe. Runtime checks survive AOT. The caller retains the closed database
+/// for a separate product process; no SQL is used to fabricate recording rows.
+Future<Map<String, Object?>> runRecordedAcceptance(
+  Directory directory, {
+  String expectedVersion = '0.1.0-dev.3',
+  bool legacyFixture = false,
+}) async {
+  Future<Map<String, dynamic>> invoke(List<String> args) async {
+    final out = StringBuffer(), err = StringBuffer();
+    final code = await product.runCli(
+      ['--data-dir', directory.path, ...args],
+      output: out,
+      error: err,
+    );
+    _equal(code, 0, 'fixture business command: $err');
+    return jsonDecode('$out') as Map<String, dynamic>;
+  }
+
+  if (legacyFixture) {
+    await invoke(['draft', 'create', '--body=legacy 中文😀\r\nbody', '--json']);
+    final profile = await invoke([
+      'profile',
+      'create',
+      '--name=legacy send',
+      '--operation=send',
+      '--send-channel=3',
+      '--route-descriptor=1',
+      '--path-hex=A7',
+      '--data-type=4660',
+      '--task-timeout=5',
+      '--json',
+    ]);
+    await invoke([
+      'settings',
+      'set',
+      '--default-profile-id=${profile['profile']['id']}',
+      '--history-limit=1000',
+      '--json',
+    ]);
+  }
+  final ids = <String>[];
+  for (final scenario
+      in legacyFixture
+          ? ['raw_send']
+          : ['raw_send', 'bounded_listen', 'cleanup_failure']) {
+    final id = scenario == 'cleanup_failure' ? 'raw_send' : scenario;
+    String? selectedProfile;
+    if (id == 'bounded_listen') {
+      final profile = await invoke([
+        'profile',
+        'create',
+        '--name=PRIVATE_PROFILE',
+        '--operation=listen',
+        '--receive-channel=2',
+        '--duration=4',
+        '--max-entries=3',
+        '--task-timeout=20',
+        '--data-type=4660',
+        '--json',
+      ]);
+      selectedProfile = profile['profile']['id'] as String;
+    }
+    final replies = <List<int>>[
+      _device(),
+      _self(),
+      if (id == 'raw_send')
+        _hex(_ok)
+      else ...[
+        _hex('$_ordinary $_notice'),
+        _hex(_filtered),
+        _hex(_matching),
+      ],
+    ];
+    final connection = _Connection(
+      _frames(id),
+      shortWrite: id == 'raw_send',
+      responses: replies,
+      failClose: scenario == 'cleanup_failure',
+    );
+    final out = StringBuffer(), err = StringBuffer();
+    final code = await product.runCli(
+      [
+        '--data-dir',
+        directory.path,
+        ..._arguments(id),
+        '--record',
+        if (selectedProfile != null) '--profile=$selectedProfile',
+      ],
+      output: out,
+      error: err,
+      createTransport: (path) => serialTransportForTest(
+        portPath: path,
+        operatingSystem: 'macos',
+        createConnection: (_) => connection,
+      ),
+    );
+    _equal(code, scenario == 'cleanup_failure' ? 69 : 0, 'recorded exit: $err');
+    final lines = const LineSplitter().convert('$out');
+    _equal(lines.length, 1, 'one terminal object, no per-entry pseudo events');
+    final end = jsonDecode(lines.single) as Map<String, dynamic>;
+    if (id == 'bounded_listen') {
+      _equal(end['event'], 'end', 'recorded listen end');
+    }
+    _equal(
+      end['reason'],
+      scenario == 'cleanup_failure' ? 'cleanup_failure' : 'completed',
+      'primary reason',
+    );
+    for (final phase in ['registration', 'logical', 'cleanup']) {
+      _equal(
+        end['recording'][phase]['state'],
+        'committed',
+        '$phase real commit',
+      );
+    }
+    _equal(end['storageClose']['state'], 'closed', 'actual DB close');
+    _equal(
+      connection.completedFrames,
+      _frames(id).length,
+      'no resend for persistence',
+    );
+    _equal(
+      connection.acceptedBytes,
+      _frames(id).expand((f) => _hex(f)).toList(),
+      'exact TX',
+    );
+    final runId = end['recording']['runId'] as String;
+    ids.add(runId);
+    // A distinct owner and actual connection must reopen after CLI close.
+    final storage = await CoreStorage.open(dataDirectory: directory);
+    try {
+      final run = await storage.history.read(LocalId(runId));
+      _equal(
+        run.appVersion,
+        expectedVersion,
+        'independent expected appVersion',
+      );
+      _equal(
+        run.result!.reason!.code,
+        'completed',
+        'logical success survives cleanup failure',
+      );
+      _equal(
+        run.cleanup.core.state.code,
+        scenario == 'cleanup_failure' ? 'failed' : 'succeeded',
+        'core cleanup',
+      );
+      _equal(
+        run.cleanup.hostSubscriptions.state.code,
+        'succeeded',
+        'host cleanup',
+      );
+      if (id == 'raw_send') {
+        final facts = (run.result! as SendSummary).send!;
+        _check(
+          facts.deviceAcceptanceConfirmed && !facts.pendingAtTermination,
+          'committed send facts',
+        );
+      }
+      final page = await storage.history.exportSummary();
+      final envelope = jsonDecode(page.json) as Map<String, dynamic>;
+      _equal(envelope.keys.toList(), [
+        'diagnosticSummaryFormatVersion',
+        'exportedAt',
+        'runs',
+      ], 'raw core envelope');
+      _equal(envelope['diagnosticSummaryFormatVersion'], 1, 'summary version');
+      _check((envelope['runs'] as List).isNotEmpty, 'nonempty safe export');
+      for (final secret in [
+        'profileId',
+        '"payload"',
+        'runNonce',
+        'senderTestId',
+        'targetTestId',
+        'synthetic-1b8',
+        'A7',
+        'PRIVATE_CHAT',
+      ]) {
+        _check(!page.json.contains(secret), 'export leak: $secret');
+      }
+      _check(RegExp(r'\.\d{6}Z').hasMatch(page.json), 'microsecond timestamps');
+    } finally {
+      await storage.close();
+    }
+  }
+  return {
+    'passed': true,
+    'appVersion': expectedVersion,
+    'runIds': ids,
+    'databaseDirectory': directory.absolute.path,
+    'source': 'Development probe runCli/core recording with fixed synthetic serial vectors; not RF',
+    'closedBeforeReport': true,
+  };
 }

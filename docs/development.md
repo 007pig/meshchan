@@ -133,6 +133,11 @@ python3 -m unittest discover -s tool -p '*_test.py'
 
 For a clone with an unchanged lockfile, start with `dart pub get --enforce-lockfile`. After intentional dependency changes, let pub resolve and update the root lockfile, review the diff, then enforce it. Do not perform unrelated workspace upgrades. Format only files involved in a change when fixing formatting.
 
+Root analysis excludes `build/**`, which holds retained candidates, copied native
+source materials and legacy validation checkouts. These preserved artifacts are
+not workspace source packages. Member libraries, generated library code, tests
+and development tools remain covered by the normal root analysis command.
+
 Tests inject a small serial service, handle adapter, or native operation callbacks and never enumerate or open actual hardware. CLI tests check output, warnings, exit codes, exact-path forwarding, and that help/version/invalid arguments do not invoke diagnostics. Core tests check metadata failures, close/dispose behavior, open/state/close/dispose failures, and primary-error preservation. Regressions also cover false open-state reports, partial acquisition before an open failure, already-closed recovery, and USB serial numbers embedded in full or truncated Linux descriptions. Platform tests verify that blocked backends never execute their native callbacks. Invalid UTF-8 decoding tests retain the affected path, continue other records, and dispose every metadata handle; errors outside that decoding boundary still propagate. Build hooks compiling native assets are expected during tests.
 
 ## Offline core package and dependency baseline (1C.2)
@@ -735,7 +740,7 @@ Help, version, and argument validation remain available without invoking native 
 | `0` | Success, including an empty enumeration. |
 | `64` | Argument error, unknown option/command, extra positional argument, or missing/blank `--port`. |
 | `69` | Expected serial, platform, session, or cleanup failure. |
-| `74` | Output failure without an earlier primary failure. |
+| `74` | Host/storage/file/output I/O or finalization failure without an earlier primary cause. |
 | `130` / `143` | SIGINT / SIGTERM cancellation after awaited cleanup. |
 | `70` | Unexpected program error at the process boundary. |
 
@@ -3502,3 +3507,183 @@ checks passed. This CLI projection fix did not change core APIs/implementation,
 schemas, dependencies or package versions. Core/link/Python suites, fresh AOT
 builds, remote CI and hardware/RF acceptance were not rerun; earlier validation
 records remain historical. The 1C.9 release/distribution boundary is unchanged.
+
+## Final regression and local dev.3 candidate (1C.9)
+
+The [1C delivery record](releases/phase-1c-dev3.md) is the current source of
+candidate paths/hashes, exact local results, CI checkout coverage, native assets,
+materials and the 1D handoff. Work began on clean master at
+`33dca83b109f4b9a22e218e29fde96d4c2adc493`, the actual PR #25 merge; the reviewed
+head `e237be5c2fb9e4fd1cf2f2c26717582f34a5e757` is an ancestor.
+
+Three members, internal constraints and the CLI constant now use `0.1.0-dev.3`.
+Root workspace/lockfile and external dependency selections are unchanged.
+Database/schema snapshot 1, summary format 1 and CLI schema 1 are unchanged.
+Production changes are limited to versions; recording/CLI/core state machines
+are reused. Historical dev.2 values and dated evidence above remain intact.
+
+Use `tool/validate_dev_candidate.py` with an explicit fresh build directory and
+installed Dart path, then `tool/check_schema_compatibility.py` and
+`tool/package_1c_candidate.py` as documented in the release record. The new narrow
+packager uses this software/native gate rather than the 1B hardware plan or latest
+pointer. `package_dev_candidate.py` and metadata-only `revise_dev_candidate.py`
+remain historical dev.2 tools; neither renames old bytes to dev.3.
+
+Product, acceptance-tool and documentation hashes are separate. Core sources and
+actual generated code are included; complete recursive runtime assets and log
+hashes bind gates to tested bytes. Missing/failed gates or changed inputs fail
+packaging. Archive checks reject extra/missing/duplicate/traversing/link/special
+members and mode/hash changes before extraction. Only after extracted executable
+business checks and post-run byte equality does external archive-verification
+become PASS. The archive hash and final extraction record remain external to
+avoid self-containing hash cycles.
+
+New version and packaging regressions are discovered by existing Python CI;
+updated shared smoke and Dart acceptance tests cover nonempty recording without
+new actions/workflows. Final uncommitted dev.3 changes have no remote CI result.
+Same-host relocation and ad-hoc signing are distinct from clean-machine,
+Developer ID/notarization and public-distribution acceptance. No hardware/RF,
+Flutter UI, dependency/toolchain upgrade, global settings or project-license
+selection was performed.
+
+### 1C.9 delivery-tool environment/path review follow-up on November 12, 2026
+
+Three review findings were confirmed and corrected in Python tooling only.
+`Checks` now accepts an explicit child environment and passes it through the
+process runner. The schema-compatibility caller supplies its prepared
+Apple-compiler-first environment; constructing that dictionary alone previously
+had no effect on the legacy native build. Other callers retain inherited-env
+behavior by default. No global PATH or compiler installation was changed.
+
+Shared smoke resolves an explicit evidence directory against the invoking cwd
+before any child runs. Source and relocated product processes therefore receive
+the same absolute database paths even with a relative `--evidence-directory`.
+
+A shared SDK locator now recognizes either an installed SDK binary or the
+standard Flutter Dart launcher, including Homebrew symlinks. It validates the
+SDK's version, API header and core library layout as well as LICENSE, and rejects
+unrecognized layouts. Material collection resolves the SDK before copying any
+notices. Validation also records the discovered SDK directory/version and finds
+Flutter cache metadata relative to that SDK. The Flutter framework LICENSE can
+no longer qualify as the Dart SDK notice merely because it exists.
+
+New `tool/delivery_environment_test.py` covers actual child environment delivery,
+compatibility-caller wiring, cross-cwd evidence paths, original SDK license/archive
+notice collection for direct/launcher/symlink inputs, and rejection when SDK
+structure is incomplete. Pre-fix failures are retained. An initial test-only
+`/var` versus `/private/var` path-comparison mismatch was corrected by canonicalizing
+the temporary fixture root; the subsequent targeted five tests passed.
+
+Validation used the reverified Homebrew Python 3.15.2 (actual executable
+`/opt/homebrew/opt/python@3.15/bin/python3.15`), installed Dart 3.13.7 and the same
+macOS arm64 host. Complete Python discovery passed **61 tests**. A genuine old
+schema-1 compatibility run using `/opt/homebrew/bin/dart` and a caller PATH headed
+by `/opt/homebrew/opt/llvm@18/bin` passed all **8 process checks**; the recorded
+child PATH starts `/usr/bin:/bin:/opt/homebrew/bin`. Complete source/AOT/relocation
+smoke using that Flutter launcher and a relative evidence directory passed all
+**101 process checks**. Real material collection through the launcher copied the
+actual SDK LICENSE, SHA-256
+`2cfa3ee8e7512e6d44c854b986510810fadc815f93f890373b3a81c1b6ccd256`,
+which also matches the original candidate's SDK notice and differs from the
+Flutter framework license. Python subprocesses continue to use sys.executable.
+
+Logs, commands/times/exits, pre-fix failures, retained input/asset hashes and
+license verification are under ignored
+`build/phase-1c9/review-delivery-tools-20261112T190351Z/`. See review-gates.json,
+review-inputs.json, schema-compatibility.json, relative evidence/process-checks.json,
+launcher-materials-verification.json and review-verification.json.
+
+Product compilation inputs and all three existing bundle inventories are unchanged.
+No Dart production code, schema, dependency, native binary or SDK changed, so the
+product suites and native builds were not repeated for these Python-only fixes.
+The original archive remains unchanged at SHA-256
+`6528394052e999de748323090db78d22344db7be1d9264a5ea1f8e35cfa4afe0`.
+It was built with the direct SDK binary and already contains the correct SDK
+license. No replacement archive or publication was issued. Original manifests
+remain historical tool snapshots; current changed verification inputs are not
+silently substituted into those old passing gates.
+
+### 1C.9 schema-path review follow-up on November 12, 2026
+
+Two further Python-only path findings were reproduced and fixed in
+`check_schema_compatibility.py`. Row comparison now uses an escaped absolute
+`Path.as_uri()` plus `?mode=ro`, rather than interpolating a filesystem spelling
+into a URI. Literal `#`, `%` and `?` cannot change the database name or consume
+the read-only query. The comparison connection is explicitly closed on return
+or error. The Dart argument now uses the shared executable parser: resolve it
+against the invoking cwd, require a nonempty executable file, and reject invalid
+inputs before creating build files or extracting legacy source. Both legacy
+child working directories receive the same absolute executable.
+
+Four added delivery regressions exercise literal/percent-encoded/conflicting
+filenames, spaces/Unicode, actual SQLite write rejection, missing-file preservation,
+a real child executable selected through a relative symlink in two cwds, and
+missing/empty/nonexecutable/directory argument rejection before build work.
+Pre-fix results reproduced unintended write access, percent-decoding into a
+neighboring file, and FileNotFoundError after changing cwd. Final targeted
+execution passed **9 tests**; complete Python discovery passed **65 tests**
+with the reverified Homebrew Python 3.15.2. The final runs have no database
+ResourceWarnings; an earlier intermediate run and all pre-fix failures remain.
+
+The actual compatibility command passed **8 process checks** with a relative
+`--dart` symlink containing a space and a normal legacy-source cwd. The recorded
+executable is absolute. A real old schema-1 file generated by that run was then
+copied to `business#1%23?mode=rwc 中文/`: escaped read-only comparison preserved
+its bytes, and **4 native process checks** completed AOT recording, a product
+commit and nonempty product query/export. Old rows remained unchanged, new runs
+use dev.3, and no URI-truncated database appeared.
+
+A separate combined attempt with the legacy source checkout itself under
+`build#1%23 中文/` remains **BLOCKED by an installed Dart 3.13.7 native-hook path
+limitation**. Locked resolution passed, but Dart rejected the hook.dill path as
+an unknown command before recording or Python row comparison. The failed
+command/exit/log are retained; it is not called a successful combined build.
+No SDK/pub-cache/upstream source was changed to mask this failure. This is
+distinct from the corrected Python SQLite URI and executable-resolution defects.
+
+Evidence is under ignored
+`build/phase-1c9/review-schema-paths-20261112T191824Z/`: before-fix.log,
+targeted-final.log, python-tests-final.log, review-gates.json,
+schema-special-path-relative-dart.log, relative-dart-gate.json,
+special-database-verification.json and review-verification.json.
+Product compilation inputs, all three native bundles and the original candidate
+archive remain unchanged. Dart production suites/native builds were not repeated
+for these Python-only corrections. The reviewer's separate 255-passed/16-loopback-
+failed restricted CLI run remains reported as sandbox socket blocking, not a new
+passing CLI gate. No replacement archive or remote publication was issued.
+
+### 1C.9 retained-artifact analyzer review follow-up on November 12, 2026
+
+The review reproduced **28 issues** from incomplete third-party SQLite source
+fragments preserved under the root build directory. The workspace previously had
+only the recommended-lints include, so root `dart analyze --fatal-infos` analyzed
+those delivery materials as if they were workspace code. Later candidate gates
+therefore failed even though the actual member sources were unchanged.
+
+`analysis_options.yaml` now excludes only root `build/**` from workspace analysis.
+The original notices/source materials and old checkouts are retained byte-for-byte;
+no package dependency, analyzer diagnostic severity, generated library file or
+first-party source tree was excluded to hide a product issue. Existing packager
+output layout and original candidate archives are unchanged.
+
+On the reverified macOS arm64 host with bundled Dart 3.13.7 and Homebrew Python
+3.15.2, a deliberate temporary core-library type error produced exactly one
+`return_of_invalid_type` diagnostic (expected analyzer exit 3) while retained
+source-material diagnostics were absent. That owned probe was removed. The final
+root `dart analyze --fatal-infos` then exited 0 with no issues, root format checked
+**707 files with zero changes** in this retained-artifact tree, and complete Python
+discovery passed **65 tests**. Patch whitespace passed. No permanent test or
+production source change was needed for this analyzer-configuration correction.
+
+Evidence is under ignored
+`build/phase-1c9/review-analyzer-scope-20261112T193239Z/`: before-fix.log,
+first-party-analysis-control.log, analyze-after-fix.log, format-after-fix.log,
+python-tests.log, review-gates.json and review-verification.json.
+The 74 retained source-material files, all three native bundles and the original
+archive were rechecked unchanged. `analysis_options.yaml` is deliberately part
+of productCompilationInputHashes, so the captured input map has one new hash.
+The review records that difference; it does not relabel any old candidate gate
+as validation of the new configuration. No native rebuild, Dart suite rerun,
+replacement archive or remote publication was performed for this scope-only fix.
+Previous SDK-path, clean-environment, CI and distribution limitations remain as
+recorded in their independent evidence.

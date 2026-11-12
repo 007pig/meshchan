@@ -4,7 +4,7 @@ Pure Dart offline business values, persistent drafts/profiles/settings, typed
 effective-parameter resolution, finite diagnostic recording/recovery, bounded
 history, guarded deletion, retention, safe summary export, and a controlled
 production Drift/SQLite storage lifecycle. Import
-`package:meshchan_core/meshchan_core.dart`. All packages remain `0.1.0-dev.2`.
+`package:meshchan_core/meshchan_core.dart`. All members are `0.1.0-dev.3`; schema and summary format remain 1.
 
 1C.2 established immutable business values and interfaces. 1C.3 adds the real
 schema 1, internal row codecs, directory ownership, file opening/closing, and a
@@ -283,7 +283,7 @@ stored type/JSON/semantic damage `database_corrupt`; real query failures use
 Entropy/clock failures use the write category even for TypeError/FormatException.
 Default errors expose no local text, paths, test IDs, content, or SQL.
 
-The normal workspace dependency is now core → `meshcore_link ^0.1.0-dev.2`,
+The normal workspace dependency is now core → `meshcore_link ^0.1.0-dev.3`,
 with no reverse/CLI import. Offline repository/resolver calls perform **no device I/O**;
 only explicit recording invokes the supplied transport factory. Existing
 libserialport native build hooks can still run alongside SQLite hooks. Use the
@@ -723,7 +723,7 @@ summary selection, **not a database backup** or import/restore format.
 Schema/snapshot 1, diagnostic summary format 1, CLI schema 1, dependencies and
 package version remain unchanged. CLI flags, directories, explicit ports,
 output destinations, maintenance error precedence and exit wiring belong to
-1C.8; native SQLite product distribution and dev.3 acceptance remain later work.
+1C.8; see the [dev.3 candidate record](../../docs/releases/phase-1c-dev3.md) for native SQLite/archive acceptance and remaining distribution limits.
 
 ## Product host integration (1C.8)
 
@@ -743,7 +743,9 @@ listen offers one finite logical/cleanup/persistence summary; core exposes no
 per-packet observation stream to reconstruct. The product export writes the
 returned core JSON string verbatim and sends its cursor separately to stderr.
 
-The 1C.8 source/AOT gate exercises real business SQLite in a fresh complete CLI
-bundle and after same-host bundle relocation. This does not establish clean-machine
-redistribution, other-platform native support or RF acceptance. Schema/snapshot 1,
-summary format 1 and package versions remain unchanged; dev.3 delivery is 1C.9.
+The final 1C.9 source/AOT gate extends the existing real business SQLite checks
+with nonempty synthetic recording, old schema-1 file compatibility and final
+archive extraction. See the [dev.3 record](../../docs/releases/phase-1c-dev3.md)
+for exact results. Same-host relocation does not establish clean-machine,
+other-platform or RF acceptance. Schema/snapshot 1 and summary format 1 remain
+unchanged; all members now use 0.1.0-dev.3.

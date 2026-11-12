@@ -19,7 +19,18 @@ and pagination. [1C.5](#profiles-settings-and-typed-resolution-1c5) adds persist
 profiles/settings and core typed parameter resolution. [1C.6](#diagnostic-recording-lifecycle-coordination-and-recovery-1c6) adds recording/recovery,
 [1C.7](#bounded-diagnostic-history-and-safe-export-1c7) adds bounded history/retention/export,
 and [1C.8](#business-cli-entry-points-and-recording-integration-1c8) wires these into the product CLI.
-Dev.3 packaging and broader distribution acceptance remain 1C.9.
+The [1C.9 delivery record](releases/phase-1c-dev3.md) describes the completed local
+dev.3 candidate and separately open CI, clean-environment, and public-distribution
+checks; dated implementation and validation sections below remain historical.
+
+The [Flutter host contract (1D.1)](architecture/flutter-host.md) now fixes the
+macOS arm64 + USB UI scope, worker/owner lifecycle, data-directory compatibility
+target, and later acceptance responsibilities. The workspace above is still the
+current Dart-only workspace. Flutter membership and platform files belong to
+1D.2, with the worker in 1D.3; this documentation step does not add Flutter SDK
+dependencies or change existing commands. Future integration uses the existing
+SDK below and must validate native assets, Sandbox/directory access, and lifecycle
+behavior rather than inferring them from CLI results.
 
 ## SDK and native toolchain baseline
 

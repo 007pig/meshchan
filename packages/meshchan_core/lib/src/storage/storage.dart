@@ -8,6 +8,8 @@ import 'package:path/path.dart' as p;
 import 'package:meshcore_link/meshcore_link.dart' show CompanionTransport;
 
 import '../errors.dart';
+import '../history/history_repository.dart';
+import '../history/history_store.dart';
 import '../repositories.dart';
 import '../repositories/draft_repository.dart';
 import '../repositories/profile_repository.dart';
@@ -39,6 +41,9 @@ abstract interface class CoreStorage {
   /// Stable offline repositories on this same owned connection.
   ProfileRepository get profiles;
   SettingsRepository get settings;
+
+  /// Stable history access on this owner/connection; getting it performs no I/O.
+  DiagnosticHistory get history;
 
   /// Resolves a consistent profile/settings snapshot and validates invocation
   /// bytes without device I/O or writes. The result is not a safe run snapshot.
@@ -128,7 +133,11 @@ Future<CoreStorage> openStorage(
     }
     await db.customSelect('SELECT 1').get();
     await recoverRuns(db, clock: hooks.clock);
-    return StorageHandle._(owner, db, hooks);
+    final handle = StorageHandle._(owner, db, hooks);
+    // Recovery errors still fail open. Maintenance errors are independent safe
+    // reports on an otherwise usable handle, including partial committed work.
+    await handle.requestHistoryMaintenance();
+    return handle;
   } catch (error) {
     final primary = classifyStorageError(
       error,
@@ -172,6 +181,7 @@ final class StorageHandle implements CoreStorage {
       clock: hooks.clock,
     );
     settings = PersistentSettingsRepository(this);
+    history = PersistentDiagnosticHistory(this, clock: hooks.clock);
   }
   final DirectoryOwnership _owner;
   final CoreDatabase _db;
@@ -182,6 +192,88 @@ final class StorageHandle implements CoreStorage {
   late final ProfileRepository profiles;
   @override
   late final SettingsRepository settings;
+  @override
+  late final DiagnosticHistory history;
+
+  final _pinnedRuns = <LocalId>{};
+  int _historyRevision = 0;
+  Future<HistoryMaintenanceReport>? _maintenance;
+  bool _maintenanceRequested = false;
+  int _maintenanceRevision = -1;
+  HistoryMaintenanceReport? latestHistoryMaintenance;
+  HistoryMaintenanceReport? historyMaintenanceFailure;
+  int historyMaintenanceFailureCount = 0;
+
+  bool isRunPinned(LocalId id) => _pinnedRuns.contains(id);
+
+  // Called within a mutating transaction before commit. A rollback may cause an
+  // unnecessary rescan, but no worker can observe a commit with stale rank.
+  void invalidateHistorySelection() => _historyRevision++;
+
+  void acknowledgeHistoryMaintenanceFailures() {
+    historyMaintenanceFailure = null;
+    historyMaintenanceFailureCount = 0;
+  }
+
+  Future<HistoryMaintenanceReport> waitForHistoryMaintenance() =>
+      _maintenance ?? Future.value(latestHistoryMaintenance!);
+
+  /// Internal continuation of an existing admission (also used before open
+  /// publishes the handle). Register synchronously, even while closing; never
+  /// reenter useDatabase after the triggering admission has been released.
+  Future<HistoryMaintenanceReport> requestHistoryMaintenance() {
+    if (_maintenance != null) {
+      if (_maintenanceRevision != _historyRevision) {
+        _maintenanceRequested = true;
+      }
+      return _maintenance!;
+    }
+    _maintenanceRequested = true;
+    final completion = Completer<HistoryMaintenanceReport>();
+    _maintenance = completion.future;
+    _active++;
+    unawaited(_runMaintenance(completion));
+    return completion.future;
+  }
+
+  Future<void> _runMaintenance(
+    Completer<HistoryMaintenanceReport> completion,
+  ) async {
+    var deleted = 0;
+    late HistoryMaintenanceReport report;
+    try {
+      do {
+        _maintenanceRequested = false;
+        _maintenanceRevision = _historyRevision;
+        final pass = await pruneHistory(
+          _db,
+          isPinned: isRunPinned,
+          revision: () => _historyRevision,
+        );
+        deleted += pass.deletedCount;
+        report = HistoryMaintenanceReport(
+          state: pass.state,
+          deletedCount: deleted,
+          historyLimit: pass.historyLimit,
+          deferredCount: pass.deferredCount,
+          error: pass.error,
+        );
+        if (report.state == HistoryMaintenanceState.failed) {
+          historyMaintenanceFailure = report;
+          historyMaintenanceFailureCount++;
+          // No failure spin, even if requests arrived during this failed pass.
+          break;
+        }
+      } while (_maintenanceRequested);
+      latestHistoryMaintenance = report;
+      completion.complete(report);
+    } finally {
+      _maintenanceRequested = false;
+      _maintenance = null;
+      if (--_active == 0) _idle?.complete();
+    }
+  }
+
   @override
   Future<EffectiveParameters> resolveParameters(
     EffectiveParameterRequest request,
@@ -207,12 +299,23 @@ final class StorageHandle implements CoreStorage {
       subscriptions: subscriptions,
       generateId: _hooks.runId,
       clock: _hooks.clock,
+      onRegistered: _pinnedRuns.add,
+      onChanged: invalidateHistorySelection,
+      onCommitted: (run) {
+        if (eligibleHistory(run)) requestHistoryMaintenance();
+      },
     );
     _active++;
     // This admission is deliberately outside useDatabase's row classification:
     // all device/host boundaries are observed by the recording coordinator.
     unawaited(
       recording.run(_db).whenComplete(() {
+        final id = recording.runId;
+        if (id != null) {
+          _pinnedRuns.remove(id);
+          invalidateHistorySelection();
+          requestHistoryMaintenance();
+        }
         if (--_active == 0) _idle?.complete();
       }),
     );

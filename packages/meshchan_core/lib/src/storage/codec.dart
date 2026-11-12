@@ -439,6 +439,46 @@ DiagnosticRun decodeRun(db.StoredRun v) {
   });
 }
 
+// Shared typed allowlists preserve the database JSON representation. Export
+// constructs its own envelope and run fields; no row/object blacklist is used.
+String encodeDiagnosticExport(
+  Iterable<DiagnosticRun> runs,
+  DateTime exportedAt,
+) => jsonEncode({
+  'diagnosticSummaryFormatVersion': diagnosticSummaryFormatVersion,
+  'exportedAt': _exportTime(exportedAt),
+  'runs': [
+    for (final run in runs)
+      {
+        'runId': run.runId.value,
+        'operation': run.operation.code,
+        'appVersion': run.appVersion,
+        'diagnosticSummaryFormatVersion': run.diagnosticSummaryFormatVersion,
+        'configuration': _configuration(run.configuration),
+        'preparedAt': _exportTime(run.preparedAt),
+        'logicalEndedAt': run.logicalEndedAt == null
+            ? null
+            : _exportTime(run.logicalEndedAt!),
+        'recordState': run.recordState.code,
+        'result': run.result == null ? null : _logical(run.result!),
+        'cleanup': _cleanup(run.cleanup),
+        'recoveredAt': run.recoveredAt == null
+            ? null
+            : _exportTime(run.recoveredAt!),
+        'recoveryReason': run.recoveryReason?.code,
+      },
+  ],
+});
+
+String _exportTime(DateTime time) {
+  if (time.year < 0 || time.year > 9999) throw const FormatException();
+  final iso = time.toUtc().toIso8601String();
+  // Dart emits three digits when the microsecond component is zero.
+  return time.microsecond == 0
+      ? '${iso.substring(0, iso.length - 1)}000Z'
+      : iso;
+}
+
 Map<String, Object?> _session(SessionFailureSummary v) => {
   'kind': v.kind.code,
   'stage': v.stage.code,

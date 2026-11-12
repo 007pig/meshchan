@@ -26,7 +26,7 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | Package | Responsibility and current status |
 | --- | --- |
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
-| `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery (1C.6); SQLite schema 1 and a saved migration baseline. History query/pruning/export (1C.7) and CLI wiring (1C.8) remain next. See the [public recording example](packages/meshchan_core/README.md#finite-diagnostic-recording-and-startup-recovery-1c6). |
+| `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery; bounded history queries, guarded deletion, automatic retention and safe JSON summary export (1C.7). SQLite schema 1 remains unchanged. CLI wiring (1C.8) remains next. See the [offline history API and example](packages/meshchan_core/README.md#diagnostic-history-retention-and-safe-export-1c7). |
 | `apps/meshctl` | Asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
 
 Local Python scripts and tests use the latest installed stable Python **3.15 or

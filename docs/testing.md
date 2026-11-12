@@ -696,3 +696,36 @@ claim. Current CLI has no business SQLite execution: bundles/smoke do not establ
 SQLite product AOT distribution. No arbitrary power-loss, real RF/hardware, Linux
 or remote CI result is inferred. See the dated
 [1C.6 local record](development.md#1c6-local-validation-on-november-12-2026).
+
+## History, retention, and safe export (1C.7)
+
+From packages/meshchan_core, `dart test test/history` runs the focused real-file
+suite. It uses legal business fixtures, the existing fake transport/session
+boundary and real SQLite transactions. No maintenance skip switch or raised
+blanket retention limit is introduced. Existing profile/settings commit-failure
+cases now await their preceding settings-triggered maintenance before arming the
+next one-shot commit fault, so the fault still tests its intended transaction.
+
+| Test file under test/history | Evidence |
+| --- | --- |
+| history_test.dart | No-I/O stable getter; public read/filter/real reopen; closed-handle rejection; operation/state shapes and actual executed SQL/arguments with EXPLAIN; composite seek/no temporary sorting; UTC microsecond half-open range; prepared-time semantics; 50/1/200 limits/ties/probe/end/empty/cursor deletion; eligibility matrix, failed cleanup/recovery, guarded atomic deletion and immediate rollback. Damaged JSON/SQL type/lifecycle/newer summary fail history/export/delete/maintenance, including a corrupt extra probe. |
+| retention_test.dart | Global eligible rank and reversed insertion/time order, 128-row ties and hundreds of ineligible rows, default 1000 open/recovery and custom 1/100000 settings/reset triggers; per-batch limit changes, deletion of a counted retained row, new eligible record invalidation; later DELETE/pre-COMMIT failure preserves prior commits and immediately rolls back the bad batch; healthy retry; startup and sticky failures; dangling default versus corrupt settings; coalesced maintenance and close/owner barriers on success/failure. |
+| recording_history_test.dart | Real terminal intermediate cleanup save before final save: concurrent delete conflicts, prune defers and keeps newer retained history; final save succeeds then unpin triggers pruning. Committed recording survives prune failure without resends, construction failure unpins, and admitted cleanup/save/automatic maintenance survive close while owner stays reserved. |
+| export_test.dart | Parsed JSON exact root/run/nested field sets across four operations; real profile/port/draft/content/test-ID samples excluded; profileId still present in internal read; route/path-byte counts and payload lengths retained; pending/null/false/zero, PONG with local failure, logical success with cleanup failure and recovered unknown facts; zero/nonzero fixed six-digit UTC; bounded two-page continuation and filter. |
+
+HistoryControl delegates to the actual executor, captures real SELECTs and bound
+arguments, executes EXPLAIN on those exact statements, and intercepts actual
+DELETE and pre-COMMIT paths. Cross-batch host actions run in the captured host
+zone rather than accidentally inheriting Drift's already committed transaction
+zone. Recording barriers distinguish the intermediate terminal read, concurrent
+guarded delete read and final save read. No independent pin-set mirror is tested.
+The old ownership/platform matrix and both 1C.6 cancellation regression groups
+remain in the complete core run.
+
+Use the existing CI sequence: locked pub get, build_runner, schema guard, root
+format/fatal-info analysis, complete core/link/CLI tests, Python tests, three
+native bundles and source/AOT smoke. Keep tests/builds sharing native assets
+sequential. See the [dated local record](development.md#1c7-local-validation-on-november-12-2026)
+for executed results and limits; CI configuration alone establishes no remote
+pass. Current CLI bundles still do not execute business SQLite, so their smoke
+is not SQLite product AOT distribution acceptance. No RF/hardware claim is made.

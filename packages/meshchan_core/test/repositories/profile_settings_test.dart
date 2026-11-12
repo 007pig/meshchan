@@ -414,6 +414,7 @@ void main() {
           await s.settings.save(
             AppSettings(defaultProfileId: p.id, diagnosticHistoryLimit: 7),
           );
+          await s.history.waitForMaintenance();
           final before = c.rollbacks;
           if (stage == 'write') {
             c.afterWrite = (e) => e.runCustom(

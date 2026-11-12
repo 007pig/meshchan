@@ -3,6 +3,7 @@ import 'models/connection_profile.dart';
 import 'models/diagnostic_codes.dart';
 import 'models/diagnostic_run.dart';
 import 'models/draft.dart';
+import 'errors.dart';
 import 'validation.dart';
 import 'values.dart';
 
@@ -13,7 +14,7 @@ import 'values.dart';
 /// The host supplies storage resources and exclusive directory ownership. All
 /// business access, including reads, requires that ownership; contention fails
 /// immediately with data_directory_busy. Directory identity and locks are owned
-/// by CoreStorage. Diagnostic history remains future work.
+/// by CoreStorage.
 abstract interface class DraftRepository {
   /// Generates a secure random ID and initial revision 1; awaits commit.
   /// Empty exact text is valid. Unpaired UTF-16 surrogates are invalid_input.
@@ -71,8 +72,8 @@ abstract interface class SettingsRepository {
 
   /// Validates a nonnull defaultProfileId in the same transaction as the save.
   /// No coercion/clamping. Success means commit, including both setting fields.
-  /// Persists the limit only. 1C.7 will trigger bounded eligible-history pruning
-  /// after commit; pruning failure must not undo a committed settings save.
+  /// Requests bounded history maintenance after commit. Its independent report
+  /// never changes a committed settings save into a failure.
   Future<AppSettings> save(AppSettings settings);
 
   /// Explicitly restores the two defaults, preserving unrelated business data.
@@ -103,17 +104,71 @@ final class HistoryQuery {
   final DateTime? preparedUntilExclusive;
 }
 
-/// Read-only history (implementation remains for 1C.7). Field-specific writes belong to the recording
-/// coordinator; no API here can replace a run or turn failure into success.
+enum HistoryMaintenanceState { completed, deferred, failed }
+
+/// One maintenance execution, including committed batches before any failure.
+/// A null limit means settings could not be read. Deferred counts only eligible
+/// excess rows protected by an active recording, never newer retained rows.
+final class HistoryMaintenanceReport {
+  const HistoryMaintenanceReport({
+    required this.state,
+    required this.deletedCount,
+    required this.historyLimit,
+    this.deferredCount = 0,
+    this.error,
+  });
+  final HistoryMaintenanceState state;
+  final int deletedCount;
+  final int? historyLimit;
+  final int deferredCount;
+  final CoreException? error;
+}
+
+/// One safe JSON selection. Continue explicitly with [nextCursor]; separate
+/// pages do not share a snapshot and this format is not a restorable backup.
+final class DiagnosticSummaryPage {
+  const DiagnosticSummaryPage({required this.json, this.nextCursor});
+  final String json;
+  final HistoryCursor? nextCursor;
+}
+
+/// Field-specific writes belong to recording. No replacement CRUD is exposed.
 abstract interface class DiagnosticHistory {
   /// A missing requested run is not_found. Requires directory ownership.
   Future<DiagnosticRun> read(LocalId runId);
 
   /// preparedAt DESC, runId DESC; default size 50, allowed range 1..200.
+  /// Filter fields combine with AND, with UTC registration times in [from, until).
+  /// All valid states are readable. A cursor need not identify a surviving row.
   /// Separate calls are not a snapshot. Invalid cursors/limits are invalid_input.
   Future<Page<DiagnosticRun, HistoryCursor>> query({
     HistoryQuery? filter,
     PageSize? size,
     HistoryCursor? after,
   });
+
+  /// Hard-deletes one strictly validated eligible row after commit. Prepared,
+  /// unsettled cleanup and active recording pins fail with conflict; missing
+  /// IDs fail with not_found. Terminal cleanup failures are eligible too.
+  Future<void> delete(LocalId runId);
+
+  /// Same bounded selection as query, explicitly encoded without profileId.
+  Future<DiagnosticSummaryPage> exportSummary({
+    HistoryQuery? filter,
+    PageSize? size,
+    HistoryCursor? after,
+  });
+
+  /// Coalesces with the active worker and waits for maintenance, never RF work.
+  Future<HistoryMaintenanceReport> maintain();
+
+  /// Waits for already requested work, or returns the last report (including
+  /// startup). Does not request a retry after failure.
+  Future<HistoryMaintenanceReport> waitForMaintenance();
+  HistoryMaintenanceReport? get latestMaintenance;
+
+  /// Bounded sticky failure state survives later successful automatic work.
+  HistoryMaintenanceReport? get unacknowledgedFailure;
+  int get unacknowledgedFailureCount;
+  void acknowledgeMaintenanceFailures();
 }

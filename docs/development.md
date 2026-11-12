@@ -2822,3 +2822,175 @@ localized core fix; earlier dated results remain above. Remote CI and hardware
 were not run. Before/after regressions, full tests, format, analysis and actual
 Dart/compiler version logs are retained under ignored
 `build/phase-1c6/session-failure-cancel-review-20261112/`.
+
+## Bounded diagnostic history and safe export (1C.7)
+
+Implemented from clean `master` at
+`27de0edf232cf7b0c7280d80482e32b94909daec` (PR #23 merge). The reviewed
+`d1e5e281087630c93b62ed0b5c47c1733e80459c` head is its second parent and an
+ancestor of this baseline. No reset, checkout, history rewrite or dependency
+upgrade was required. The earlier 1C.6 validation records above remain historical.
+
+The public barrel exposes `CoreStorage.history`, `DiagnosticHistory`,
+`DiagnosticSummaryPage`, `HistoryMaintenanceState` and
+`HistoryMaintenanceReport`. See the [complete history contract and host usage](../packages/meshchan_core/README.md#diagnostic-history-retention-and-safe-export-1c7)
+and the [hardware-free example](../packages/meshchan_core/example/inspect_history.dart).
+The example accepts a host directory, queries/continues a filter, exports one
+page, observes maintenance independently and finally closes. It does not choose
+an application data directory, change product CLI parsing or delete an implicit
+selection.
+
+| Implementation | Responsibility |
+| --- | --- |
+| history/history_repository.dart | One admission per read/query/delete/export or maintenance request/wait; safe export-generation classification. |
+| history/history_store.dart | Bound SQL for present filters and `(prepared_at_us, run_id)` seek; strict whole-page/probe validation; shared persistent eligibility; 128-row pruning transactions. |
+| storage/storage.dart | Stable getter, per-run pins, precommit selection revision, coalesced worker, startup/sticky reports and maintenance admission within the existing close barrier. |
+| recording/recording.dart and run_store.dart | Pin before exposing prepared/device work; invalidate rank inside logical/cleanup transactions; register postcommit maintenance separately from save results; unpin only after every save settles. |
+| repositories/settings_repository.dart | Keep committed AppSettings results; invalidate inside save/reset transactions and register maintenance after commit. |
+| storage/codec.dart | Explicit export envelope/run allowlist sharing existing nested typed allowlists; fixed six-digit UTC encoding without changing stored JSON. |
+
+Queries combine optional operation, recordState, inclusive UTC prepared-from and
+exclusive UTC prepared-until. Default 50/max 200, strict size+1 probe, all valid
+states, epoch microseconds, descending timestamp/ID ties, cursor-row deletion
+and independent-page snapshot limits match the architecture contract. Actual
+executed SQL/arguments are used for EXPLAIN tests of all four existing indexes;
+continuations require composite SEARCH and no temporary sorting. Unranged first
+pages may use an ordered index SCAN. No OFFSET or caller SQL is used.
+
+Eligibility is validated recovered_archived, or settled with both scopes
+terminal, including failed cleanup. Pins are separate deletion guards and do not
+alter eligible rank. Retention counts all operations together. Every batch reads
+current stored settings without resolving a default profile, validates every
+visited row and advances past ineligible/pinned rows. Short transactions retain
+at most 128 rows and delete at most 128 IDs. Cleanup JSON has no eligibility
+index: scans may visit all history and repeat after invalidation. There is no
+O(128) total-work or cross-history atomicity claim.
+
+External mutations invalidate selection before their transaction commits; a
+rollback can cause a harmless rescan. Each following transaction restarts counting
+if the revision/limit changed. Worker deletes do not invalidate themselves or
+trigger another worker. This protects against increased/decreased limits,
+explicit deletion of a counted retained row, new eligible records and unpin
+before the old cursor. Old pinned excess rows are deferred without deleting
+newer policy-retained rows. Unpin requests another check. Healthy work continues
+through all batches; protected-only work ends deferred, and a failed batch ends
+the execution without a failure loop. Earlier committed deletions remain and
+only they contribute to deletedCount on failure. Another trigger/open retries.
+
+Triggers cover recovery/open, eligible logical/cleanup commits, final pin
+release, settings save/reset, explicit delete and maintain. Repeated requests
+join the running worker. `waitForMaintenance()` observes already requested work;
+`maintain()` requests a check. `latestMaintenance` includes startup. Later success
+does not clear `unacknowledgedFailure`/`unacknowledgedFailureCount`; the host must
+explicitly acknowledge after handling them. The bounded failure state is local
+to the handle, without a persistent queue/log. Limits are nullable in a failure
+report only when no valid settings limit was obtained.
+
+Main transactions and maintenance remain independent. A prune failure cannot
+change a committed AppSettings/RecordingSave, task reason, cleanup facts,
+coordination failure, fullySuccessful or sends. Open still rejects failed
+preflight/schema/recovery, but returns a usable handle if only subsequent
+retention failed. All automatic maintenance is synchronously admitted before its
+source admission ends, even if close has begun. Close waits for admitted
+recording, actual cleanup, saves and maintenance, then closes the same connection
+and releases the same owner. Maintenance errors release their count and do not
+become native closeUnconfirmed; actual native-close quarantine is unchanged.
+
+Export returns one complete JSON string plus a typed continuation. The root is
+`diagnosticSummaryFormatVersion: 1`, a once-observed `exportedAt` and `runs`.
+Per-run fields are explicitly constructed; profileId is omitted entirely.
+Configuration/result/two-scope cleanup retain byte lengths, route descriptor and
+path length, safe error codes, integer microsecond RTT/elapsed and meaningful
+null/false/zero. Every time uses UTC Z and exactly six fractional digits. No
+profiles/ports/exact routes/content/test IDs/nonces/device details/argv/raw
+exceptions or stacks are exported. Unknown stored formats retain storage_read_failed;
+corruption remains database_corrupt; export-generation exceptions are safe
+storage_read_failed. Continue explicitly using nextCursor and the same filter.
+It is a summary selection, not a backup or import format.
+
+### Handoff to 1C.8
+
+Use `lib/meshchan_core.dart` and the core README/example as the concrete API.
+Host CLI work must supply its data directory, preserve profile presence and
+explicit content conversion, authorize and forward the current explicit port,
+resolve parameters, record through CoreStorage.record, and keep signal/host
+subscriptions alive until their real cleanup completes. Wire history filters and
+both cursor values to history.query/exportSummary, explicit selected IDs to
+delete, and let the host handle JSON output/storage failures. Observe startup,
+automatic and explicit maintenance reports plus unacknowledged failures
+independently of committed settings/recording outcomes before closing. CLI
+output/exit precedence belongs there; this step adds no flags, CLI envelope,
+exit codes, release or dev.3 delivery. Database schema/snapshot 1, diagnostic
+summary format 1, CLI schema 1, package versions and dependencies are unchanged.
+
+### 1C.7 local validation on November 12, 2026
+
+Actual baseline/host: clean master at PR #23 merge
+`27de0edf232cf7b0c7280d80482e32b94909daec`, macOS **27.2.1 (26B131)** arm64.
+The installed `/opt/homebrew/share/flutter` cache records Flutter **3.47.9**
+stable, revision `c197ca5199e9ee5661e865596c9c07294dfab51c`; direct bundled
+`/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --version` reported
+**Dart 3.13.7**. Commands used that installed Dart and an Apple-compiler-first
+process-local PATH. `/usr/bin/clang` reported Apple Clang **21.0.0**
+(`clang-2100.4.1.1`). Before project Python scripts, the explicit
+`/opt/homebrew/bin/python3` entry was verified as stable **3.15.2**, with actual
+`sys.executable` `/opt/homebrew/opt/python@3.15/bin/python3.15`. No SDK/channel,
+interpreter, global PATH/settings, dependencies or package versions were changed.
+
+| Check | Observed result |
+| --- | --- |
+| Root dart pub get --enforce-lockfile | Passed; root lockfile and manifests unchanged. |
+| Core dart run build_runner build | Passed; production/probe generated files unchanged. |
+| Core dart run tool/check_schema.dart | Passed; formal schema 1, frozen snapshot and generated verification helpers match. |
+| Root dart format --output=none --set-exit-if-changed . | Passed; **120 files, zero changes**. |
+| Root dart analyze --fatal-infos | Passed; no issues. |
+| Focused dart test test/history | **46 passed**, using actual query plans, strict bad probes, rollback, retention, export and real recording save/pin barriers. |
+| Complete meshchan_core dart test | **362 passed**, retaining repository/resolver/recording/recovery, NUL-name, synchronous-subscribe cancellation, prior-failure precedence and owner/process regressions. |
+| Complete meshcore_link dart test | **180 passed**; communication implementation unchanged. |
+| Complete meshctl dart test | Initial sandbox run: 81 passed and 16 local-loopback bind failures (Operation not permitted). Rerun with loopback permission: **97 passed**. Both logs retained. |
+| Python unittest discover -s tool -p '*_test.py' | **46 passed** using the verified Homebrew 3.15.2 entry. |
+| Existing native build gates | Three fresh bundles passed sequentially: product CLI, serial observation and development datagram acceptance. |
+| Shared source/AOT smoke | **69 passed on macOS**; native assets, complete-bundle relocation, broken pipe and five synthetic datagram scenarios in source/AOT. |
+| Final frozen-artifact/patch review | Schema/generated/snapshot/lock/manifests unchanged; whitespace, new files and conflict markers checked. |
+| Remote CI | **NOT_RUN**; no corresponding remote run was dispatched or observed. Existing CI already includes generation/schema/full core coverage and needed no duplicate job. |
+
+Final logs, actual toolchains, frozen hashes and fresh bundles are under the
+ignored local directory `build/phase-1c7/`:
+
+```text
+pub-get.log
+build-runner.log
+schema-check.log
+format.log
+analyze.log
+history-all-third.log
+core-tests.log
+link-tests.log
+cli-tests.log
+cli-tests-loopback.log
+python-tests.log
+python-toolchain.json
+dart-toolchain.log
+flutter-cache-toolchain.json
+clang-toolchain.log
+host-toolchain.log
+frozen-artifacts.diff
+frozen-artifact-hashes.log
+cli-build.log
+observation-build.log
+datagram-acceptance-build.log
+smoke.log
+meshctl/bundle/
+observation/bundle/
+datagram-acceptance/bundle/
+```
+
+Development iterations also retained their earlier logs. The final targeted
+barriers run host actions outside Drift transaction zones and distinguish the
+concurrent delete read from the final recording save read; an obsolete targeted
+run blocked on the earlier test barrier was stopped before final validation.
+These are synthetic software/real-file results, not hardware/RF or arbitrary
+power-loss acceptance. Existing CLI bundles still do not execute business
+SQLite, so their smoke is not SQLite product AOT distribution acceptance. Linux
+and other-platform native acceptance were not run on this Mac. No 1C.8 CLI work,
+release or dev.3 delivery was started.

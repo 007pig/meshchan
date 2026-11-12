@@ -301,7 +301,7 @@ void main() {
           .insert(
             encodeSettings(AppSettings(defaultProfileId: profiles.first.id)),
           );
-      await db.into(db.storedRuns).insert(encodeRun(runs.first));
+      await db.into(db.storedRuns).insert(encodeRun(legalRuns.first));
     });
     await repo.delete(removed.id, expectedRevision: 1);
     sameDraft(await repo.read(kept.id), kept);
@@ -320,7 +320,7 @@ void main() {
       );
       expect(
         representation(await db.select(db.storedRuns).getSingle()),
-        representation(encodeRun(runs.first)),
+        representation(encodeRun(legalRuns.first)),
       );
     });
   });

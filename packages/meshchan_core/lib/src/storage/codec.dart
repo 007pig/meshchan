@@ -310,6 +310,11 @@ DiagnosticConfiguration _readConfiguration(
 }
 
 // Row conversions stay internal. They perform no repository operations.
+String encodeLogicalSummary(LogicalSummary value) =>
+    jsonEncode(_logical(value));
+String encodeCleanupSummary(CleanupSummary value) =>
+    jsonEncode(_cleanup(value));
+
 db.StoredDraftsCompanion encodeDraft(Draft v) =>
     db.StoredDraftsCompanion.insert(
       id: v.id.value,

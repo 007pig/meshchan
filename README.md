@@ -2,6 +2,13 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
+The offline business core now covers **Phase 1 / 1C / Step 6**: persistent drafts,
+profiles/settings, validated parameter resolution, finite diagnostic recording,
+and exclusive startup recovery. Hosts can observe logical facts, real cleanup
+and persistence separately through the [public core API](packages/meshchan_core/README.md#finite-diagnostic-recording-and-startup-recovery-1c6).
+History query/pruning/export and CLI business wiring remain later steps. Package
+versions remain `0.1.0-dev.2`; this is not a new release or hardware acceptance.
+
 The current implementation covers **Phase 1 / 1B / Step 9: finite USB/openHop development acceptance and a local `0.1.0-dev.2` candidate**. The product remains USB-only. A source-only [openHop peer](docs/openhop-acceptance.md) reuses Meshchan's existing core for a selected virtual Companion over binary WebSocket. It is excluded from the product bundle and is not an independent application-protocol oracle. The fresh [software gate](docs/development.md#1b9-software-validation-on-november-10-2026) and source/AOT synthetic checks passed. [Real Direct acceptance](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) established exact round trips in both directions, the binary boundary, and no-responder timeout. A later [authorized H2/H7 comparison](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026) passed local acceptance and active cancellation with B command=15 s/A=5 s. Every basic case now has a passing record, with all earlier failures retained; relay paths and physical unplug remain untested. See the [dev.2 local delivery record](docs/releases/phase-1b-dev2.md).
 
 Historical 1A evidence remains separate. On November 9, 2026, a fresh software gate and the fixed H2–H7 USB hardware matrix passed on one macOS 27.2 arm64 host and one explicitly authorized Companion USB device. H1 enumeration, H8 nonexistent-port handling and H9 initialization cancellation passed. Later H10 startups failed three times before ready, with confirmed cleanup; a separate manual replug/info sequence had one timeout and one success. Ready-state disconnect detection and a complete H10 recovery cycle remain untested. See the [1A delivery record](docs/releases/phase-1a-dev1.md) and [latest H10 attempt](docs/hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).
@@ -19,7 +26,7 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | Package | Responsibility and current status |
 | --- | --- |
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
-| `packages/meshchan_core` | Offline business values; persistent drafts, connection profiles and application settings; typed effective-parameter resolution through `CoreStorage` (1C.5); production SQLite schema 1, exclusive directory lifecycle, and a saved migration baseline. Recording/recovery, history query/pruning/export, and CLI business integration follow in later steps. See the [public API example](packages/meshchan_core/README.md#profiles-settings-and-effective-parameters-1c5). |
+| `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery (1C.6); SQLite schema 1 and a saved migration baseline. History query/pruning/export (1C.7) and CLI wiring (1C.8) remain next. See the [public recording example](packages/meshchan_core/README.md#finite-diagnostic-recording-and-startup-recovery-1c6). |
 | `apps/meshctl` | Asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
 
 Local Python scripts and tests use the latest installed stable Python **3.15 or

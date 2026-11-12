@@ -192,3 +192,96 @@ final runs = <DiagnosticRun>[
     recoveryReason: RecoveryReason.cleanupUnconfirmed,
   ),
 ];
+
+// Lifecycle-valid fixtures for business reopen/isolation tests. The structural
+// codec fixtures above intentionally cover values outside the recording contract.
+const legalRoute = DiagnosticRoute(routeDescriptor: 0x02, pathByteCount: 2);
+final legalProfile = ConnectionProfile(
+  id: profiles.first.id,
+  content: ProfileContent(
+    name: profiles.first.name,
+    portHint: profiles.first.portHint,
+    parameters: SendProfileParameters(
+      budgets: budgets,
+      sendChannelIndex: 3,
+      dataType: 99,
+      route: ProfileRoute(routeDescriptor: 0x02, path: [0xab, 0xcd]),
+    ),
+  ),
+  updatedAt: instant,
+);
+final legalRuns = <DiagnosticRun>[
+  for (final (index, configuration, result)
+      in <(int, DiagnosticConfiguration, LogicalSummary)>[
+        (
+          0,
+          const SendConfiguration(
+            budgets: budgets,
+            sendChannelIndex: 3,
+            dataType: 99,
+            route: legalRoute,
+            payloadByteLength: 3,
+          ),
+          const SendSummary(
+            reason: LogicalReason.canceled,
+            stage: DiagnosticStage.sending,
+          ),
+        ),
+        (
+          1,
+          const ListenConfiguration(
+            budgets: budgets,
+            receiveChannelIndex: 4,
+            listenDurationSeconds: 8,
+            maxEntries: 128,
+          ),
+          const ListenSummary(
+            reason: LogicalReason.canceled,
+            stage: DiagnosticStage.receiving,
+          ),
+        ),
+        (
+          2,
+          const PingConfiguration(
+            budgets: budgets,
+            sendChannelIndex: 3,
+            receiveChannelIndex: 4,
+            route: legalRoute,
+            maxEntries: 128,
+            responseTimeoutSeconds: 2,
+            contentByteLength: 3,
+          ),
+          const PingSummary(
+            reason: LogicalReason.canceled,
+            stage: DiagnosticStage.connecting,
+          ),
+        ),
+        (
+          3,
+          const RespondConfiguration(
+            budgets: budgets,
+            sendChannelIndex: 3,
+            receiveChannelIndex: 4,
+            route: legalRoute,
+            maxEntries: 128,
+            listenDurationSeconds: 8,
+            maxResponses: 2,
+          ),
+          const RespondSummary(
+            reason: LogicalReason.canceled,
+            stage: DiagnosticStage.receiving,
+          ),
+        ),
+      ])
+    DiagnosticRun(
+      runId: fixtureId(80 + index),
+      appVersion: 'fixture',
+      profileId: profiles.first.id,
+      configuration: configuration,
+      preparedAt: instant,
+      recordState: DiagnosticRecordState.settled,
+      logicalEndedAt: instant,
+      result: result,
+      cleanup: cleanup,
+    ),
+];

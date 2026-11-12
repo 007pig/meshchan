@@ -40,7 +40,7 @@ void main() {
     directory.deleteSync(recursive: true);
   });
 
-  test('real schema 1 equals saved snapshot and all four objects survive reopen', () async {
+  test('schema 1 and structural codec fixtures round trip before recovery', () async {
     final first = await open();
     await first.useDatabase((db) async {
       await SchemaVerifier(GeneratedHelper())
@@ -75,9 +75,7 @@ void main() {
             );
       });
     });
-    await first.close();
-    expect(first.state, StorageState.closed);
-    final second = await open();
+    final second = first;
     await second.useDatabase((db) async {
       final read = decodeDraft((await db.select(db.storedDrafts).get()).single);
       expect(
@@ -128,6 +126,45 @@ void main() {
       }
     });
   });
+
+  test(
+    'all four business objects survive reopen with terminal diagnostics',
+    () async {
+      final first = await open();
+      await first.useDatabase((db) async {
+        await db.into(db.storedDrafts).insert(encodeDraft(draft));
+        await db.into(db.storedProfiles).insert(encodeProfile(legalProfile));
+        await db
+            .into(db.storedSettings)
+            .insert(
+              encodeSettings(AppSettings(defaultProfileId: profiles.first.id)),
+            );
+        for (final run in legalRuns) {
+          await db.into(db.storedRuns).insert(encodeRun(run));
+        }
+      });
+      await first.close();
+      final second = await open();
+      expect((await second.drafts.read(draft.id)).body, draft.body);
+      expect(
+        (await second.profiles.read(profiles.first.id)).name,
+        profiles.first.name,
+      );
+      expect(
+        (await second.settings.read()).defaultProfileId,
+        profiles.first.id,
+      );
+      await second.useDatabase((db) async {
+        final rows = await (db.select(
+          db.storedRuns,
+        )..orderBy([(t) => OrderingTerm.asc(t.runId)])).get();
+        expect(
+          rows.map(representation),
+          legalRuns.map((v) => representation(encodeRun(v))),
+        );
+      });
+    },
+  );
 
   test('real constraints, live settings FK and historical association', () async {
     final handle = await open();

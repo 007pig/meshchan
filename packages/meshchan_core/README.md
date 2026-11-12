@@ -1,7 +1,8 @@
 # meshchan_core
 
 Pure Dart offline business values, persistent drafts/profiles/settings, typed
-effective-parameter resolution, history contracts, and a controlled production Drift/SQLite storage lifecycle. Import
+effective-parameter resolution, finite diagnostic recording/recovery, history
+contracts, and a controlled production Drift/SQLite storage lifecycle. Import
 `package:meshchan_core/meshchan_core.dart`. All packages remain `0.1.0-dev.2`.
 
 1C.2 established immutable business values and interfaces. 1C.3 adds the real
@@ -9,10 +10,11 @@ schema 1, internal row codecs, directory ownership, file opening/closing, and a
 migration baseline. 1C.4 implements draft CRUD, secure local IDs, revision
 checks, and bounded cursor pagination through `CoreStorage.drafts`.
 1C.5 implements `CoreStorage.profiles`, `CoreStorage.settings`, and
-`CoreStorage.resolveParameters`. The communication-result mapper, recorder,
-business recovery, history query/retention/export service, and CLI wiring remain
-unimplemented.
-Opening storage never accesses devices or changes diagnostic business records.
+`CoreStorage.resolveParameters`. 1C.6 adds `CoreStorage.record`, explicit typed
+whitelist projections, independent logical/cleanup saves, and exclusive startup
+recovery. History query/retention/export (1C.7) and CLI wiring (1C.8) remain
+unimplemented. Opening storage never accesses devices; it now archives incomplete
+diagnostic records from the previous owner before returning a usable handle.
 The [1C.1 contract](../../docs/architecture/offline-core.md) remains authoritative.
 
 ## Host lifecycle
@@ -32,7 +34,7 @@ try {
 
 `hostDataDirectory` is a host-supplied `dart:io` Directory, not a default chosen
 by core. The public handle exposes lifecycle/state, the three repositories, and typed
-resolution; it exports no arbitrary
+resolution and recording; it exports no arbitrary
 SQL executor or lock bypass. The internal `StorageHandle.useDatabase` admits work
 only while open and tracks each returned Future through all queries/transactions.
 Later package services must use that seam and must not retain its database.
@@ -281,7 +283,8 @@ Entropy/clock failures use the write category even for TypeError/FormatException
 Default errors expose no local text, paths, test IDs, content, or SQL.
 
 The normal workspace dependency is now core → `meshcore_link ^0.1.0-dev.2`,
-with no reverse/CLI import. Offline means **no device I/O**; existing
+with no reverse/CLI import. Offline repository/resolver calls perform **no device I/O**;
+only explicit recording invokes the supplied transport factory. Existing
 libserialport native build hooks can still run alongside SQLite hooks. Use the
 installed native compiler and run shared hook/build gates sequentially.
 1C.8 owns CLI presence checks (`wasParsed`, not parser defaults), text/hex lexical
@@ -351,8 +354,8 @@ Logical/cleanup scopes and null/partial results remain independent. Malformed
 stored representations (including model `invalid_input` during decode) become
 `database_corrupt`. A summary format above 1 is explicitly unreadable as
 `storage_read_failed`, separate from `unsupported_database_version`. It is never
-decoded as format 1. Decode happens on row access, not a whole-database startup
-scan. Production table row readers, including aliases, check raw SQLite types
+decoded as format 1. Decode happens on accessed rows, including bounded recovery
+candidates; open does not audit the whole database. Production row readers check raw SQLite types
 before Drift's default string/integer coercions. Internal work also maps native
 failures to a safe read category, or an explicitly selected write category,
 preserving recognized corruption and typed core errors. The codecs do not
@@ -420,3 +423,165 @@ emits an unused field; explicit production transactions need no managers.
 See [development](../../docs/development.md#production-storage-and-migration-baseline-1c3)
 and [testing](../../docs/testing.md#production-storage-and-ownership-1c3) for the
 actual toolchain, commands, observed results, and remaining product-AOT boundary.
+
+## Finite diagnostic recording and startup recovery (1C.6)
+
+[`example/record_diagnostic.dart`](example/record_diagnostic.dart) is a runnable
+public-API example using a synthetic `CompanionTransport`. It never opens
+hardware. Supply a host-selected local directory:
+
+```bash
+dart run example/record_diagnostic.dart /tmp/meshchan-example
+```
+
+The host opens (including automatic recovery), resolves and records:
+
+```dart
+final storage = await CoreStorage.open(dataDirectory: hostDataDirectory);
+RecordedOperation? operation;
+try {
+  final parameters = await storage.resolveParameters(SendParameterRequest(
+    overrides: SendOverrides(
+      budgets: const BudgetOverrides(taskTimeoutSeconds: 5),
+      sendChannelIndex: 3,
+      dataType: 99,
+      route: RouteOverrides(routeDescriptor: 0xff),
+    ),
+    payload: [0, 128, 255],
+  ));
+  operation = storage.record(
+    parameters: parameters,
+    appVersion: actualHostVersion,
+    createTransport: createFreshUnusedTransport,
+    subscriptions: [
+      RecordingSubscription(
+        stage: HostCleanupStage.signalSubscription,
+        subscribe: (cancelOperation) => hostStopRequests.listen((_) {
+          cancelOperation();
+        }),
+      ),
+    ],
+  );
+  final registration = await operation.prepared;
+  final logical = await operation.logical;
+  final logicalSave = await operation.logicalSaved;
+  // These remain observable while actual native release is still pending.
+  final cleanup = await operation.cleanupDone;
+  final cleanupSave = await operation.cleanupSaved;
+  final result = await operation.done;
+  // Inspect each save's state/error and result.coordinationFailure separately.
+} finally {
+  if (operation != null) {
+    operation.cancel().ignore();
+    await operation.done;
+  }
+  await storage.close();
+}
+```
+
+The host supplies the actual app version and a new, unused transport. Real-device
+composition still needs the current explicit port; portHint authorizes no
+connection. The factory is synchronous and lazy. Core revalidates publicly
+constructible EffectiveParameters, including actual bytes/capacity, and builds
+session/task parameters matching the snapshot: app target 3, FIFO 8, reception
+batch 8, diagnostic wire 1/type 65535, responder cache 128/120000000 microseconds.
+It accepts no prestarted session/task.
+
+Declare the complete subscription plan before registration. Each subscribe
+callback runs after prepared commits and must immediately return its owned
+subscription; it must not acquire an unreturned resource before throwing. Core
+supports synchronous cancelOperation calls inside subscribe: operation cancellation
+is immediate, while host cleanup waits for the registration pass to return or
+throw before observing cancellation of every returned subscription. Empty slots
+are not declared finished while subscription registration is still in progress. Core
+installs no OS signal handlers. Every returned subscription is canceled
+independently; two real same-category failures count twice. Raw send's event
+subscription and raw listen's additional entries subscription belong to
+hostSubscriptions. Task-internal subscriptions are already in task cleanup and
+must not be declared again.
+
+Prepared success includes real commit and proves no claim, startup or RF action.
+Failure invokes no factory/connect/send/reception start; logical is null and
+later saves are notAttempted. Secure 16-byte run IDs (32 lowercase hex digits)
+are independent of protocol nonces. Only a targeted run_id collision retries,
+at most eight attempts. Other constraints, I/O, commit, entropy and clock failures
+do not retry. Factory failure after prepared becomes a controlled host failure
+and follows normal settlement.
+
+Logical contains frozen typed summary facts; logicalSaved independently reports
+commit or a safe storage error. cleanupUpdates/saveUpdates expose cumulative
+observations and completed attempts, including pending cleanup with known
+failures. cleanupDone honestly retains unconfirmed release if a cleanup Future
+unexpectedly rejects. cleanupSaved.finalCleanup is true only with terminal scopes;
+a committed pending snapshot is not final. done.saves retains attempt outcomes.
+RecordedResult.fullySuccessful requires completed logic, successful cleanup and
+all required commits. Storage failure preserves process facts, continues cleanup,
+and never becomes a wireless reason. Uncommitted facts cannot be recovered after
+exit; saving an error into the same failing database is not guaranteed. No retry
+loop is added.
+
+Configuration is an explicit whitelist: channels, named-unit budgets, filters,
+limits, routeDescriptor/pathByteCount and content byte lengths. Excluded are
+names, ports, exact paths, endpoints, nonces, payloads, keys, frames, device
+information, argv and exception text/stacks. Results use explicit stable enums,
+direct typed evidence, real consumer counts and communication monotonic Durations
+converted to microseconds. Null reception stays null; task default getters cannot
+turn it into observed zeros. Completed reads include failures; publication does
+not determine processed or matching counts.
+
+A matching PONG followed by local write failure retains PONG/content validation
+and first elapsed, with roundTripSucceeded false and applicationRttUs null.
+Successful logical RTT stays successful when cleanup fails. A queued send's
+command facts remain separate from a root failure in an earlier read. PONG does
+not substitute for matching OK. Acceptance false is unconfirmed; write false
+proves neither zero delivered bytes nor zero RF. Responder lastSend describes
+only its last attempt, and zero responses establish no round trip. Raw listen
+waits for normal trailing entries/onDone before freezing counts. Cancellation
+or failure triggers session.close immediately, then settles accepted commands
+and reception facts independently of native release. Existing single-inbox,
+FIFO, deadline, association, ownership and no-retry semantics remain intact.
+Before honoring raw cancellation, core checks an already committed session
+failure, including when its asynchronous event has not arrived yet. That earlier
+failure retains its reason/stage and typed root evidence. Cancellation that wins
+first remains canceled; later notifications cannot rewrite frozen logical facts.
+
+Short transactions read the latest row and update only their logical or cleanup
+fields. Canonically equal final facts are no-ops, retaining the first committed
+logicalEndedAt even with a different candidate observation time. Terminal scopes
+cannot regress/change facts. Cumulative snapshots prevent callback inflation.
+Archived rows reject late writes. A failed logical save does not poison the
+per-run queue; cleanup can commit on the prepared row. No SQL transaction waits
+for device work, native release or subscription cancellation.
+
+One internal admission spans the entire operation, actual cleanup and saves.
+Close rejects new recordings and waits for prior admissions; their private writers
+continue on that connection after closing starts. Pending cleanup retains the
+owner indefinitely. No timeout or GC fakes release. Hosts should still await
+logical, cleanup and persistence before closing storage.
+
+After SELECT 1, exclusive open scans prepared/settled candidates through the
+state/time/ID index, at most 128 rows per short transaction. Every scanned row
+advances a stable cursor, including unchanged settled rows:
+
+| Prior committed state | Open behavior |
+| --- | --- |
+| prepared, including independently saved cleanup | Archive interrupted; keep partial/null result, null logicalEndedAt and real terminal cleanup. |
+| settled with unresolved cleanup | Archive cleanup_unconfirmed; keep final result/time; only unresolved scopes become unconfirmed_after_exit. |
+| settled with terminal cleanup, including failed | Preserve completely; no recovery timestamp. |
+| recovered_archived | Preserve first recovery time/reason and all facts; do not scan/rewrite. |
+
+Aggregate becomes unconfirmed_after_exit only with an unresolved scope. Recovery
+invents no task failure, PONG false, zeros, logical end, confirmed release, replay
+or inbox reads. Accessed damage is database_corrupt; higher summary format is
+storage_read_failed; mutation/dependency failure retains storage_write_failed.
+A failed batch rolls back itself; earlier batches remain committed and another
+open continues idempotently. Failure returns no usable handle and follows existing
+close/owner-release/quarantine rules. This is not cross-batch atomicity or a full
+integrity audit.
+
+1C.7 takes over DiagnosticHistory, deletion eligibility, bounded history-limit
+pruning and safe export. Insertion points are successful open/recovery, terminal
+logical/cleanup commits and settings-limit commit. Pruning failure must not undo
+committed facts; no scheduler is installed here. 1C.8 owns CLI presence/content,
+explicit port/directory, recording entry, signal lifetime and output/exit mapping.
+Current CLI behavior/output remains unchanged.

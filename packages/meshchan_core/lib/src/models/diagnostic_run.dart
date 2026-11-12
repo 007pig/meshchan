@@ -201,7 +201,7 @@ final class CleanupScopeSummary {
   int get failureCount => failures.length;
 }
 
-/// Independent facts supplied by a later coordinator. This value performs no
+/// Independent facts supplied by the recording coordinator. This value performs no
 /// cleanup aggregation, ownership inference, or lifecycle transitions.
 final class CleanupSummary {
   CleanupSummary({
@@ -215,7 +215,7 @@ final class CleanupSummary {
   final CleanupState aggregate;
 }
 
-/// Read-only lifecycle snapshot. Only the later recording coordinator writes
+/// Read-only lifecycle snapshot. Only the recording coordinator writes
 /// facts; constructing this object does not admit or start a device operation.
 final class DiagnosticRun {
   DiagnosticRun({

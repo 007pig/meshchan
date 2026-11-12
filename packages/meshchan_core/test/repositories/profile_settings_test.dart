@@ -10,7 +10,7 @@ import 'package:meshchan_core/src/storage/storage.dart';
 import 'package:test/test.dart';
 
 import '../storage/database_test.dart' show coreError, representation;
-import '../storage/fixtures.dart' show instant, fixtureId, runs;
+import '../storage/fixtures.dart' show instant, fixtureId, legalRuns;
 import 'draft_repository_test.dart' show Control;
 import 'profile_fixtures.dart';
 
@@ -275,13 +275,13 @@ void main() {
     await s.close();
     var nextId = 0;
     final owned = await open(
-      id: () => nextId++ == 0 ? runs.first.profileId! : fixtureId(999),
+      id: () => nextId++ == 0 ? legalRuns.first.profileId! : fixtureId(999),
     );
     final p = await owned.profiles.save(profileContent());
     final kept = await owned.profiles.save(profileContent(listenParameters()));
     final other = await owned.drafts.create(const DraftContent(body: 'keep'));
     await owned.useDatabase(
-      (db) => db.into(db.storedRuns).insert(encodeRun(runs.first)),
+      (db) => db.into(db.storedRuns).insert(encodeRun(legalRuns.first)),
     );
     await owned.settings.save(
       AppSettings(defaultProfileId: p.id, diagnosticHistoryLimit: 7),
@@ -295,7 +295,7 @@ void main() {
     await owned.useDatabase((db) async {
       expect(
         representation(await db.select(db.storedRuns).getSingle()),
-        representation(encodeRun(runs.first)),
+        representation(encodeRun(legalRuns.first)),
       );
     });
     await expectLater(

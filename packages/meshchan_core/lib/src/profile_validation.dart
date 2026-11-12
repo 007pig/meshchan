@@ -4,6 +4,7 @@ import 'package:meshcore_link/meshcore_link.dart';
 
 import 'errors.dart';
 import 'models/connection_profile.dart';
+import 'models/effective_parameters.dart';
 import 'validation.dart';
 
 /// Complete business validation, independent of DTO construction and device I/O.
@@ -96,4 +97,27 @@ void validateProfileParameters(ProfileParameters parameters) {
       _entries(parameters.maxResponses);
       routeCapacity(parameters.route, diagnostic: true);
   }
+}
+
+/// Revalidates publicly constructible execution values without inventing a
+/// profile. Both the resolver and recorder use this exact content boundary.
+void validateEffectiveParameters(EffectiveParameters value) {
+  final parameters = value.parameters;
+  validateProfileParameters(parameters);
+  final needsContent =
+      parameters is SendProfileParameters ||
+      parameters is PingProfileParameters;
+  requireValid(needsContent == (value.content != null));
+  final content = value.content;
+  if (content == null) return;
+  requireValid(content.every((byte) => byte >= 0 && byte <= 255));
+  final route = switch (parameters) {
+    SendProfileParameters() => parameters.route,
+    PingProfileParameters() => parameters.route,
+    _ => throw const CoreException(CoreErrorCode.invalidInput),
+  };
+  requireValid(
+    content.length <=
+        routeCapacity(route, diagnostic: parameters is PingProfileParameters),
+  );
 }

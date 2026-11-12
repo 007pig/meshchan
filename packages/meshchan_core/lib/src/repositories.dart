@@ -103,7 +103,7 @@ final class HistoryQuery {
   final DateTime? preparedUntilExclusive;
 }
 
-/// Read-only history. Field-specific writes belong to the later recording
+/// Read-only history (implementation remains for 1C.7). Field-specific writes belong to the recording
 /// coordinator; no API here can replace a run or turn failure into success.
 abstract interface class DiagnosticHistory {
   /// A missing requested run is not_found. Requires directory ownership.

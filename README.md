@@ -2,7 +2,7 @@
 
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
-The offline business core and product CLI now cover **Phase 1 / 1C / Step 8**:
+The offline business core and product CLI now cover **Phase 1 / 1C / Step 9**:
 persistent drafts, complete operation presets, typed settings, default/explicit
 profile resolution, opt-in diagnostic recording, recovery, bounded history,
 protected deletion, retention and safe single-page export. The [CLI guide](docs/cli.md#offline-business-commands-and-storage-1c8)
@@ -10,10 +10,11 @@ explains data directories, revision/cursor inputs and independent logical,
 cleanup, save, maintenance and close results. All finite datagrams open business
 storage; only `--record` adds a diagnostic run. Recorded listen emits one final
 summary, while unrecorded listen keeps its per-entry NDJSON. Package versions
-remain `0.1.0-dev.2`; dev.3 delivery and clean-machine distribution remain 1C.9.
+are `0.1.0-dev.3`; the [local delivery record](docs/releases/phase-1c-dev3.md)
+separates source/native/archive acceptance from CI, clean-environment and public distribution status.
 These are software/source/AOT results, not new hardware acceptance.
 
-The current implementation covers **Phase 1 / 1B / Step 9: finite USB/openHop development acceptance and a local `0.1.0-dev.2` candidate**. The product remains USB-only. A source-only [openHop peer](docs/openhop-acceptance.md) reuses Meshchan's existing core for a selected virtual Companion over binary WebSocket. It is excluded from the product bundle and is not an independent application-protocol oracle. The fresh [software gate](docs/development.md#1b9-software-validation-on-november-10-2026) and source/AOT synthetic checks passed. [Real Direct acceptance](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) established exact round trips in both directions, the binary boundary, and no-responder timeout. A later [authorized H2/H7 comparison](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026) passed local acceptance and active cancellation with B command=15 s/A=5 s. Every basic case now has a passing record, with all earlier failures retained; relay paths and physical unplug remain untested. See the [dev.2 local delivery record](docs/releases/phase-1b-dev2.md).
+The historical hardware track covers **Phase 1 / 1B / Step 9: finite USB/openHop development acceptance and a local `0.1.0-dev.2` candidate**. The product remains USB-only. A source-only [openHop peer](docs/openhop-acceptance.md) reuses Meshchan's existing core for a selected virtual Companion over binary WebSocket. It is excluded from the product bundle and is not an independent application-protocol oracle. The fresh [software gate](docs/development.md#1b9-software-validation-on-november-10-2026) and source/AOT synthetic checks passed. [Real Direct acceptance](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) established exact round trips in both directions, the binary boundary, and no-responder timeout. A later [authorized H2/H7 comparison](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026) passed local acceptance and active cancellation with B command=15 s/A=5 s. Every basic case now has a passing record, with all earlier failures retained; relay paths and physical unplug remain untested. See the [dev.2 local delivery record](docs/releases/phase-1b-dev2.md).
 
 Historical 1A evidence remains separate. On November 9, 2026, a fresh software gate and the fixed H2–H7 USB hardware matrix passed on one macOS 27.2 arm64 host and one explicitly authorized Companion USB device. H1 enumeration, H8 nonexistent-port handling and H9 initialization cancellation passed. Later H10 startups failed three times before ready, with confirmed cleanup; a separate manual replug/info sequence had one timeout and one success. Ready-state disconnect detection and a complete H10 recovery cycle remain untested. See the [1A delivery record](docs/releases/phase-1a-dev1.md) and [latest H10 attempt](docs/hardware-validation.md#step-9-h10-third-startup-on-november-9-2026).
 
@@ -59,7 +60,7 @@ dart run bin/meshctl.dart datagram ping --help
 dart run bin/meshctl.dart datagram respond --help
 ```
 
-Running without arguments or with `-h` also displays help. The application version is `0.1.0-dev.2`. Help and version do not access hardware. Select and authorize a port explicitly before device commands; old selections do not carry over. `ports` lists exact system paths, descriptions, transport types, and USB VID/PID when available. It does not open ports or send probes. Missing metadata appears as `-`; a per-port metadata failure retains the path and writes a warning to stderr.
+Running without arguments or with `-h` also displays help. The application version is `0.1.0-dev.3`. Help and version do not access hardware. Select and authorize a port explicitly before device commands; old selections do not carry over. `ports` lists exact system paths, descriptions, transport types, and USB VID/PID when available. It does not open ports or send probes. Missing metadata appears as `-`; a per-port metadata failure retains the path and writes a warning to stderr.
 
 **Current native platform limits:** macOS is locally validated. With the pinned `libserialport_plus` 1.0.5, native `ports` is blocked on Linux, Android, and Windows before enumeration because the backend can open unselected ports. Windows `port-check` is also blocked before native handle creation because the wrapper's handle state check is unsafe on 64-bit Windows. These operations return `69` with an explanation. Explicit-port checking on Linux/Android remains unverified. Malformed UTF-8 metadata on an enabled backend produces a warning for that path while other records remain available.
 
@@ -70,11 +71,11 @@ To check a device, select its exact path explicitly, then run `dart run bin/mesh
 | `0` | Success, including a genuinely empty enumeration (`No serial ports found.`). |
 | `64` | Invalid arguments, unknown commands/options, missing or blank `--port`, or extra positional arguments. |
 | `69` | Expected serial, platform, session, or cleanup failure. |
-| `74` | Output failure without an earlier primary failure. |
+| `74` | Host/storage/file/output I/O failure without an earlier primary cause; see the CLI guide for independent finalization facts. |
 | `130` / `143` | SIGINT / SIGTERM cancellation; cleanup is still awaited. |
 | `70` | Unexpected program error at the process boundary. |
 
-**An open/close success does not identify a MeshCore device.** Transport `open()` establishes local I/O only; `sendFrame()` completion means the local native/OS API accepted the framed bytes. Neither proves command execution, physical TX completion, or remote receipt. Database features and the Flutter UI are outside this step. Automated tests do not access hardware.
+**An open/close success does not identify a MeshCore device.** Transport `open()` establishes local I/O only; `sendFrame()` completion means the local native/OS API accepted the framed bytes. Neither proves command execution, physical TX completion, or remote receipt. Offline database features are available; the Flutter UI belongs to 1D. Automated tests do not access hardware.
 
 ## Native CLI bundle
 
@@ -99,5 +100,6 @@ A later [read-only channel audit](docs/hardware-validation.md#read-only-channel-
 found eight matching A/B 16-byte key representations without consuming the inbox
 or sending RF data. Its two initial USB timeouts remain recorded. The separate
 development WS adapter cleanup correction waits for receive EOF; the later CLI
-suite passed 84 tests. The original dev.2 binary/archive remain unchanged, and
-Direct RF acceptance still needs a selected pair and confirmed deployment path/window.
+suite passed 84 tests. Those counts and the original dev.2 binary/archive remain
+historical. Later authorized Direct evidence is linked above; this dev.3 delivery
+adds no RF acceptance.

@@ -1,6 +1,6 @@
 name: meshchan_core
 description: Offline business values and persistence contracts for Meshchan.
-version: 0.1.0-dev.2
+version: 0.1.0-dev.3
 publish_to: none
 resolution: workspace
 
@@ -8,7 +8,7 @@ environment:
   sdk: ^3.13.0
 
 dependencies:
-  meshcore_link: ^0.1.0-dev.2
+  meshcore_link: ^0.1.0-dev.3
   drift: ^2.35.4
   ffi: ^2.2.0
   path: ^1.9.1

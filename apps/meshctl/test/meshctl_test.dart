@@ -55,7 +55,7 @@ void main() {
       );
 
       expect(code, 0);
-      expect(output.toString().trim(), 'meshctl 0.1.0-dev.2');
+      expect(output.toString().trim(), 'meshctl 0.1.0-dev.3');
       expect(error.toString(), isEmpty);
       expect(ports.listCalls, 0);
       expect(ports.checkedPaths, isEmpty);

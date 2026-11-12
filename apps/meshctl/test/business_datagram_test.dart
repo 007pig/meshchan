@@ -168,7 +168,7 @@ void main() {
         final run = await reopened.history.read(
           LocalId(r.json['recording']['runId'] as String),
         );
-        expect(run.appVersion, '0.1.0-dev.2');
+        expect(run.appVersion, '0.1.0-dev.3');
         expect(run.operation.code, operation);
         expect(run.result!.reason, LogicalReason.completed);
         expect(s.events.where((e) => e == 'record'), hasLength(1));

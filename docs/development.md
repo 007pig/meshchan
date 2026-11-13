@@ -34,10 +34,57 @@ checks; dated implementation and validation sections below remain historical.
 The [Flutter host contract (1D.1)](architecture/flutter-host.md) now fixes the
 macOS arm64 + USB UI scope, worker/owner lifecycle, data-directory compatibility
 target, and later acceptance responsibilities. 1D.2 implements the macOS host
-and finite platform probe; the formal worker remains 1D.3. The
+and finite platform probe; 1D.3 connects the formal application runtime. The
 [app guide](../apps/meshchan_app/README.md) gives launch/build/probe commands,
 and the [platform record](validation/phase-1d2-platform.md) separates new facts
 from the historical CLI results below.
+
+## Application runtime checks (1D.3)
+
+Use the [app guide](../apps/meshchan_app/README.md#runtime-startup-and-shutdown-1d3)
+for normal startup, `--data-dir`, strict mode selection and the native quit barrier.
+Normal launches now open storage. Development runs must pass an owned fixture path;
+never launch against the real default directory merely to inspect it. No automatic
+enumeration, transport construction or device selection occurs.
+
+Run these sequentially with the existing Flutter SDK and locked workspace:
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub)
+python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
+(cd apps/meshchan_app && flutter build macos --debug --no-pub)
+(cd apps/meshchan_app && flutter build macos --release --no-pub)
+python3 apps/meshchan_app/tool/check_macos_runtime.py \
+  --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
+```
+
+On this Mac use `/opt/homebrew/bin/python3` explicitly (verified 3.15.2). Source
+native hooks need Apple Clang first, e.g. a **command-local**
+`PATH=/usr/bin:/bin:/opt/homebrew/bin:/opt/homebrew/share/flutter/bin:$PATH`.
+Do not change global PATH or run `/usr/bin/python3`. Python children use the selected
+`sys.executable`; the process harness receives the bundled Dart path explicitly.
+
+Xcode TestAction sets `MESHCHAN_TEST_HOST=disabled-owner-v1`, does not inherit
+LaunchAction arguments and disables parallel native tests. Swift supplies the
+disabled-owner Dart mode before engine construction; XCTest verifies that marker.
+Run the existing scheme without overriding/removing its test environment. A missing
+or invalid test marker produces an error page rather than opening the default
+directory. Ordinary Run and Release launches do not inherit the test marker.
+Keep native builds/tests sequential with the other shared native-asset commands.
+
+Resource startup now waits for the engine's first rasterized frame and a native
+bootstrap grant. After that grant, AppKit retains termination with `terminateLater`
+and receives Dart's release/exit conclusion through the original reply. Before the
+grant, termination is resource-free. The bounded macOS checker exercises both
+startup quit and `quit-ready` with an actually held SQLite owner; neither requests
+OS logout/restart/shutdown. Native callback tests cover those request semantics
+without triggering a system operation. See the [test guide](testing.md#application-runtime-1d3)
+for a temporary derived-data path if a new Documents-hosted binary is blocked by
+macOS privacy checks; do not change privacy/security settings to run the tests.
+
+The [runtime record](validation/phase-1d3-runtime.md) identifies exact source inputs,
+owned files, real worker/process tests, Debug/Release/signature checks and remaining
+limits. The legacy probe remains independently bounded by its 1D.2 receipt rules.
 
 ## SDK and native toolchain baseline
 

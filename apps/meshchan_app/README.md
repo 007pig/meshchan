@@ -1,10 +1,126 @@
 # Meshchan macOS host
 
 This Flutter workspace member provides Drafts, Device, and Diagnostics navigation.
-The pages describe features that are not connected yet. Normal launch/navigation
-opens no database, enumerates no ports, and constructs no transport or session.
+The pages describe editing/device features that are not connected yet. Normal
+launch creates one application runtime and one long-lived worker owning one
+`CoreStorage`. It reads settings and one bounded draft page without device I/O.
+Navigation, rebuilds, focus and minimization do not reopen storage or recover again.
 The public core packages and CLI remain pure Dart. The application uses the same
 root Pub lockfile; do not resolve a separate member lockfile.
+
+## Runtime startup and shutdown (1D.3)
+
+Normal startup resolves Foundation's CLI compatibility target,
+`~/Library/Application Support/meshchan`, in the main isolate. Override it only
+at startup with `--data-dir=/absolute/path`. The override takes precedence and
+avoids the directory-facts call. Empty/relative/NUL/dot-segment paths, duplicate
+options, unknown options and conflicting modes fail pure validation before resource
+startup. The three documented Cocoa options require unique `YES`/`NO` pairs.
+There is no fallback directory, automatic repair, retry, restart or device selection.
+Opening the default directory performs real core recovery/maintenance. Use owned
+fixtures for development; do not open an existing user's database to test access.
+
+`runtime/controller.dart` belongs to the application, not a page. Its typed
+generation/request-ID bridge calls `runtime/worker.dart`; core handles and native
+resources stay there. The status area remains visible across all three pages:
+Opening, Storage ready, Directory in use, Stopping, Closing, Closed and controlled
+faults. Initial query failure retains the already-open owner and its safe error.
+Offline reads default to 20 drafts, allow 1..50 and return an explicit cursor;
+separate pages are not one database snapshot. Text is copied into immutable local
+DTOs and is never automatically logged or exported.
+
+Window close, menu Quit, Command+Q and Flutter's cancellable exit callback share
+`shutdown()`. After resource bootstrap, AppKit retains the original termination
+request with `terminateLater` and receives a reply only after Dart's conclusion.
+This also preserves logout/restart/shutdown requests instead of canceling them
+and starting an unrelated app quit. Failed release replies false and keeps the
+window available. Before the first rasterized frame, neither the worker nor the
+finite probe can start: both wait for native bootstrap authorization. A system
+termination before that grant can exit immediately without abandoning an owner.
+The explicit startup-quit acceptance path waits for Dart's handler, saves stop
+intent and opens the resource-free barrier without starting a worker.
+Shutdown pauses admission, applies stop, drains accepted work and recording
+settlement, waits for requested maintenance, closes core once, then reports
+release, receives an acknowledgement and ends the worker. Main permits exit only
+after both release and `onExit`. Concurrent/repeated calls share one close process
+and its current cached outcome. An earlier unknown outcome remains immutable;
+late confirmed release plus actual exit automatically dispose client ports and
+let later quit requests observe a verified outcome without another close request.
+Widget dispose only removes UI observers. Save/maintenance errors do not invent a live connection;
+unknown cleanup/close or worker loss remains a visible fault and vetoes quit.
+Forced termination/crashes cannot guarantee saves or cleanup.
+
+The device gate acquires synchronously before parameter reads. Cancellation and
+logical completion do not release it. Final core/host/aggregate cleanup must all
+be `succeeded`/`notRequired`, and adapter observation must be sound, before release.
+`done` repairs missed broadcast events; final core unpin/drain still belongs to
+`CoreStorage.close()`. Pending/unconfirmed/failed release quarantines the gate.
+No product start-record or metadata button is exposed in this step. Test-only
+worker entries construct fake transports inside the worker and use the same
+dispatcher, gate, adapter and shutdown implementation.
+
+Request deadlines mean **result unknown**. They finish pending client requests,
+pause new work and never resend, kill, reopen, replace the worker or infer release.
+The first shutdown exchange remains available to an existing worker after such a
+fault. It gets its own bounded observation; an earlier request/startup deadline
+does not settle that new observation. If Hello is late, the same shutdown ID and
+intent are retained until its port arrives, even after the shutdown observation
+itself expires. Only one shutdown envelope is sent, and ordinary requests remain
+faulted while actual drain/close continues.
+Late responses cannot finish a request twice or replace newer query/runtime facts.
+Open `cleanupUnconfirmed` and close `closeUnconfirmed` keep unknown ownership.
+Rejected isolate creation is resource-free: no worker or `onExit` is invented,
+the owner remains none, client ports close, and normal quit is permitted. A worker
+that was successfully created and later crashes still requires release proof.
+The whole directory remains exclusive, including CLI reads while the GUI owns it.
+
+## Isolated verification modes
+
+Normal, 1D.2 probe, 1D.3 runtime verification and native XCTest host modes are
+mutually exclusive. The scheme's TestAction sets
+`MESHCHAN_TEST_HOST=disabled-owner-v1` without inheriting LaunchAction arguments.
+Swift detects the test host and adds the isolated Dart mode **before creating the
+Flutter engine**. Missing/invalid test configuration fails closed; neither XCTest
+`setUp` nor a late Widget pump is responsible for isolation. Normal Run/Release
+does not inherit this setting. Widget tests inject `AppRuntime` without resources.
+
+`--meshchan-runtime=write|read --data-dir=/canonical/parent/meshchan-1d3-name`
+uses the production entry, controller and long-lived worker. Write requires a new
+fixture and commits fixed Unicode/emoji/mixed-line-ending text through the bridge.
+Read requires the prior closed receipt and an existing regular, nonempty database;
+these preflight checks precede receipt invalidation and worker creation, so an
+empty/missing database is rejected without initializing a replacement. Both modes compare exact
+ID/revision/timestamps/text, serve multiple correlated reads and confirm close/exit.
+An incomplete receipt never authorizes another read. `--runtime-exit` requests
+normal AppKit quit after the report; it does not call `exit()`. Inspect the JSON
+`passed` field as well as process exit. `--meshchan-runtime=hold` requires an explicit
+fixture path and shows the ordinary runtime UI until normal quit. It does not write
+fixture data or enumerate devices. There is no arbitrary execution/transport hook.
+`quit-starting` and `hold-startup` are explicit fixture-only acceptance modes: a
+resource-free directory-resolution barrier holds startup until the ordinary quit
+coordinator saves stop intent. The first requests AppKit quit immediately; the
+second keeps the ordinary pages available for a bounded manual responsiveness
+check. They do not fabricate an open handle or inject a transport. A never-spawned
+worker is reported separately from an actual `onExit` observation.
+`--meshchan-runtime=quit-ready --data-dir=/canonical/parent/meshchan-1d3-name`
+requests native quit with a live, ready owner. It exercises AppKit's pending
+termination reply and the same Dart drain/close/exit barrier, unlike write/read
+whose verification report already includes close. The bounded macOS checker runs
+both `quit-starting` and `quit-ready`; neither accepts `--runtime-exit`.
+
+```bash
+# Run sequentially, with an Apple-Clang-first command environment on this Mac.
+python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
+python3 apps/meshchan_app/tool/check_macos_runtime.py \
+  --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
+```
+
+On this Mac invoke `/opt/homebrew/bin/python3` (3.15.2), including when the
+command PATH starts with `/usr/bin`. The process gate verifies independent-owner
+contention, committed exact-text continuity and reopen. The macOS gate copies the
+complete app outside checkout and runs from another cwd. Neither enumerates ports.
+See the [1D.3 record](../../docs/validation/phase-1d3-runtime.md) for actual results,
+source inputs, failures, signatures and evidence boundaries.
 
 ## Build and run
 
@@ -24,7 +140,9 @@ xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
   -derivedDataPath build/macos -parallel-testing-enabled NO test
 flutter build macos --release --no-pub
 codesign --verify --deep --strict --all-architectures build/macos/Build/Products/Release/Meshchan.app
-open build/macos/Build/Products/Release/Meshchan.app
+MESHCHAN_DEV_DIRECTORY="$(mktemp -d /private/tmp/meshchan-app.XXXXXX)"
+open -n build/macos/Build/Products/Release/Meshchan.app \
+  --args --data-dir="$MESHCHAN_DEV_DIRECTORY"
 ```
 
 Only macOS platform files are generated. The minimum target is macOS 12.0.
@@ -116,14 +234,13 @@ Sandbox/security-scoped authorization and public distribution require later
 review. See the [contract update](../../docs/architecture/flutter-host.md#1d2-implementation-note).
 
 A small runner method channel reports Foundation support/home paths, bundle
-identity, and executable location only when the probe is selected. It does not
-create/open the production directory. A fixture beneath a separately created
-Application Support validation directory establishes that access only. Existing
-user-library continuity, bootstrap/recovery, app owner, directory switching and
-persistent user-selected authorization remain 1D.3 work. No path_provider/file
-selector plugin or CocoaPods dependency is needed here.
+identity, and executable location. Normal runtime consumes its directory target;
+the historical probe also reports those facts. Fixture access does not establish
+existing user-library continuity. Runtime bootstrap, ownership and fault handling
+are implemented in 1D.3; directory switching and persistent user-selected
+authorization remain deferred. No directory plugin or CocoaPods dependency is needed.
 
 See the [platform record](../../docs/validation/phase-1d2-platform.md) for actual
-artifacts, commands, hashes, results and limits. The ordinary worker, request and
-control bridge, device gate, cancellation, stale-result protection and fault
-recovery remain 1D.3; business pages remain 1D.4–1D.8; product quit is 1D.9.
+artifacts, commands, hashes, results and limits. The ordinary worker, typed bridge,
+gate, adapter and basic quit barrier are 1D.3. Business pages remain 1D.4–1D.8;
+full desktop quit interactions remain 1D.9.

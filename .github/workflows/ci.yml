@@ -30,7 +30,7 @@ jobs:
           dart --version
 
       - name: Get locked workspace dependencies
-        run: dart pub get --enforce-lockfile
+        run: flutter pub get --enforce-lockfile
 
       - name: Generate production database and dependency probe
         working-directory: packages/meshchan_core
@@ -49,7 +49,11 @@ jobs:
         run: dart format --output=none --set-exit-if-changed .
 
       - name: Analyze workspace
-        run: dart analyze --fatal-infos
+        run: flutter analyze --no-pub --fatal-infos
+
+      - name: Test Flutter navigation and probe failures without hardware
+        working-directory: apps/meshchan_app
+        run: flutter test --no-pub
 
       - name: Test finite acceptance plan validation without hardware
         run: python3 -m unittest discover -s tool -p '*_test.py'
@@ -89,3 +93,62 @@ jobs:
 
       - name: Check patch whitespace
         run: git diff --check
+
+  macos-app:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Flutter and bundled Dart
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: '3.47.9'
+      - name: Record actual runner architecture and toolchain
+        run: |
+          uname -m
+          sw_vers
+          flutter --version --machine
+          xcode-select -p
+          xcrun --show-sdk-version
+          xcrun clang --version
+      - name: Get locked workspace dependencies
+        run: flutter pub get --enforce-lockfile
+      - name: Test app without hardware
+        working-directory: apps/meshchan_app
+        run: flutter test --no-pub
+      - name: Build debug and release apps sequentially
+        working-directory: apps/meshchan_app
+        run: |
+          flutter build macos --debug --no-pub
+          flutter build macos --release --no-pub
+      - name: Test native macOS runner host without hardware
+        working-directory: apps/meshchan_app
+        run: >-
+          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner
+          -configuration Debug -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath build/macos -parallel-testing-enabled NO test
+      - name: Verify release SQLite across app processes without serial access
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          root = Path(tempfile.mkdtemp(prefix='meshchan-ci-')).resolve()
+          fixture = root / 'meshchan-1d2-sqlite'
+          app = Path('apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app/Contents/MacOS/Meshchan').resolve()
+          for mode in ('write', 'read'):
+              run = subprocess.run([str(app), '--meshchan-probe=' + mode,
+                  '--fixture=' + str(fixture), '--probe-exit'], cwd=root,
+                  text=True, capture_output=True, timeout=120)
+              print(run.stdout)
+              print(run.stderr)
+              run.check_returncode()
+              reports = [json.loads(line) for line in run.stdout.splitlines() if line.startswith('{')]
+              if len(reports) != 1 or reports[0].get('passed') is not True:
+                  raise RuntimeError('Missing successful native fixture report')
+          PY

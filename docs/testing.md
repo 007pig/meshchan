@@ -8,6 +8,62 @@ stable Python 3.15 or newer for local Python scripts, as described in the
 [local toolchain selection](development.md#local-python-toolchain). Python is a
 development tool only; the distributed CLI does not require it.
 
+## Flutter macOS host (1D.2)
+
+The mixed workspace uses one root lockfile. Resolve with
+`flutter pub get --enforce-lockfile`, analyze with
+`flutter analyze --no-pub --fatal-infos`, and run
+`(cd apps/meshchan_app && flutter test --no-pub)` in addition to the existing
+sequential core/CLI/Python/native gates below. The installed Flutter-bundled
+Dart also supports the existing enforced-lockfile CLI validator; it remains
+CLI-only and must not be interpreted as Flutter acceptance.
+
+App tests inject the platform boundary and storage handles. They check all three
+navigation destinations, truthful unconnected states, no default probe/native
+work, explicit-only startup, invalid arguments/fixtures before resource access,
+independent maintenance failures, real awaited close failure, and receipt
+invalidation after an unconfirmed read close. They never enumerate/open ports.
+Real macOS fixture execution is separate and uses public `CoreStorage` in one
+finite worker, including release comparisons without assertions. See the
+[app commands](../apps/meshchan_app/README.md#explicit-finite-platform-verification)
+and [platform results](validation/phase-1d2-platform.md).
+
+The parser accepts the known Cocoa boolean pairs supplied by Xcode and XCTest
+before validating developer options. Tests cover normal navigation with those
+pairs, explicit probes mixed with them, and rejection of missing/invalid Cocoa
+values, unknown options, and malformed/duplicate probe options. After building
+debug, execute the native test host with:
+
+```bash
+(cd apps/meshchan_app && xcodebuild -workspace macos/Runner.xcworkspace \
+  -scheme Runner -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath build/macos -parallel-testing-enabled NO test)
+```
+
+This checks that `RunnerTests` links and launches in `Meshchan.app` and finds its
+Flutter view controller. It does not open storage or access hardware. The macOS
+CI job runs this target as well as Flutter tests and app builds.
+
+Build debug and release sequentially from `apps/meshchan_app` with
+`flutter build macos --debug --no-pub` and `flutter build macos --release --no-pub`.
+The normal app and explicit probe use the same `lib/main.dart` and `.app`.
+Window launch/navigation, SQLite close/reopen, cross-process persistence, serial
+asset packaging versus actual metadata invocation, complete-app relocation,
+architecture/signature and directory access are separate evidence. No build or
+fake test substitutes for those observations. Metadata enumeration is manually
+opted in with `--enumerate-serial`; it is absent from tests and CI and grants no
+device-open or RF evidence.
+
+CI retains the Linux pure-Dart/CLI gate, adds Flutter software tests, and declares
+a `macos-15` job for sequential debug/release builds and hardware-free release
+SQLite write/read processes. The job prints its actual architecture. The
+[runner image catalog](https://github.com/actions/runner-images#available-images)
+currently assigns `macos-15` to arm64; configuration is not a remote run result.
+Headless/WindowServer failures must remain runtime failures, not build passes.
+Independent CI runners do not share native hook output; processes within each
+worktree remain sequential. Local process watchdog termination on a stuck probe
+is never recorded as confirmed cleanup.
+
 ## Offline business package baseline (1C.2)
 
 `packages/meshchan_core/test/values_test.dart` imports the public business entry

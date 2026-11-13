@@ -4,7 +4,7 @@ Pure Dart offline business values, persistent drafts/profiles/settings, typed
 effective-parameter resolution, finite diagnostic recording/recovery, bounded
 history, guarded deletion, retention, safe summary export, and a controlled
 production Drift/SQLite storage lifecycle. Import
-`package:meshchan_core/meshchan_core.dart`. All members are `0.1.0-dev.3`; schema and summary format remain 1.
+`package:meshchan_core/meshchan_core.dart`. The core packages and CLI use `0.1.0-dev.3`; schema and summary format remain 1.
 
 1C.2 established immutable business values and interfaces. 1C.3 adds the real
 schema 1, internal row codecs, directory ownership, file opening/closing, and a

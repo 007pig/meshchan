@@ -185,6 +185,25 @@ final class DraftCursor {
   final String id;
 }
 
+final class DraftPage extends ReplyValue {
+  DraftPage(Iterable<DraftSnapshot> items, this.nextCursor)
+    : items = List.unmodifiable(items);
+  final List<DraftSnapshot> items;
+  final DraftCursor? nextCursor;
+}
+
+final class DeletedDraft extends ReplyValue {
+  const DeletedDraft(this.id);
+  final String id;
+}
+
+/// One decision, one document session, at most one final save. Not a general
+/// admission bypass. Human decision time never occupies a pending worker RPC.
+final class DraftDecision extends ReplyValue {
+  const DraftDecision(this.generation, this.documentGeneration);
+  final int generation, documentGeneration;
+}
+
 sealed class ReplyValue {
   const ReplyValue();
 }
@@ -232,6 +251,47 @@ final class WorkerBootstrap {
 
 sealed class RuntimeRequest {
   const RuntimeRequest();
+}
+
+final class ListDrafts extends RuntimeRequest {
+  const ListDrafts({this.size = 20, this.after});
+  final int size;
+  final DraftCursor? after;
+}
+
+final class ReadDraft extends RuntimeRequest {
+  const ReadDraft(this.id);
+  final String id;
+}
+
+final class WriteDraft extends RuntimeRequest {
+  const WriteDraft({
+    required this.title,
+    required this.body,
+    this.id,
+    this.expectedRevision,
+    this.decision,
+  });
+  final String title, body;
+  final String? id;
+  final int? expectedRevision;
+  final DraftDecision? decision;
+}
+
+final class DeleteDraft extends RuntimeRequest {
+  const DeleteDraft(this.id, this.expectedRevision);
+  final String id;
+  final int expectedRevision;
+}
+
+final class BeginDraftDecision extends RuntimeRequest {
+  const BeginDraftDecision(this.decision);
+  final DraftDecision decision;
+}
+
+final class EndDraftDecision extends RuntimeRequest {
+  const EndDraftDecision(this.decision);
+  final DraftDecision decision;
 }
 
 final class ReadOffline extends RuntimeRequest {

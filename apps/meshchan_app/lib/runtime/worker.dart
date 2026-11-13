@@ -67,6 +67,9 @@ final class WorkerDispatcher {
   bool _releaseReported = false;
   bool _bootstrapSettled = false;
   int _sequence = 0, _lastId = 0;
+  DraftDecision? _decision;
+  int _lastDecision = 0;
+  bool _decisionSaveUsed = false;
   Future<void>? _opening, _shutdown;
   Future<void> _databaseQueue = Future.value();
   Future<void>? _deviceWork;
@@ -160,6 +163,92 @@ final class WorkerDispatcher {
     _lastId = id;
     final request = message.request;
     switch (request) {
+      case BeginDraftDecision():
+        if (!_canAdmit || request.decision.generation <= _lastDecision) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.invalidState),
+          );
+        } else {
+          _lastDecision = request.decision.generation;
+          _decision = request.decision;
+          _decisionSaveUsed = false;
+          _paused = true;
+          _emit();
+          _reply(id, value: request.decision);
+        }
+      case EndDraftDecision():
+        if (!_matchesDecision(request.decision) ||
+            _stop ||
+            _closing ||
+            _storage?.state != StorageState.open ||
+            gate.state != DeviceGateState.free ||
+            _phase == RuntimePhase.fault) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.invalidState),
+          );
+        } else {
+          _decision = null;
+          _paused = false;
+          _emit();
+          _reply(id, value: const Accepted());
+        }
+      case ListDrafts():
+        _enqueue(id, () => _listDrafts(request.size, request.after));
+      case ReadDraft():
+        _enqueue(
+          id,
+          () async => DraftValue(
+            DraftSnapshot.from(
+              await _storage!.drafts.read(LocalId(request.id)),
+            ),
+          ),
+        );
+      case WriteDraft():
+        final permitted =
+            request.decision != null &&
+            _matchesDecision(request.decision!) &&
+            !_decisionSaveUsed &&
+            _paused &&
+            !_stop &&
+            !_closing &&
+            _phase == RuntimePhase.ready &&
+            _storage?.state == StorageState.open &&
+            gate.state == DeviceGateState.free;
+        if (request.decision != null && !permitted) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.staleRequest),
+          );
+          return;
+        }
+        if (permitted) _decisionSaveUsed = true;
+        _enqueue(id, () async {
+          if ((request.id == null) != (request.expectedRevision == null)) {
+            throw const CoreException(CoreErrorCode.invalidInput);
+          }
+          final content = DraftContent(
+            title: request.title,
+            body: request.body,
+          );
+          final draft = request.id == null
+              ? await _storage!.drafts.create(content)
+              : await _storage!.drafts.update(
+                  LocalId(request.id!),
+                  content,
+                  expectedRevision: request.expectedRevision!,
+                );
+          return DraftValue(DraftSnapshot.from(draft));
+        }, decisionSave: permitted);
+      case DeleteDraft():
+        _enqueue(id, () async {
+          await _storage!.drafts.delete(
+            LocalId(request.id),
+            expectedRevision: request.expectedRevision,
+          );
+          return DeletedDraft(request.id);
+        });
       case GetStatus():
         _reply(id, value: StatusValue(snapshot));
       case StopRuntime():
@@ -182,6 +271,8 @@ final class WorkerDispatcher {
         _reply(id, value: const Accepted());
       case ResumeAdmission():
         if (_closing ||
+            _decision != null ||
+            _phase == RuntimePhase.fault ||
             _storage?.state != StorageState.open ||
             gate.state != DeviceGateState.free) {
           _reply(
@@ -232,8 +323,16 @@ final class WorkerDispatcher {
     _emit();
   }
 
-  void _enqueue(int id, Future<ReplyValue> Function() action) {
-    if (!_canAdmit) {
+  bool _matchesDecision(DraftDecision value) =>
+      _decision?.generation == value.generation &&
+      _decision?.documentGeneration == value.documentGeneration;
+
+  void _enqueue(
+    int id,
+    Future<ReplyValue> Function() action, {
+    bool decisionSave = false,
+  }) {
+    if (!_canAdmit && !decisionSave) {
       _reply(id, error: const RuntimeFault(host: CoordinationFault.stopped));
       return;
     }
@@ -247,6 +346,24 @@ final class WorkerDispatcher {
         _reply(id, error: e);
       }
     });
+  }
+
+  Future<DraftPage> _listDrafts(int size, DraftCursor? after) async {
+    if (size < 1 || size > 50) {
+      throw const CoreException(CoreErrorCode.invalidInput);
+    }
+    final page = await _storage!.drafts.list(
+      size: PageSize(size),
+      after: after == null
+          ? null
+          : UpdatedCursor(updatedAt: after.updatedAt, id: LocalId(after.id)),
+    );
+    return DraftPage(
+      page.items.map(DraftSnapshot.from),
+      page.nextCursor == null
+          ? null
+          : DraftCursor(page.nextCursor!.updatedAt, page.nextCursor!.id.value),
+    );
   }
 
   Future<OfflineSnapshot> _read(ReadOffline request) async {

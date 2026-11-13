@@ -23,6 +23,18 @@ abstract interface class AppRuntime {
   OfflineSnapshot? get offline;
   Future<void> start();
   Future<OfflineSnapshot> refresh({int pageSize = 20, DraftCursor? after});
+  Future<DraftPage> listDrafts({int size = 20, DraftCursor? after});
+  Future<DraftSnapshot> readDraft(String id);
+  Future<DraftSnapshot> saveDraft({
+    required String title,
+    required String body,
+    String? id,
+    int? expectedRevision,
+    DraftDecision? decision,
+  });
+  Future<String> deleteDraft(String id, {required int expectedRevision});
+  Future<DraftDecision> beginDraftDecision(int documentGeneration);
+  Future<void> endDraftDecision(DraftDecision decision);
   Future<ShutdownOutcome> shutdown();
 }
 
@@ -75,6 +87,8 @@ final class RuntimeController implements AppRuntime {
   bool _workerSpawned = false;
   bool get _workerMayOwnResources => _spawnPending || _workerSpawned;
   int _nextId = 0, _offlineVersion = 0;
+  int _decisionGeneration = 0;
+  DraftDecision? _decision;
   int? _shutdownId;
   bool _shutdownSent = false;
   int get pendingCount => _pending.length;
@@ -293,6 +307,15 @@ final class RuntimeController implements AppRuntime {
             const RuntimeFault(host: CoordinationFault.invalidState),
       );
     }
+    if (_decision != null &&
+        (request is ReadOffline ||
+            request is ListDrafts ||
+            request is ReadDraft ||
+            request is DeleteDraft ||
+            request is CreateFixtureDraft ||
+            (request is WriteDraft && request.decision != _decision))) {
+      return Future.error(const RuntimeFault(host: CoordinationFault.stopped));
+    }
     final id = ++_nextId;
     final completion = Completer<ReplyValue>();
     final timer = Timer(
@@ -329,6 +352,53 @@ final class RuntimeController implements AppRuntime {
     _stopIntent = true;
     if (_workerExited || _terminalFault) return;
     await request(const StopRuntime());
+  }
+
+  @override
+  Future<DraftPage> listDrafts({int size = 20, DraftCursor? after}) async =>
+      await request(ListDrafts(size: size, after: after)) as DraftPage;
+  @override
+  Future<DraftSnapshot> readDraft(String id) async =>
+      (await request(ReadDraft(id)) as DraftValue).draft;
+  @override
+  Future<DraftSnapshot> saveDraft({
+    required String title,
+    required String body,
+    String? id,
+    int? expectedRevision,
+    DraftDecision? decision,
+  }) async => (await request(
+    WriteDraft(
+      title: title,
+      body: body,
+      id: id,
+      expectedRevision: expectedRevision,
+      decision: decision,
+    ),
+  ) as DraftValue).draft;
+  @override
+  Future<String> deleteDraft(
+    String id, {
+    required int expectedRevision,
+  }) async =>
+      (await request(DeleteDraft(id, expectedRevision)) as DeletedDraft).id;
+  @override
+  Future<DraftDecision> beginDraftDecision(int documentGeneration) async {
+    if (_decision != null) {
+      throw const RuntimeFault(host: CoordinationFault.invalidState);
+    }
+    final decision = DraftDecision(++_decisionGeneration, documentGeneration);
+    _decision =
+        decision; // Freeze ordinary host requests before the first await.
+    await request(BeginDraftDecision(decision));
+    return decision;
+  }
+
+  @override
+  Future<void> endDraftDecision(DraftDecision decision) async {
+    if (!identical(decision, _decision)) return;
+    await request(EndDraftDecision(decision));
+    _decision = null; // Only confirmed healthy resume reopens host admission.
   }
 
   // An explicit pre-close decision boundary for 1D.9. Cancellation already sent

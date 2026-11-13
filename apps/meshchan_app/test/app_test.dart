@@ -30,10 +30,7 @@ void main() {
           },
         ),
       );
-      expect(
-        find.textContaining('Draft editing is not connected'),
-        findsOneWidget,
-      );
+      expect(find.text('Select a draft or choose New'), findsOneWidget);
       await tester.tap(find.text('Device').first);
       await tester.pumpAndSettle();
       expect(
@@ -185,6 +182,11 @@ void main() {
 }
 
 class _Runtime implements AppRuntime {
+  @override
+  Future<DraftPage> listDrafts({int size = 20, DraftCursor? after}) async =>
+      DraftPage([], null);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
   final states = StreamController<RuntimeSnapshot>.broadcast(sync: true);
   final reads = StreamController<OfflineSnapshot>.broadcast(sync: true);
   int starts = 0, closes = 0;

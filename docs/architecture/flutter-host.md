@@ -766,3 +766,77 @@ snapshots and explicit cursors. Add narrowly typed committed mutation requests a
 per-editor revision/query versions; keep edit buffers and dirty decisions in main.
 Do not import worker repositories or close the owner from a draft page. Device
 selection, real diagnostic forms, complete history and export remain 1D.5–1D.8.
+
+
+## 1D.4 implementation note
+
+The product Drafts view uses typed `AppRuntime.listDrafts/readDraft/saveDraft/
+deleteDraft` methods. The worker calls only public `CoreStorage.drafts`, through
+its existing admitted database queue. `ReadOffline` remains the historical
+bootstrap/verification API; settings errors do not gate the product draft list.
+`CreateFixtureDraft` remains fixture-only. Schema, package versions, ownership,
+serial gate and platform bootstrap/termination protocol are unchanged.
+
+`DraftEditor` is a stable main-isolate document session. TextEditingControllers
+hold the current buffer and input state, `PendingDraft` captures immutable
+text/document/edit generations and expected revision, and `baseline` holds only
+a confirmed read/commit. Exact buffer equality determines dirty. Save completion
+advances baseline/ID without assigning controllers; an A commit leaves newer B
+unsaved and the next update uses A's returned revision. Writes coalesce while
+pending; delete cannot overlap save and disables document editing/selection.
+Unknown is a retained mutation outcome, independently of later resource release.
+Explicitly acknowledging local discard permits departure, without claiming rollback.
+
+Document reads, stored-version inspection and bounded list requests have separate
+generations. New selection/refresh/mutation invalidates stale results and cursors.
+Mutation success remains successful if its independent first-page refresh fails.
+Inspecting a conflict never updates the buffer or baseline; confirmed Reload does.
+The title uses a bounded-height multiline field without a single-line formatter.
+Body byte preview is recomputed only when body text changes. Valid noncollapsed
+composing text defers every Save path; no clearComposing, delayed unfocus or
+controller rewrites are used. Stable field/container keys preserve input connection
+and focus when status/error controls are inserted. The form scrolls in narrow or
+short windows instead of squeezing the body to zero height.
+
+`DraftQuitCoordinator` is constructed at application scope and injected into the
+view. The native requestQuit handler and Flutter onExitRequested share its one
+in-progress Future. Cancel clears that attempt. BeginDraftDecision pauses host and
+worker admission, binding a fresh decision generation to the current document
+session. WriteDraft accepts that decision only once for the final captured save;
+ordinary reads/writes/deletes and generic ResumeAdmission remain blocked. Accepted
+prior writes drain and supply their actual returned ID/revision before capture.
+Human decision time is outside worker RPC deadlines. EndDraftDecision resumes only
+with open storage, no stop/close/fault and a free device gate; terminal uncertainty
+cannot resume. Save RPC deadlines retain the existing unknown contract.
+
+Only after the reversible decision succeeds does the coordinator call shutdown,
+then the bootstrap stop callback. AppKit terminateLater/original-request replies,
+first-frame/native authorization, release acknowledgement and actual onExit remain
+the existing resource barriers. No editor/context is awaited for resource-free
+early quit. Native sources and XCTest isolation did not need alteration.
+
+The [1D.4 validation record](../validation/phase-1d4-drafts.md) separates software,
+worker/process, native and actual GUI evidence. 1D.5 can reuse these typed runtime,
+page/session and quit-decision boundaries for presets/settings, which still require
+their own public models, validation and save behavior. Device selection, PING,
+Responder, history/export and the full system-termination matrix remain later work.
+
+### 1D.4 editor review corrections
+
+Departure checks active composition before a modal, read-only transition or quit
+admission await can make Flutter discard its composing range. Both fields retain
+focus on outside pointer-down so the action checks live controller values even
+before the next build. An unfinished composition defers this entire departure
+attempt with a visible notice; it does not start the dialog, pause admission or
+initiate shutdown. Natural candidate completion/cancellation permits a new attempt.
+
+The editor form is keyed by document generation. Intentional document replacement
+disposes Flutter's EditableText/UndoHistory state and any throttled history push;
+Undo cannot restore another document's text into the current ID/revision. Save
+completion and ordinary status/list changes retain that key, selection and history.
+
+Each leave prompt captures the unknown flag actually displayed before awaiting
+its answer. If an accepted mutation becomes unknown while a regular dialog is
+open or while its chosen Discard waits for the write, a second unknown-result
+prompt must be acknowledged. Continue editing at either prompt retains the buffer
+and vetoes departure; resource release never changes the unknown mutation fact.

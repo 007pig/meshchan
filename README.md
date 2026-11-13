@@ -115,3 +115,8 @@ suite passed 84 tests. Those counts and the original dev.2 binary/archive remain
 historical. Basic Direct acceptance subsequently completed on the selected
 A slot 1/B slot 3 zero-hop path, including the authorized H2/H7 follow-up linked
 above. This dev.3 delivery adds no new RF acceptance.
+
+
+The macOS app now has an [offline draft list and explicit-save editor](apps/meshchan_app/README.md#offline-drafts-1d4).
+See the [1D.4 validation record](docs/validation/phase-1d4-drafts.md) for tested
+runtime, persistence, input and quit behavior and the handoff to presets/settings.

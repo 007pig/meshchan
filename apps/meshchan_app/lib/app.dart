@@ -5,6 +5,9 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 
 import 'probe_request.dart';
+import 'drafts/editor.dart';
+import 'drafts/view.dart';
+import 'drafts/quit_coordinator.dart';
 import 'runtime/controller.dart';
 import 'runtime/protocol.dart';
 
@@ -20,10 +23,12 @@ class MeshchanApp extends StatelessWidget {
     this.request,
     required this.probe,
     this.runtime,
+    this.quitCoordinator,
   });
   final ProbeRequest? request;
   final PlatformProbe probe;
   final AppRuntime? runtime;
+  final DraftQuitCoordinator? quitCoordinator;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -34,14 +39,15 @@ class MeshchanApp extends StatelessWidget {
       useMaterial3: true,
     ),
     home: request == null
-        ? _Navigation(runtime: runtime)
+        ? _Navigation(runtime: runtime, quitCoordinator: quitCoordinator)
         : _ProbeView(request: request!, probe: probe),
   );
 }
 
 class _Navigation extends StatefulWidget {
-  const _Navigation({required this.runtime});
+  const _Navigation({required this.runtime, this.quitCoordinator});
   final AppRuntime? runtime;
+  final DraftQuitCoordinator? quitCoordinator;
   @override
   State<_Navigation> createState() => _NavigationState();
 }
@@ -49,25 +55,25 @@ class _Navigation extends StatefulWidget {
 class _NavigationState extends State<_Navigation> {
   var selected = 0;
   StreamSubscription<RuntimeSnapshot>? states;
-  StreamSubscription<OfflineSnapshot>? reads;
   RuntimeSnapshot? state;
-  OfflineSnapshot? offline;
-  String? readError;
   AppLifecycleListener? lifecycle;
+  DraftQuitCoordinator? quit;
+  LeavePrompt get prompt =>
+      ({required bool unknown}) =>
+          showDraftLeaveDialog(context, unknown: unknown);
   @override
   void initState() {
     super.initState();
     final runtime = widget.runtime;
     if (runtime == null) return;
+    quit = widget.quitCoordinator ?? DraftQuitCoordinator(runtime);
+    quit!.prompt = prompt;
     state = runtime.snapshot;
     states = runtime.changes.listen((v) {
       if (mounted) setState(() => state = v);
     });
-    reads = runtime.offlineChanges.listen((v) {
-      if (mounted) setState(() => offline = v);
-    });
     lifecycle = AppLifecycleListener(
-      onExitRequested: () async => (await runtime.shutdown()).canExit
+      onExitRequested: () async => await quit!.requestQuit()
           ? AppExitResponse.exit
           : AppExitResponse.cancel,
     );
@@ -75,29 +81,32 @@ class _NavigationState extends State<_Navigation> {
   }
 
   Future<void> _start(AppRuntime runtime) async {
-    try {
-      await runtime.start();
-      if (runtime.snapshot.phase == RuntimePhase.ready) await runtime.refresh();
-    } catch (_) {
-      if (mounted) setState(() => readError = 'Initial offline read failed.');
+    await runtime.start();
+    if (runtime.snapshot.phase == RuntimePhase.ready) {
+      await quit!.editor.refresh();
     }
+  }
+
+  Future<void> navigate(int value) async {
+    final editor = quit?.editor;
+    if (selected == value ||
+        editor?.deciding == true ||
+        editor?.quitting == true) {
+      return;
+    }
+    if (selected == 0 && editor != null && !await editor.leave(prompt)) return;
+    if (mounted) setState(() => selected = value);
   }
 
   @override
   void dispose() {
-    // The application owns shutdown. Navigation/dispose only remove observers.
     unawaited(states?.cancel());
-    unawaited(reads?.cancel());
     lifecycle?.dispose();
+    quit?.prompt = null;
+    // No owner/worker cleanup belongs to a Widget's dispose.
+    if (widget.quitCoordinator == null) quit?.editor.dispose();
     super.dispose();
   }
-
-  static const titles = ['Drafts', 'Device', 'Diagnostics'];
-  static const messages = [
-    'Draft editing is not connected yet. Offline storage belongs to the application runtime.',
-    'Device access is not connected yet. No ports have been listed or opened.',
-    'Diagnostics are not connected yet. No checks have been started.',
-  ];
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -110,7 +119,7 @@ class _NavigationState extends State<_Navigation> {
             child: Text('Meshchan'),
           ),
           selectedIndex: selected,
-          onDestinationSelected: (value) => setState(() => selected = value),
+          onDestinationSelected: navigate,
           destinations: const [
             NavigationRailDestination(
               icon: Icon(Icons.edit_note),
@@ -129,36 +138,39 @@ class _NavigationState extends State<_Navigation> {
         const VerticalDivider(width: 1),
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.all(32),
+            padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  titles[selected],
+                  const ['Drafts', 'Device', 'Diagnostics'][selected],
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
-                const SizedBox(height: 24),
                 Text(_status(state)),
+                if (state != null) Text('Owner: ${state!.owner.name}'),
                 if (state?.error case final error?)
                   Text('Runtime error: ${error.code}'),
                 if ((state?.maintenance?.failureCount ?? 0) > 0)
                   const Text(
                     'Maintenance warning: an unacknowledged failure is retained.',
                   ),
-                if (offline != null)
+                const SizedBox(height: 12),
+                if (selected == 0 && quit != null)
+                  Expanded(
+                    child: DraftsView(editor: quit!.editor, prompt: prompt),
+                  )
+                else
                   Text(
-                    'Offline settings loaded. History limit: ${offline!.historyLimit}. '
-                    'Drafts in this page: ${offline!.drafts.length}.',
+                    selected == 1
+                        ? 'Device access is not connected yet. No ports have been listed or opened.'
+                        : selected == 2
+                        ? 'Diagnostics are not connected yet. No checks have been started.'
+                        : 'Storage is unavailable.',
                   ),
-                if (readError != null) Text(readError!),
-                const SizedBox(height: 16),
-                Text(messages[selected]),
-                if (selected == 2) ...[
-                  const SizedBox(height: 24),
+                if (selected == 2)
                   const Text(
                     'History is not connected yet. Saved results are not loaded.',
                   ),
-                ],
               ],
             ),
           ),

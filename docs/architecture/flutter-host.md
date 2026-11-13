@@ -606,3 +606,40 @@ checks including the untracked new document. It requires no dependency
 resolution, generation, Dart/Flutter tests, native build, port enumeration,
 device access, or RF action. Future acceptance above must be executed and
 recorded in its owning steps; document review does not substitute for it.
+
+## 1D.2 implementation note
+
+The November 12–13, 2026 implementation adds `apps/meshchan_app` and a macOS
+runner on the unchanged Flutter 3.47.9/Dart 3.13.7 baseline. The historical
+1D.1 observations above remain its design-review baseline. See the
+[platform record](../validation/phase-1d2-platform.md) for executed checks.
+Normal launch and page navigation still create no core/native resources.
+
+The official template enables App Sandbox in Debug/Profile and Release. A real
+debug run resolved Foundation and Dart HOME to
+`~/Library/Containers/org.meshchan.meshchan/Data`, returned container Application
+Support, and failed an external fixture. This implementation deliberately omits
+App Sandbox in **both** entitlement files. The selected development desktop host
+retains direct access to the adopted CLI location and the future POSIX serial
+backend, without a file-dialog/security-scoped bookmark bootstrap. It does not
+add USB capabilities or prove device opening. Debug/Profile retain template
+JIT/network-server development entitlements; Release requests none. Local signing
+is ad hoc. No system security setting, keychain, SDK or vendor cache was changed.
+This decision does not satisfy Mac App Store Sandbox requirements, Developer ID
+signing, notarization or clean-machine distribution; those require later review.
+
+The runner reports Foundation home/support and executable/bundle facts only in
+the explicit developer mode. With Sandbox omitted, debug and release resolve the
+compatibility target to `~/Library/Application Support/meshchan`. Independent
+fixtures establish file access and persistence, including a separate sibling
+validation directory under Application Support; no existing user database is
+opened or migrated. 1D.3 must still implement unique application ownership,
+production directory bootstrap/recovery, contention/fault behavior and any
+explicit override/authorization coordination.
+
+The finite probe owns all SQLite/native work in one temporary worker, waits for
+maintenance and confirmed close before reopening, and uses an incomplete/closed
+receipt to guard cross-process reads. It passes only sendable results to the UI.
+It is not the long-lived worker, device gate, control bridge, cancellation,
+stale-result protection or shutdown coordinator described above. Those remain
+1D.3/1D.9 work. Business pages remain 1D.4–1D.8.

@@ -1,0 +1,21 @@
+name: meshchan_app
+description: macOS Flutter host for Meshchan.
+publish_to: 'none'
+version: 0.1.0-dev.3+1
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  meshchan_core: ^0.1.0-dev.3
+  meshcore_link: ^0.1.0-dev.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

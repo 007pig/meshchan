@@ -4,10 +4,18 @@
 
 Use American English for project documentation, code comments, CLI output, and configuration text. Keep identifiers in English.
 
-The root `pubspec.yaml` lists `packages/meshcore_link`, `packages/meshchan_core`, and `apps/meshctl`. All three members use `resolution: workspace`; all packages use `publish_to: none` and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`. Do not create member lockfiles or add Flutter SDK dependencies. The CLI resolves `meshcore_link` and `meshchan_core` to local workspace members without overrides. Check membership with `dart pub workspace list` (which also displays the root package).
+The root `pubspec.yaml` lists `packages/meshcore_link`, `packages/meshchan_core`,
+`apps/meshctl`, and `apps/meshchan_app`. All members use `resolution: workspace`,
+`publish_to: none`, and `sdk: ^3.13.0`. Keep the single root `pubspec.lock`.
+Only the Flutter host owns Flutter SDK dependencies; core packages and CLI
+remain pure Dart. Local workspace dependencies need no overrides. Check
+membership with `dart pub workspace list` (which also displays the root package).
 
-The root provides `lints`; the CLI uses `args` and directly declares `test` and `fake_async` for tests; the communication core uses `libserialport_plus` and directly declares `test` and `fake_async` as development dependencies. The offline business package declares `drift`/`sqlite3` and the workspace
-`meshcore_link` dependency for pure route/capacity validation, plus `drift_dev`, `build_runner`, and `test` for development. No Flutter engine or platform project is involved.
+The root provides `lints`; the CLI uses `args`, `test`, and `fake_async`. The
+communication core uses `libserialport_plus`; the offline business core uses
+`drift`/`sqlite3` and the public `meshcore_link` dependency, with `drift_dev`,
+`build_runner`, and `test` for development. The new host owns `flutter` and
+`flutter_test` and uses both public core entries.
 
 The [offline core and persistence contract (1C.1)](architecture/offline-core.md)
 defines the `meshchan_core` boundary, local business objects, diagnostic
@@ -25,12 +33,11 @@ checks; dated implementation and validation sections below remain historical.
 
 The [Flutter host contract (1D.1)](architecture/flutter-host.md) now fixes the
 macOS arm64 + USB UI scope, worker/owner lifecycle, data-directory compatibility
-target, and later acceptance responsibilities. The workspace above is still the
-current Dart-only workspace. Flutter membership and platform files belong to
-1D.2, with the worker in 1D.3; this documentation step does not add Flutter SDK
-dependencies or change existing commands. Future integration uses the existing
-SDK below and must validate native assets, Sandbox/directory access, and lifecycle
-behavior rather than inferring them from CLI results.
+target, and later acceptance responsibilities. 1D.2 implements the macOS host
+and finite platform probe; the formal worker remains 1D.3. The
+[app guide](../apps/meshchan_app/README.md) gives launch/build/probe commands,
+and the [platform record](validation/phase-1d2-platform.md) separates new facts
+from the historical CLI results below.
 
 ## SDK and native toolchain baseline
 
@@ -129,20 +136,30 @@ These are separate licenses. The wrapper's MIT license does not relicense the na
 From the repository root, using the session PATH above:
 
 ```bash
-dart pub get
-dart pub get --enforce-lockfile
+flutter pub get
+flutter pub get --enforce-lockfile
 dart pub workspace list
 (cd packages/meshchan_core && dart run build_runner build)
 git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
 dart format --output=none --set-exit-if-changed .
-dart analyze --fatal-infos
+flutter analyze --no-pub --fatal-infos
 python3 -m unittest discover -s tool -p '*_test.py'
 (cd packages/meshchan_core && dart test)
 (cd packages/meshcore_link && dart test)
 (cd apps/meshctl && dart test)
+(cd apps/meshchan_app && flutter test --no-pub)
 ```
 
-For a clone with an unchanged lockfile, start with `dart pub get --enforce-lockfile`. After intentional dependency changes, let pub resolve and update the root lockfile, review the diff, then enforce it. Do not perform unrelated workspace upgrades. Format only files involved in a change when fixing formatting.
+For a clone with an unchanged lockfile, start with `flutter pub get --enforce-lockfile`. After intentional dependency changes, let pub resolve and update the root lockfile, review the diff, then enforce it. Do not perform unrelated workspace upgrades. Format only files involved in a change when fixing formatting.
+
+The installed Flutter-bundled Dart also passed `dart pub get --enforce-lockfile`
+on this mixed workspace; a standalone Dart installation is not the supported
+resolver for the Flutter member. Flutter 3.47.9 pins `test_api` 0.7.12, requiring
+`test` 1.31.1 instead of 1.33.0. Its analyzer limit requires analyzer 13.3.0 and
+`build_runner` 2.16.1 instead of 2.17.1. Only development constraints changed;
+production dependencies and native hooks remain unchanged. See the platform
+record for the full lock delta and regression results. The Phase 1C candidate
+validator remains a CLI-only gate and does not validate the app bundle.
 
 Root analysis excludes `build/**`, which holds retained candidates, copied native
 source materials and legacy validation checkouts. These preserved artifacts are

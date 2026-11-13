@@ -26,6 +26,7 @@ jobs:
 
       - name: Print SDK versions
         run: |
+          uname -m
           flutter --version --machine
           dart --version
 
@@ -51,9 +52,12 @@ jobs:
       - name: Analyze workspace
         run: flutter analyze --no-pub --fatal-infos
 
-      - name: Test Flutter navigation and probe failures without hardware
+      - name: Test Flutter runtime, recording lifecycle and probes without hardware
         working-directory: apps/meshchan_app
         run: flutter test --no-pub
+
+      - name: Verify runtime process ownership without hardware
+        run: python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 
       - name: Test finite acceptance plan validation without hardware
         run: python3 -m unittest discover -s tool -p '*_test.py'
@@ -120,6 +124,8 @@ jobs:
       - name: Test app without hardware
         working-directory: apps/meshchan_app
         run: flutter test --no-pub
+      - name: Verify runtime across independent processes
+        run: python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
       - name: Build debug and release apps sequentially
         working-directory: apps/meshchan_app
         run: |
@@ -131,6 +137,8 @@ jobs:
           xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner
           -configuration Debug -destination 'platform=macOS,arch=arm64'
           -derivedDataPath build/macos -parallel-testing-enabled NO test
+      - name: Verify production runtime and relocated release without hardware
+        run: python3 apps/meshchan_app/tool/check_macos_runtime.py --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
       - name: Verify release SQLite across app processes without serial access
         run: |
           python3 - <<'PY'

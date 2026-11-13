@@ -643,3 +643,126 @@ receipt to guard cross-process reads. It passes only sendable results to the UI.
 It is not the long-lived worker, device gate, control bridge, cancellation,
 stale-result protection or shutdown coordinator described above. Those remain
 1D.3/1D.9 work. Business pages remain 1D.4–1D.8.
+
+## 1D.3 implementation note
+
+The historical notes above retain their original scope. The application now
+implements the long-lived worker and basic native quit barrier. Actual inputs
+and execution results belong to the [runtime validation record](../validation/phase-1d3-runtime.md).
+No core/CLI behavior, schema, version, dependency or entitlement changes were needed.
+
+```mermaid
+sequenceDiagram
+  participant UI as App owner / UI isolate
+  participant W as Long-lived worker
+  participant C as Public CoreStorage
+  UI->>UI: Pure configuration, Foundation absolute directory
+  UI->>W: Spawn with onError/onExit already registered
+  W-->>UI: Hello (control SendPort)
+  W->>C: Open once, including recovery/maintenance
+  W-->>UI: Sequenced ready / owner-held snapshot
+  UI->>W: Correlated bounded offline reads
+  W->>C: settings.read + drafts.list
+  W-->>UI: Immutable DTOs
+  UI->>W: Stop and shutdown intent
+  W->>W: Drain admitted DB work and recording/cleanup
+  W->>C: Wait requested maintenance, await unique close
+  W-->>UI: Release report with shutdown request ID
+  UI->>W: Release acknowledgement
+  W-->>UI: Isolate onExit
+  UI->>UI: Permit native termination
+```
+
+`LaunchConfiguration` validates normal, legacy finite probe, bounded runtime
+verification and native-test modes before resources. Default Foundation resolution
+remains `~/Library/Application Support/meshchan`; `--data-dir` has precedence and
+must be absolute/nonempty/NUL-free without dot segments. No directory fallback,
+live-file copying, read-only owner exception or lock manipulation is implemented.
+Native TestAction does not inherit ordinary launch arguments and supplies the
+versioned disabled-owner configuration before engine construction. A detected test
+host with missing/invalid configuration cannot enter production startup.
+
+`RuntimeController` owns the client ports, subscriptions, startup, pending request
+map, query version and single shutdown process with cached observations.
+`WorkerDispatcher` owns the single storage handle, retained history reports, short database queue, device gate,
+adapter and close. Only explicit value DTOs cross the bridge; neither worker entry
+nor bootstrap captures UI/core/native objects. Ready means open actually returned.
+Query errors leave that owner held. Host phases and unknown ownership are separate
+from the real core `StorageState` and error vocabulary.
+
+Every ordinary envelope has runtime generation and monotonically increasing
+request ID. Worker rejects repeated/old IDs without executing them. Responses
+remove their pending entry exactly once. Out-of-order reads remain available to
+their callers but cannot replace newer shared data; sequenced snapshots cannot
+regress state. Native exceptions/stacks are projected to controlled host categories.
+Timeout/worker loss ends pending requests as unknown/fault, freezes admission and
+never resends or replaces the worker. Release reports are correlated to the one
+shutdown ID. Acknowledgement ensures a healthy worker cannot exit ahead of the
+main isolate receiving its release proof. `onExit` without proof preserves unknown
+ownership; a release report without exit still does not permit normal termination.
+After a shutdown deadline, its unknown outcome remains an immutable observation.
+Later matching release and actual exit facts, in either delivery order, dispose
+client ports automatically and update the cached outcome for subsequent quit
+requests. They never send stop/close again, resume admission, or change a timed-out
+request into a committed result. Rejected `Isolate.spawn` creation is separately
+confirmed resource-free, including if it rejects after an earlier startup fault;
+it does not fabricate an onExit event. A created worker's fatal/exit path retains
+unknown ownership until release is confirmed.
+
+Client request/startup faults do not disable the first shutdown exchange to a
+still-running worker. The close observation is allocated after startup settles,
+separately from those earlier deadlines. Its correlated intent survives a missing
+Hello and is sent once when the control port arrives, including after a shutdown
+observation timeout. Ordinary admission stays faulted. A close deadline always
+settles its own observation even if a previous fault was already recorded; actual
+release/exit proof is still required. Fixture read verification also requires a
+regular nonempty database before changing its receipt or starting an owner; it
+never uses core open to initialize a replacement for an empty read fixture.
+
+The device lease is acquired before the first async resolution/read. A second
+operation is rejected synchronously. Worker uses real event-loop checkpoints before
+open, before resolution and after resolution; observed stop prevents new admission.
+After `record()`, cancellation immediately uses that operation's own gate. The
+adapter observes all named Futures and streams on registration and repairs missed
+broadcast events using authoritative final results. A done recording releases the
+lease only when core, host and aggregate cleanup are all succeeded/notRequired and
+no observation failed. Pending, failed and unconfirmed release is quarantined.
+Logical/save/coordination/maintenance facts remain independent. Storage close is
+still the final core admission/unpin/maintenance drain barrier.
+
+Stop receipt and application are separate snapshot fields. Main preserves quit
+while resolving/spawning/handshaking; AppKit also preserves a quit received before
+Dart installs its handler. Stop cannot preempt synchronous Foundation/FFI calls;
+it applies only after the event loop has actually received it. No code claims that
+merely sending a message has canceled an unprocessed native call.
+
+`pauseAdmission`/`resumeAdmission` form the reversible pre-close boundary. Resume
+requires open storage, a free device gate and no close started; it does not undo
+prior cancellation or commits. `shutdown()` is irreversible and shared by all quit
+paths. It drains accepted work, waits real recording settlement and requested
+maintenance, verifies core closed, snapshots the retained in-memory history reports,
+reports release, acknowledges and waits for exit. Closing never starts new repository
+queries. Ambiguous cleanup retains resources and a visible fault. After resource
+bootstrap, the Swift delegate returns `terminateLater`, preserves the original
+AppKit termination request and replies to it after Dart confirms or rejects exit.
+It never cancels a healthy system logout/restart/shutdown and substitutes another
+app quit. Forwarding is scheduled after the delegate returns, including when Dart
+can answer immediately. Concurrent requests share the pending exchange.
+
+`HostResourceBootstrap` gates runtime directory resolution/spawn and the finite
+probe until the first frame has rasterized and native authorization is received.
+That grant requires Dart's quit handler to be installed and no pending quit. Before
+the grant, AppKit can return `terminateNow` without entering a pre-first-frame modal
+loop or abandoning core resources; later authorization is denied. The explicit
+startup-quit acceptance path forwards to Dart on the regular run loop, saving stop
+before releasing the bootstrap wait. The controller then closes without resolving
+a directory or creating a worker. A delayed frame or authorization response cannot
+restart it. Native code only tracks the AppKit request and bootstrap fact; Dart
+remains the single resource coordinator. Full dirty-edit and desktop interaction
+policy remains 1D.9.
+
+1D.4 should reuse `AppRuntime`/`RuntimeController`, `ReadOffline`, immutable draft
+snapshots and explicit cursors. Add narrowly typed committed mutation requests and
+per-editor revision/query versions; keep edit buffers and dirty decisions in main.
+Do not import worker repositories or close the owner from a draft page. Device
+selection, real diagnostic forms, complete history and export remain 1D.5–1D.8.

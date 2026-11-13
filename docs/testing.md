@@ -8,7 +8,85 @@ stable Python 3.15 or newer for local Python scripts, as described in the
 [local toolchain selection](development.md#local-python-toolchain). Python is a
 development tool only; the distributed CLI does not require it.
 
-## Flutter macOS host (1D.2)
+## Application runtime (1D.3)
+
+The app suite now includes actual `Isolate.spawn`/public-core/SQLite tests alongside
+resource-free Widget fakes and controlled dispatcher/recording fakes. It checks
+strict launch modes and pre-bootstrap native test isolation; one application owner
+across rebuild/navigation; correlated reads and committed exact-text drafts;
+synchronous device admission; early stop/operation-generation cancel; controls
+while resolution/native cleanup is pending; all recording Future/stream errors;
+logical-versus-release/save facts; sticky maintenance; stale/duplicate/reversed
+events; worker fatal/exit/lost response; idempotent drain/close; and unknown release.
+Future-schema/corrupt files retain their bytes after controlled open rejection.
+
+`runtime_shutdown_test.dart` adds controlled real-isolate client regressions for
+release after a shutdown deadline, release before a delayed exit, and onExit
+before a late release report. Each keeps quit vetoed until both facts are known,
+then requires automatic port disposal, a reconciled later quit outcome and exactly
+one close request. Earlier unknown outcomes and failed requests stay immutable.
+A ReceivePort-capturing entry closure exercises real SDK spawn rejection before
+worker entry and requires owner none, no synthetic onExit, zero client ports and
+permitted normal exit. Existing fatal-worker tests retain unknown ownership.
+
+`runtime_timeout_test.dart` uses the production dispatcher with real public core
+and SQLite, gated at open return, first settings read, or Hello delivery. After
+startup/read timeout it requires ordinary admission to remain faulted, a contender
+to remain busy, and the first shutdown to drain/close exactly once. A Hello later
+than the shutdown observation deadline must still deliver that same intent and
+allow authoritative late reconciliation. Healthy completion requires zero pending
+requests/ports and exact draft continuity after reopening. Test failure cleanup
+also uses dispatcher close and acknowledges confirmed release; it never kills an
+owner or removes a lock to manufacture success.
+
+`runtime_verification_test.dart` creates and reads a valid fixture through the
+real runtime, truncates its database while keeping the closed receipt, then requires
+failed read verification to preserve zero bytes and the exact receipt without
+spawning a worker. The resulting resource-free shutdown must still permit exit.
+
+`recording_worker_test.dart` builds real public core and fake `CompanionTransport`
+inside a test-only worker entry, using the production dispatcher/gate/adapter/close.
+It covers stop before resolution, cancel after record but before prepared, and an
+actually opened simulated device with cleanup blocked by a Completer. Status,
+cancel and quit receipt continue while cleanup is blocked. Release, final committed
+save, core close and worker exit are separately asserted. Production has no fake
+transport or arbitrary test-command protocol. No real port is enumerated/opened.
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub)
+python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
+python3 apps/meshchan_app/tool/check_macos_runtime.py \
+  --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
+```
+
+Use the verified local Python and command PATH in the [developer guide](development.md#application-runtime-checks-1d3).
+The process gate writes a controlled exact-text draft through the formal bridge,
+keeps the owner alive while another process must be busy, then closes and reopens
+in a new process. The native gate uses the same compiled app entry to write/read
+and normally quit, copies the whole app outside checkout, reruns from another cwd
+and checks the relocated signature. Hardware enumeration is absent from both gates.
+It also requests native quit before bootstrap and with a live ready owner. The
+latter must return from AppKit's `terminateLater` loop after the actual shared
+close, with confirmed worker exit and zero pending requests/client ports.
+
+RunnerTests receives its disabled-owner configuration from TestAction before
+Swift/Dart startup, not from `setUp`. Missing/invalid configuration blocks resource
+startup. Widget tests inject `AppRuntime`; page dispose removes observers without
+closing core. TestAction is independent of normal LaunchAction, so this isolation
+does not disable ordinary released startup. CI retains `concurrency: 1`, adds real
+runtime/process checks to `check`, and production runtime/relocation to `macos-app`.
+The native tests exercise the production termination bridge with injected request,
+reply and scheduling callbacks: pending system requests, success/false replies,
+repeated requests and synchronous completions. They never request actual logout,
+restart or shutdown. Dart bootstrap tests independently gate first rasterized frame
+and native permission, including stop before/between them and permission failure.
+If a newly signed host under Documents blocks in the OS privacy prompt before
+entry, retain that failure and rerun with `-derivedDataPath` under `/private/tmp`;
+do not change privacy settings. This does not bypass native-test isolation.
+The [1D.3 record](validation/phase-1d3-runtime.md) distinguishes these results from
+the legacy platform probe and from unexecuted hardware/distribution checks.
+
+## Flutter macOS host (1D.2, historical scope)
 
 The mixed workspace uses one root lockfile. Resolve with
 `flutter pub get --enforce-lockfile`, analyze with

@@ -14,14 +14,15 @@ are `0.1.0-dev.3`; the [local delivery record](docs/releases/phase-1c-dev3.md)
 separates source/native/archive acceptance from CI, clean-environment and public distribution status.
 These are software/source/AOT results, not new hardware acceptance.
 
-**Phase 1 / 1D / Step 2** adds the [Flutter macOS host](apps/meshchan_app/README.md)
-with Drafts, Device, and Diagnostics navigation. Normal startup does not open
-storage or access devices; the pages show that business features are not
-connected. An explicit finite developer mode verifies real SQLite and, only
-when requested, macOS serial metadata. See the [platform record](docs/validation/phase-1d2-platform.md)
-for actual evidence and limits. The [host contract](docs/architecture/flutter-host.md)
-assigns the long-lived worker and application ownership to 1D.3. The initial
-product target is macOS arm64 + USB; this is a development skeleton.
+**Phase 1 / 1D / Step 3** connects the [Flutter macOS host](apps/meshchan_app/README.md)
+to one application-owned long-lived storage worker, a typed control/read bridge,
+device admission, recording lifecycle observation and confirmed shutdown.
+Normal startup reads bounded offline data without enumerating or opening devices.
+Drafts, Device and Diagnostics share real runtime status; their business workflows
+remain later steps. See the [runtime record](docs/validation/phase-1d3-runtime.md)
+for current results and limits, and the [1D.2 platform record](docs/validation/phase-1d2-platform.md)
+for the historical finite probe. The [host contract](docs/architecture/flutter-host.md)
+retains the macOS arm64 + USB target and the deferred distribution/hardware scope.
 
 The historical hardware track covers **Phase 1 / 1B / Step 9: finite USB/openHop development acceptance and a local `0.1.0-dev.2` candidate**. The product remains USB-only. A source-only [openHop peer](docs/openhop-acceptance.md) reuses Meshchan's existing core for a selected virtual Companion over binary WebSocket. It is excluded from the product bundle and is not an independent application-protocol oracle. The fresh [software gate](docs/development.md#1b9-software-validation-on-november-10-2026) and source/AOT synthetic checks passed. [Real Direct acceptance](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) established exact round trips in both directions, the binary boundary, and no-responder timeout. A later [authorized H2/H7 comparison](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026) passed local acceptance and active cancellation with B command=15 s/A=5 s. Every basic case now has a passing record, with all earlier failures retained; relay paths and physical unplug remain untested. See the [dev.2 local delivery record](docs/releases/phase-1b-dev2.md).
 

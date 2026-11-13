@@ -1,15 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meshchan_app/app.dart';
 import 'package:meshchan_app/probe_request.dart';
+import 'package:meshchan_app/runtime/controller.dart';
+import 'package:meshchan_app/runtime/protocol.dart';
 
 void main() {
   testWidgets(
-    'normal launch and all navigation never invoke the resource boundary',
+    'normal launch starts one app runtime; navigation and rebuild keep its owner',
     (tester) async {
       var calls = 0;
+      final runtime = _Runtime();
       await tester.pumpWidget(
         MeshchanApp(
+          runtime: runtime,
           request: ProbeRequest.parse([
             '-NSDocumentRevisionsDebugMode',
             'YES',
@@ -25,10 +31,10 @@ void main() {
         ),
       );
       expect(
-        find.textContaining('Draft storage is not connected'),
+        find.textContaining('Draft editing is not connected'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Device'));
+      await tester.tap(find.text('Device').first);
       await tester.pumpAndSettle();
       expect(
         find.textContaining('No ports have been listed or opened'),
@@ -44,6 +50,40 @@ void main() {
       await tester.tap(find.text('Drafts').first);
       await tester.pumpAndSettle();
       expect(calls, 0);
+      expect(runtime.starts, 1);
+      expect(runtime.closes, 0);
+      await tester.pumpWidget(
+        MeshchanApp(runtime: runtime, probe: (_) async => {}),
+      );
+      expect(runtime.starts, 1);
+      runtime.setPhase(RuntimePhase.ready);
+      await tester.pump();
+      expect(find.text('Storage ready'), findsOneWidget);
+      for (final phase in [
+        RuntimePhase.busy,
+        RuntimePhase.fault,
+        RuntimePhase.closing,
+      ]) {
+        runtime.setPhase(phase);
+        await tester.pump();
+        expect(
+          find.textContaining(switch (phase) {
+            RuntimePhase.busy => 'Directory in use',
+            RuntimePhase.fault => 'Runtime fault',
+            _ => 'Closing',
+          }),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('Device').first);
+        await tester.pump();
+      }
+      await tester.pumpWidget(const SizedBox());
+      runtime.setPhase(RuntimePhase.closed);
+      await tester.pump();
+      expect(tester.takeException(), null);
+      expect(runtime.closes, 0);
+      await runtime.states.close();
+      await runtime.reads.close();
       expect(find.byType(ElevatedButton), findsNothing);
     },
   );
@@ -142,4 +182,41 @@ void main() {
       expect(() => ProbeRequest.parse(arguments), throwsFormatException);
     }
   });
+}
+
+class _Runtime implements AppRuntime {
+  final states = StreamController<RuntimeSnapshot>.broadcast(sync: true);
+  final reads = StreamController<OfflineSnapshot>.broadcast(sync: true);
+  int starts = 0, closes = 0;
+  @override
+  RuntimeSnapshot snapshot = const RuntimeSnapshot(
+    generation: 1,
+    phase: RuntimePhase.opening,
+  );
+  void setPhase(RuntimePhase phase) {
+    snapshot = RuntimeSnapshot(generation: 1, phase: phase);
+    states.add(snapshot);
+  }
+
+  @override
+  Stream<RuntimeSnapshot> get changes => states.stream;
+  @override
+  Stream<OfflineSnapshot> get offlineChanges => reads.stream;
+  @override
+  OfflineSnapshot? get offline => null;
+  @override
+  Future<void> start() async {
+    starts++;
+  }
+
+  @override
+  Future<OfflineSnapshot> refresh({
+    int pageSize = 20,
+    DraftCursor? after,
+  }) async => OfflineSnapshot(null, 1000, [], null);
+  @override
+  Future<ShutdownOutcome> shutdown() async {
+    closes++;
+    return const ShutdownOutcome(true, true);
+  }
 }

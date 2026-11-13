@@ -122,6 +122,77 @@ complete app outside checkout and runs from another cwd. Neither enumerates port
 See the [1D.3 record](../../docs/validation/phase-1d3-runtime.md) for actual results,
 source inputs, failures, signatures and evidence boundaries.
 
+## Offline drafts (1D.4)
+
+Launch the normal app with an explicitly owned `--data-dir` during development.
+Drafts work without a device. New creates an empty local buffer; only Save or
+Command+S creates a stored record. An all-empty draft is valid. Select a row by
+ID to read its committed version, edit Title/Body, then explicitly save. Delete
+asks for confirmation and removes the record only after a revision-checked commit.
+A new local draft is discarded locally; it never sends a fake delete.
+
+The list loads 20 records at a time (app bound 1–50). Refresh replaces the cursor
+chain. Load more deduplicates IDs; separate pages are not one database snapshot.
+The loaded count is not a total. Saving/deleting refreshes the first page without
+replacing editor text. A refresh error is separate from a confirmed commit.
+
+Save snapshots the current text and confirmed revision. You can keep typing
+while it runs; newer text remains unsaved. Repeated Save coalesces with that one
+write. A returned create ID becomes the target of subsequent updates. Exact text,
+including empty strings, whitespace, title newlines, CR/LF/CRLF, emoji, combining
+characters and U+FFFD, is preserved. Body UTF-8 bytes counts the current body,
+without a radio packet cap. The persistence boundary rejects unpaired UTF-16.
+While either field has valid noncollapsed composing text, Save asks you to finish
+composition. Routine refresh/status/save results never reset controller values.
+Default selection, clipboard and Undo/Redo remain Flutter text editing actions.
+Undo history belongs to one document session: switching drafts, New, Discard and
+confirmed Reload start fresh history. Ordinary saves preserve that history.
+
+A conflict retains local text and the last confirmed revision. View stored version
+reads for inspection only; the explicit Reload choice replaces local edits and
+adopts that version. Continue editing never silently changes expectedRevision.
+Missing records and controlled failures remain visible with the local buffer.
+An unknown save/delete may already have committed: no automatic retry, content
+matching, new owner, or reconciliation runs in that faulted session. Safe resource
+release does not turn an unknown write into success. Inspect records explicitly
+after safe shutdown in a new session.
+
+Switching drafts, New, leaving Drafts, window close and Command+Q protect local
+edits with Save / Discard / Continue editing. Accepted writes settle before a
+Discard; it cannot undo a commit. Unknown writes require an explicit warning
+acknowledgment. A failed Save, unfinished composition or newer edit cancels
+departure. Both exit sources share one application decision and final Save.
+With active composition, departure is deferred before opening a dialog or pausing
+admission; finish or cancel the candidate text, then try again. Outside mouse
+clicks keep field focus until the action checks the current input. If a pending
+write becomes unknown while the ordinary leave dialog is open, Discard shows a
+second unknown-result warning and requires its explicit acknowledgment.
+During quit, ordinary admission is paused; one document-scoped, single-use final
+save can enter the same worker queue. Only an accepted departure initiates
+irreversible runtime shutdown, then releases bootstrap, drains/closes and waits
+for worker exit. Cancel resumes admission only after healthy worker confirmation.
+
+Run the product process gate separately from the historical fixed-fixture probe:
+
+```bash
+python3 apps/meshchan_app/tool/check_draft_process.py --dart "$(command -v dart)"
+```
+
+This gate uses `fixtureWrites: false`, production CRUD, real SQLite, independent
+owner/contender/reopen processes and a test-side production-dispatcher send boundary
+that drops a committed create reply. It proves frozen retry and exactly one record
+in a new process after safe close. It does not simulate a disk failure or RF.
+See the [1D.4 record](../../docs/validation/phase-1d4-drafts.md) for actual evidence.
+
+Actual Debug/Release editor, Pinyin/Command+S, dirty navigation/quit and relocated
+Release product persistence were verified in the [GUI follow-up record](../../docs/validation/phase-1d4-drafts.md#november-13-gui-follow-up-after-ide-permission-restart).
+For manual acceptance, foreground the exact bundle through LaunchServices with
+an explicit owned directory and retain `open -W` until normal exit. Multiple
+retained bundles share the Bundle ID; select by full path. A process existing in
+the background is not evidence of an interactable window. Native UI automation
+also needs an available trusted control surface and Flutter accessibility semantics;
+verify that native input changed the product state and committed exact text.
+
 ## Build and run
 
 Use the existing Flutter SDK (locally `/opt/homebrew/share/flutter`, 3.47.9 with

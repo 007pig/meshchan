@@ -1,5 +1,41 @@
 # Developer Guide
 
+## Offline draft editor checks (1D.4)
+
+The [app guide](../apps/meshchan_app/README.md#offline-drafts-1d4) describes explicit
+Save/Command+S, exact text/composing, conflict inspection and unknown outcomes.
+Use only owned fixture directories for normal GUI launches (`--data-dir=...`).
+Do not use fixed fixture probes as evidence of product editor saving. Native
+XCTest still requires its pre-engine disabled-owner TestAction configuration;
+new editor initialization does not bypass that isolation.
+
+Run sequentially with the existing Flutter SDK and Apple Clang; on the local Mac
+use `/opt/homebrew/bin/python3` (verified 3.15.2) rather than Apple system Python:
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub)
+python3 apps/meshchan_app/tool/check_draft_process.py --dart "$(command -v dart)"
+python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
+```
+
+`draft_editor_test.dart` uses controlled completions for buffer/baseline races,
+unknown writes and shared quit decisions. `draft_widget_test.dart` drives actual
+buttons, dialogs, selection, composing values and keyboard shortcuts with an
+injected AppRuntime. `draft_worker_test.dart` uses fixtureWrites false and the
+real spawn/dispatcher/public-core/SQLite path for CRUD/revisions/no-op/cursors,
+scoped paused Save and close drain. `check_draft_process.py` adds independent
+owner/contender/reopen checks and a committed create response dropped at the
+production dispatcher's send boundary. Its new process requires exactly one
+record after safe close; the original unknown remains unknown. No private storage
+hooks, SQL, CLI internals or device access are used. CI runs the product gate in
+both software and macOS jobs, with shared native operations still sequential.
+
+Build Debug/Release and run existing runtime/relocation/probe/native regression
+commands below as separate evidence. Actual GUI input/dirty navigation/quit is
+also separate from callback or Widget tests. See the [1D.4 record](validation/phase-1d4-drafts.md)
+for source manifests, observed results and remaining platform limitations.
+
+
 ## Project language and workspace
 
 Use American English for project documentation, code comments, CLI output, and configuration text. Keep identifiers in English.
@@ -3762,3 +3798,26 @@ as validation of the new configuration. No native rebuild, Dart suite rerun,
 replacement archive or remote publication was performed for this scope-only fix.
 Previous SDK-path, clean-environment, CI and distribution limitations remain as
 recorded in their independent evidence.
+
+
+### Actual 1D.4 desktop GUI acceptance
+
+The [GUI follow-up](validation/phase-1d4-drafts.md#november-13-gui-follow-up-after-ide-permission-restart)
+records actual Debug/Release Chinese Pinyin, keyboard/clipboard, explicit saves,
+exact reopen, delete, dirty navigation and native quit decisions, plus a relocated
+Release product chain. It supplements the earlier software/probe/native callback
+results. Foreground the complete app by exact path with LaunchServices, explicit
+owned `--data-dir` and `open -W`; do not use a default-library launch to diagnose
+window visibility. Reused Bundle IDs and background/other-space windows can make
+an app process insufficient for GUI access. Validate native accessibility/event/
+capture access and app semantics without automatically modifying OS permissions.
+The user explicitly authorized the follow-up's fixture-scoped native UI driver and
+manually granted IntelliJ control access/restarted it. Ordinary CI retains its
+hardware-free software/worker/process gates; this local interactive run does not
+claim remote CI or a system logout/restart/shutdown matrix.
+
+After normal Quit, check the OS process and the captured shutdown report; do not
+query an exited application through Computer Use, which was observed to relaunch
+it without arguments. Launch every new session explicitly with its fixture first.
+The follow-up records one such default-directory opening as an isolation exception;
+its GUI passes do not imply complete fixture isolation.

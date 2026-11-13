@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app.dart';
+import 'drafts/quit_coordinator.dart';
 import 'host_bootstrap.dart';
 import 'platform_probe.dart';
 import 'probe_request.dart';
@@ -127,16 +128,22 @@ void main(List<String> arguments) {
       },
       fixtureWrites: config.verification == 'write',
     );
+    final quitCoordinator = DraftQuitCoordinator(
+      runtime,
+      afterShutdownIntent: () {
+        bootstrap.stop();
+        if (directoryGate != null && !directoryGate.isCompleted) {
+          directoryGate.complete();
+        }
+      },
+    );
     // Flush an AppKit quit received before Dart's handler was installed.
     var reportedShutdown = false;
     _installQuit(() async {
       final quitPhase = runtime.snapshot.phase;
-      final closing = runtime.shutdown();
-      bootstrap.stop(); // Runtime has saved intent before this barrier opens.
-      if (directoryGate != null && !directoryGate.isCompleted) {
-        directoryGate.complete();
-      }
-      final result = await closing;
+      final canExit = await quitCoordinator.requestQuit();
+      if (!canExit) return false;
+      final result = await runtime.shutdown();
       if (!reportedShutdown) {
         reportedShutdown = true;
         try {
@@ -166,14 +173,26 @@ void main(List<String> arguments) {
       // Bounded native acceptance of quit before bootstrap has settled. The
       // ordinary owner/coordinator is used, without a delay or fake resource.
       unawaited(runtime.start());
-      runApp(MeshchanApp(probe: _probe, runtime: runtime));
+      runApp(
+        MeshchanApp(
+          probe: _probe,
+          runtime: runtime,
+          quitCoordinator: quitCoordinator,
+        ),
+      );
       _requestNativeQuit(runtime);
       return;
     }
     if (config.verification == 'quit-ready') {
       // Exercise AppKit's deferred reply with a live owner, not a runtime that
       // verification already closed. The native request starts the sole close.
-      runApp(MeshchanApp(probe: _probe, runtime: runtime));
+      runApp(
+        MeshchanApp(
+          probe: _probe,
+          runtime: runtime,
+          quitCoordinator: quitCoordinator,
+        ),
+      );
       unawaited(runtime.start().then<void>((_) => _requestNativeQuit(runtime)));
       return;
     }
@@ -197,12 +216,24 @@ void main(List<String> arguments) {
           },
           onError: (Object _, StackTrace s) {
             runtime.reportHostFailure();
-            runApp(MeshchanApp(probe: _probe, runtime: runtime));
+            runApp(
+              MeshchanApp(
+                probe: _probe,
+                runtime: runtime,
+                quitCoordinator: quitCoordinator,
+              ),
+            );
           },
         ),
       );
     } else {
-      runApp(MeshchanApp(probe: _probe, runtime: runtime));
+      runApp(
+        MeshchanApp(
+          probe: _probe,
+          runtime: runtime,
+          quitCoordinator: quitCoordinator,
+        ),
+      );
     }
   } on FormatException catch (error) {
     WidgetsFlutterBinding.ensureInitialized();

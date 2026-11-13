@@ -59,6 +59,9 @@ jobs:
       - name: Verify runtime process ownership without hardware
         run: python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 
+      - name: Verify product drafts and lost committed writes across processes
+        run: python3 apps/meshchan_app/tool/check_draft_process.py --dart "$(command -v dart)"
+
       - name: Test finite acceptance plan validation without hardware
         run: python3 -m unittest discover -s tool -p '*_test.py'
 
@@ -126,6 +129,8 @@ jobs:
         run: flutter test --no-pub
       - name: Verify runtime across independent processes
         run: python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
+      - name: Verify product draft process persistence and unknown writes
+        run: python3 apps/meshchan_app/tool/check_draft_process.py --dart "$(command -v dart)"
       - name: Build debug and release apps sequentially
         working-directory: apps/meshchan_app
         run: |

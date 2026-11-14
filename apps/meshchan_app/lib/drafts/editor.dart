@@ -268,6 +268,7 @@ final class DraftEditor extends ChangeNotifier {
         body: captured.body,
         id: captured.baseline?.id,
         expectedRevision: captured.baseline?.revision,
+        session: captured.documentGeneration,
         decision: decision,
       );
       if (captured.documentGeneration != documentGeneration) return false;

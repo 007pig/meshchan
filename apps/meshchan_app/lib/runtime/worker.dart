@@ -68,6 +68,9 @@ final class WorkerDispatcher {
   bool _bootstrapSettled = false;
   int _sequence = 0, _lastId = 0;
   DraftDecision? _decision;
+  final _createdProfileIds = <int, String>{};
+  final _createdDraftIds = <int, String>{};
+  String? _decisionCreatedDraftId;
   int _lastDecision = 0;
   bool _decisionSaveUsed = false;
   Future<void>? _opening, _shutdown;
@@ -171,6 +174,8 @@ final class WorkerDispatcher {
           );
         } else {
           _lastDecision = request.decision.generation;
+          _decisionCreatedDraftId =
+              _createdDraftIds[request.decision.documentGeneration];
           _decision = request.decision;
           _decisionSaveUsed = false;
           _paused = true;
@@ -194,6 +199,91 @@ final class WorkerDispatcher {
           _emit();
           _reply(id, value: const Accepted());
         }
+      case ListProfiles():
+        _enqueue(id, () async {
+          if (request.size < 1 || request.size > 50) {
+            throw const CoreException(CoreErrorCode.invalidInput);
+          }
+          final page = await _storage!.profiles.list(
+            size: PageSize(request.size),
+            after: request.after,
+          );
+          return ProfilePage(page.items, page.nextCursor);
+        });
+      case ReadProfile():
+        _enqueue(
+          id,
+          () async =>
+              ProfileValue(await _storage!.profiles.read(LocalId(request.id))),
+        );
+      case WriteProfile():
+        final permitted = _permit(
+          request.decision,
+          EditorTarget.profile,
+          request.id,
+          session: request.session,
+        );
+        if (request.decision != null && !permitted) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.staleRequest),
+          );
+          return;
+        }
+        if (permitted) _decisionSaveUsed = true;
+        _enqueue(id, () async {
+          final saved = await _storage!.profiles.save(
+            request.content,
+            id: request.id == null ? null : LocalId(request.id!),
+          );
+          if (request.id == null) {
+            _createdProfileIds.clear();
+            _createdProfileIds[request.session] = saved.id.value;
+          }
+          return ProfileValue(saved);
+        }, decisionSave: permitted);
+      case DeleteProfile():
+        _enqueue(id, () async {
+          await _storage!.profiles.delete(LocalId(request.id));
+          return const Accepted();
+        });
+      case ReadSettings():
+        _enqueue(
+          id,
+          () async => SettingsValue(await _storage!.settings.read()),
+        );
+      case WriteSettings():
+        final permitted = _permit(
+          request.decision,
+          EditorTarget.settings,
+          null,
+        );
+        if (request.decision != null && !permitted) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.staleRequest),
+          );
+          return;
+        }
+        if (permitted) _decisionSaveUsed = true;
+        _enqueue(id, () async {
+          final saved = await _storage!.settings.save(request.settings);
+          _observeMaintenance();
+          return SettingsValue(saved);
+        }, decisionSave: permitted);
+      case RestoreSettings():
+        _enqueue(id, () async {
+          final saved = await _storage!.settings.restoreDefaults();
+          _observeMaintenance();
+          return SettingsValue(saved);
+        });
+      case ResolveParameters():
+        _enqueue(
+          id,
+          () async => ParametersValue(
+            await _storage!.resolveParameters(request.request),
+          ),
+        );
       case ListDrafts():
         _enqueue(id, () => _listDrafts(request.size, request.after));
       case ReadDraft():
@@ -209,6 +299,11 @@ final class WorkerDispatcher {
         final permitted =
             request.decision != null &&
             _matchesDecision(request.decision!) &&
+            request.decision!.target == EditorTarget.draft &&
+            request.decision!.documentGeneration == request.session &&
+            (request.decision!.targetId == request.id ||
+                (request.decision!.targetId == null &&
+                    request.id == _decisionCreatedDraftId)) &&
             !_decisionSaveUsed &&
             _paused &&
             !_stop &&
@@ -239,6 +334,15 @@ final class WorkerDispatcher {
                   content,
                   expectedRevision: request.expectedRevision!,
                 );
+          if (request.id == null && request.session != null) {
+            _createdDraftIds.clear();
+            _createdDraftIds[request.session!] = draft.id.value;
+            if (_decision?.target == EditorTarget.draft &&
+                _decision?.documentGeneration == request.session &&
+                _decision?.targetId == null) {
+              _decisionCreatedDraftId = draft.id.value;
+            }
+          }
           return DraftValue(DraftSnapshot.from(draft));
         }, decisionSave: permitted);
       case DeleteDraft():
@@ -325,7 +429,50 @@ final class WorkerDispatcher {
 
   bool _matchesDecision(DraftDecision value) =>
       _decision?.generation == value.generation &&
-      _decision?.documentGeneration == value.documentGeneration;
+      _decision?.documentGeneration == value.documentGeneration &&
+      _decision?.target == value.target &&
+      _decision?.targetId == value.targetId;
+
+  bool _permit(
+    DraftDecision? value,
+    EditorTarget target,
+    String? id, {
+    int? session,
+  }) =>
+      value != null &&
+      _matchesDecision(value) &&
+      value.target == target &&
+      (session == null || value.documentGeneration == session) &&
+      (value.targetId == id &&
+              !(target == EditorTarget.profile &&
+                  id == null &&
+                  _createdProfileIds.containsKey(value.documentGeneration)) ||
+          (target == EditorTarget.profile &&
+              value.targetId == null &&
+              id != null &&
+              _createdProfileIds[value.documentGeneration] == id)) &&
+      !_decisionSaveUsed &&
+      _paused &&
+      !_stop &&
+      !_closing &&
+      _phase == RuntimePhase.ready &&
+      _storage?.state == StorageState.open &&
+      gate.state == DeviceGateState.free;
+
+  void _observeMaintenance() {
+    unawaited(
+      _history!.waitForMaintenance().then(
+        (_) {
+          _captureMaintenance();
+          _emit();
+        },
+        onError: (Object _, StackTrace s) {
+          _captureMaintenance();
+          _emit();
+        },
+      ),
+    );
+  }
 
   void _enqueue(
     int id,

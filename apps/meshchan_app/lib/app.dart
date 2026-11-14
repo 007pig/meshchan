@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'probe_request.dart';
 import 'drafts/editor.dart';
+import 'profiles/view.dart';
 import 'drafts/view.dart';
 import 'drafts/quit_coordinator.dart';
 import 'runtime/controller.dart';
@@ -59,8 +60,11 @@ class _NavigationState extends State<_Navigation> {
   AppLifecycleListener? lifecycle;
   DraftQuitCoordinator? quit;
   LeavePrompt get prompt =>
-      ({required bool unknown}) =>
-          showDraftLeaveDialog(context, unknown: unknown);
+      ({required bool unknown}) => showDraftLeaveDialog(
+        context,
+        unknown: unknown,
+        subject: quit?.auxiliaryActive == true ? 'editor' : 'draft',
+      );
   @override
   void initState() {
     super.initState();
@@ -94,7 +98,8 @@ class _NavigationState extends State<_Navigation> {
         editor?.quitting == true) {
       return;
     }
-    if (selected == 0 && editor != null && !await editor.leave(prompt)) return;
+    if (editor != null && !await quit!.leaveCurrent(prompt)) return;
+    if (quit != null) quit!.auxiliaryActive = value == 3;
     if (mounted) setState(() => selected = value);
   }
 
@@ -104,7 +109,7 @@ class _NavigationState extends State<_Navigation> {
     lifecycle?.dispose();
     quit?.prompt = null;
     // No owner/worker cleanup belongs to a Widget's dispose.
-    if (widget.quitCoordinator == null) quit?.editor.dispose();
+    if (widget.quitCoordinator == null) quit?.disposeEditors();
     super.dispose();
   }
 
@@ -114,11 +119,14 @@ class _NavigationState extends State<_Navigation> {
       children: [
         NavigationRail(
           labelType: NavigationRailLabelType.all,
-          leading: const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('Meshchan'),
+          leading: Padding(
+            padding: const EdgeInsets.all(16),
+            child: TextButton(
+              onPressed: () => navigate(3),
+              child: const Text('Profiles and settings'),
+            ),
           ),
-          selectedIndex: selected,
+          selectedIndex: selected == 3 ? null : selected,
           onDestinationSelected: navigate,
           destinations: const [
             NavigationRailDestination(
@@ -143,13 +151,20 @@ class _NavigationState extends State<_Navigation> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  const ['Drafts', 'Device', 'Diagnostics'][selected],
+                  const [
+                    'Drafts',
+                    'Device',
+                    'Diagnostics',
+                    'Profiles and settings',
+                  ][selected],
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 Text(_status(state)),
                 if (state != null) Text('Owner: ${state!.owner.name}'),
                 if (state?.error case final error?)
-                  Text('Runtime error: ${error.code}'),
+                  Text(
+                    '${state!.phase == RuntimePhase.fault ? 'Runtime fault' : 'Last request error'}: ${error.code}',
+                  ),
                 if ((state?.maintenance?.failureCount ?? 0) > 0)
                   const Text(
                     'Maintenance warning: an unacknowledged failure is retained.',
@@ -158,6 +173,14 @@ class _NavigationState extends State<_Navigation> {
                 if (selected == 0 && quit != null)
                   Expanded(
                     child: DraftsView(editor: quit!.editor, prompt: prompt),
+                  )
+                else if (selected == 3 && quit != null)
+                  Expanded(
+                    child: ProfilesView(
+                      editor: quit!.profiles,
+                      preview: quit!.preview,
+                      prompt: prompt,
+                    ),
                   )
                 else
                   Text(

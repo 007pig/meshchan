@@ -4,6 +4,30 @@ import XCTest
 @testable import Meshchan
 
 class RunnerTests: XCTestCase {
+  func testCommandQIsConsumedBeforeInputMethodIncludingCapsLock() {
+    for flags: NSEvent.ModifierFlags in [[.command], [.command, .capsLock]] {
+      let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+        timestamp: 0, windowNumber: 0, context: nil, characters: "q",
+        charactersIgnoringModifiers: "Q", isARepeat: false, keyCode: 12)!
+      XCTAssertTrue(MainFlutterWindow.isQuitEquivalent(event))
+    }
+  }
+
+  func testQuitEquivalentPreservesOtherShortcutsAndKeyUp() {
+    for flags: NSEvent.ModifierFlags in [[], [.command, .shift], [.command, .control], [.command, .option]] {
+      let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+        timestamp: 0, windowNumber: 0, context: nil, characters: "q",
+        charactersIgnoringModifiers: "q", isARepeat: false, keyCode: 12)!
+      XCTAssertFalse(MainFlutterWindow.isQuitEquivalent(event))
+    }
+    for (type, character, code): (NSEvent.EventType, String, UInt16) in [(.keyUp, "q", 12), (.keyDown, "s", 1)] {
+      let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [.command],
+        timestamp: 0, windowNumber: 0, context: nil, characters: character,
+        charactersIgnoringModifiers: character, isARepeat: false, keyCode: code)!
+      XCTAssertFalse(MainFlutterWindow.isQuitEquivalent(event))
+    }
+  }
+
 
   func testRunnerHostsFlutterInMeshchanProduct() throws {
     let bundle = Bundle.main

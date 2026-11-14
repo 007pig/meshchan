@@ -199,9 +199,18 @@ final class DeletedDraft extends ReplyValue {
 
 /// One decision, one document session, at most one final save. Not a general
 /// admission bypass. Human decision time never occupies a pending worker RPC.
+enum EditorTarget { draft, profile, settings }
+
 final class DraftDecision extends ReplyValue {
-  const DraftDecision(this.generation, this.documentGeneration);
+  const DraftDecision(
+    this.generation,
+    this.documentGeneration, {
+    this.target = EditorTarget.draft,
+    this.targetId,
+  });
   final int generation, documentGeneration;
+  final EditorTarget target;
+  final String? targetId;
 }
 
 sealed class ReplyValue {
@@ -270,11 +279,12 @@ final class WriteDraft extends RuntimeRequest {
     required this.body,
     this.id,
     this.expectedRevision,
+    this.session,
     this.decision,
   });
   final String title, body;
   final String? id;
-  final int? expectedRevision;
+  final int? expectedRevision, session;
   final DraftDecision? decision;
 }
 
@@ -376,4 +386,74 @@ final class ReleaseReport extends WorkerEvent {
   final int requestId;
   final RuntimeSnapshot snapshot;
   final bool resourcesReleased;
+}
+
+final class ProfilePage extends ReplyValue {
+  ProfilePage(Iterable<ConnectionProfile> items, this.nextCursor)
+    : items = List.unmodifiable(items);
+  final List<ConnectionProfile> items;
+  final UpdatedCursor? nextCursor;
+}
+
+final class ProfileValue extends ReplyValue {
+  const ProfileValue(this.profile);
+  final ConnectionProfile profile;
+}
+
+final class SettingsValue extends ReplyValue {
+  const SettingsValue(this.settings);
+  final AppSettings settings;
+}
+
+final class ParametersValue extends ReplyValue {
+  const ParametersValue(this.parameters);
+  final EffectiveParameters parameters;
+}
+
+final class ListProfiles extends RuntimeRequest {
+  const ListProfiles({this.size = 20, this.after});
+  final int size;
+  final UpdatedCursor? after;
+}
+
+final class ReadProfile extends RuntimeRequest {
+  const ReadProfile(this.id);
+  final String id;
+}
+
+final class WriteProfile extends RuntimeRequest {
+  const WriteProfile(
+    this.content, {
+    this.id,
+    required this.session,
+    this.decision,
+  });
+  final ProfileContent content;
+  final String? id;
+  final int session;
+  final DraftDecision? decision;
+}
+
+final class DeleteProfile extends RuntimeRequest {
+  const DeleteProfile(this.id);
+  final String id;
+}
+
+final class ReadSettings extends RuntimeRequest {
+  const ReadSettings();
+}
+
+final class WriteSettings extends RuntimeRequest {
+  const WriteSettings(this.settings, {this.decision});
+  final AppSettings settings;
+  final DraftDecision? decision;
+}
+
+final class RestoreSettings extends RuntimeRequest {
+  const RestoreSettings();
+}
+
+final class ResolveParameters extends RuntimeRequest {
+  const ResolveParameters(this.request);
+  final EffectiveParameterRequest request;
 }

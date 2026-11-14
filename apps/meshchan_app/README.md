@@ -315,3 +315,84 @@ See the [platform record](../../docs/validation/phase-1d2-platform.md) for actua
 artifacts, commands, hashes, results and limits. The ordinary worker, typed bridge,
 gate, adapter and basic quit barrier are 1D.3. Business pages remain 1D.4–1D.8;
 full desktop quit interactions remain 1D.9.
+
+## Profiles, settings, and offline preview (1D.5)
+
+Open **Profiles and settings** beside the three main destinations. Profiles loads
+20 records per page (app bounds 1–50) and uses core UpdatedCursor ordering; loaded
+count is not a total or a shared cross-page snapshot. Select by full ID, including
+duplicate names. New is local until Save preset or Command+S. All send, listen,
+ping and respond fields are editable, including budgets, applicable channels,
+route descriptor/path, data type/filter, endpoint labels, duration and limits.
+Changing operation requires confirmation, retains name/hint/budgets and resets
+operation fields. Required fields without core defaults start empty. Payload and
+PING content belong only to an invocation. Port hints are optional reference text
+and never select or authorize hardware. Name/hint text is preserved exactly.
+
+Settings has exactly one global default profile ID and diagnostic history limit
+(1–100000). Empty default ID clears the reference. The bounded list is a selector;
+an existing default outside it remains represented by its ID. Save replaces both
+fields. Restore defaults explicitly restores no default and 1000, without deleting
+presets or drafts. Lower limits, including restoring 1000, may cause core to clean
+eligible old history. Commit success and retained maintenance warnings are separate;
+the host never acknowledges sticky warnings automatically. Deleting a profile
+clears its matching default atomically through core, preserving the history limit.
+Refresh failure cannot reverse a confirmed commit.
+
+Offline preview uses saved presets, with an independently selected operation.
+**Use settings default** sends null profile ID; it does not bypass the default.
+An explicit ID goes directly to the resolver, without requiring a settings read.
+Each Override checkbox controls presence independently from the raw input. Turning
+it off makes that field absent. Route descriptor/path merge independently; empty
+hex path explicitly clears it. Listen supports inherit, all types, and type zero.
+Content supports Not provided, exact UTF-8 Text, or arbitrary Hex; empty Text/Hex
+means explicitly zero bytes. Protocol integers accept decimal or 0x/0X hex;
+budgets/durations/limits accept decimal integers. Hex bytes require even-length
+ASCII hex with no prefix/separators. Invalid explicit input never becomes absent.
+
+Click **Preview parameters** to call the public core resolver through the unique
+worker. The result includes the actual profile ID and all effective fields;
+content is shown only as a byte count. This is a local execution input, not a safe
+history snapshot, and is never logged wholesale. Inputs or storage mutations
+invalidate old results. Changing selection keeps explicit overrides, updates the
+inherited display, and never changes operation. Preview does not save, read Draft
+content, enumerate ports, acquire a device lease, connect, transmit, or record.
+
+Profiles and Settings share one persistent editing session and the application's
+Draft navigation/quit coordinator. Save snapshots A while continued typing B
+remains dirty. Complete replacements have no revision or timestamp CAS. Both
+normal exit entrances share one decision and shutdown. Paused ordinary requests
+are rejected on host and worker; one final Save is scoped by decision, target,
+session and ID, including a just-confirmed create ID. Delete/Restore/Preview do
+not receive that permission. Unknown writes freeze retries and retain uncertainty
+independently of later release; a late unknown requires another explicit warning.
+Live composition defers Save, modal actions, navigation and quit before admission
+changes. Session/type replacement resets EditableText Undo; ordinary saves keep
+controllers, selection and history. Command+S has no save target in Preview.
+
+The fixture-only process gate is:
+
+```bash
+python3 apps/meshchan_app/tool/check_profile_process.py --dart "$(command -v dart)"
+```
+
+See [the 1D.5 validation record](../../docs/validation/phase-1d5-profiles-settings.md)
+for actual software/platform evidence and remaining acceptance limits.
+
+## macOS GUI validation environment
+
+For repeatable manual/native GUI acceptance, copy the complete app and create an
+owned fixture under `/private/tmp`; use that external cwd and stdout/stderr paths
+as well as explicit `--data-dir` on every launch. A checkout's `build/` path under
+Documents is still protected Documents access and triggered repeated permission
+prompts in 1D.5. The [developer setup and launch example](../../docs/development.md#reusable-macos-gui-fixture-and-input-setup)
+avoids that test dependency without changing product defaults or security settings.
+
+On the current test Mac Command+Space switches input sources; Control+Space
+opens Raycast. The user also configured Caps Lock to switch Pinyin/ABC. The
+reusable personal skill is `$macos-pinyin-input`. Verify actual keyboard-focus
+ownership after switching, including launcher overlays.
+Selecting the Pinyin input-source ID alone can still leave Latin input; verify
+actual marked text and candidates, using the existing shortcut if needed. Restore
+the user's latest intended mode and do not change keyboard preferences. See the
+[testing preflight](../../docs/testing.md#native-gui-preflight-storage-location-and-pinyinabc).

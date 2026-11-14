@@ -3821,3 +3821,126 @@ query an exited application through Computer Use, which was observed to relaunch
 it without arguments. Launch every new session explicitly with its fixture first.
 The follow-up records one such default-directory opening as an isolation exception;
 its GUI passes do not imply complete fixture isolation.
+
+## Profile/settings and presence checks (1D.5)
+
+Use the existing Flutter SDK and the local stable Python 3.15+ described above.
+`profiles_test.dart` checks complete subtype mapping, A/B save state, raw lexical
+failures, exact text, presence and content bytes, settings replacement, late
+preview/unknown, shared quit, composition, scoped shortcuts and real worker
+admission. `check_profile_process.py` uses fixtureWrites false with public core,
+real SQLite, independent owner/contender/reopen processes, delayed create/final
+update and committed reply loss. CI runs it in both jobs, sequentially with shared
+native hooks. It neither imports private storage hooks nor opens serial hardware.
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub)
+python3 apps/meshchan_app/tool/check_profile_process.py --dart "$(command -v dart)"
+```
+
+On this Mac, use command-local Apple Clang PATH and explicitly invoke
+`/opt/homebrew/bin/python3`; its children use `sys.executable`. Protocol integers
+use decimal or 0x/0X hex; budgets/durations/limits use decimal; paths/Hex content
+use even-length ASCII hex without separators/prefix. No trim, fallback or clamp.
+Preview is explicit and offline; missing required fields must fail through core.
+
+All GUI/Debug/Release/process validation must use a new owned `--data-dir`.
+Before native UI reads, verify the live PID and its exact fixture argv. After
+Quit, inspect only OS process state and existing logs; do not ask Computer Use
+to read a closed app (it may relaunch without arguments). Restart explicitly
+with fixture arguments for each new round. XCTest retains disabled-owner isolation
+before engine/bootstrap and does not inherit ordinary Launch arguments. Platform
+GUI, IME, Undo and dirty quit are separate from software callbacks; record NOT_RUN
+or BLOCKED where actual input cannot be verified. See the
+[1D.5 evidence](validation/phase-1d5-profiles-settings.md).
+
+## Reusable macOS GUI fixture and input setup
+
+For routine native GUI acceptance, put the runnable complete `.app`, its owned
+fixture, stdout/stderr destinations, and launch working directory outside `Documents`. A checkout under
+`~/Documents` makes `build/...` fixtures protected Documents access too. During
+1D.5 acceptance the user reported repeated macOS Documents-access dialogs with
+those paths. Use an owned directory under `/private/tmp`, copy the whole built
+bundle there, and pass an explicit `--data-dir` on every launch. Keep an evidence
+receipt in the repository's ignored build directory with the exact bundle, cwd,
+fixture, PID, source/artifact hashes and normal-shutdown reports. Keep live app
+logs in the external run directory too; archive them into ignored repository
+evidence after normal close, rather than giving the app a Documents log path.
+
+For example, after building Release, launch a fresh copied bundle with all live
+paths outside Documents (run from the repository root):
+
+```bash
+meshchan_gui_root=$(mktemp -d /private/tmp/meshchan-gui.XXXXXX)
+ditto apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app "$meshchan_gui_root/Meshchan.app"
+mkdir "$meshchan_gui_root/fixture"
+codesign --verify --deep --strict --all-architectures "$meshchan_gui_root/Meshchan.app"
+(cd "$meshchan_gui_root" && open -n -W -a "$meshchan_gui_root/Meshchan.app" --stdout "$meshchan_gui_root/stdout.log" --stderr "$meshchan_gui_root/stderr.log" --args --data-dir="$meshchan_gui_root/fixture")
+```
+
+Retain that exact root in the acceptance receipt and native driver's allowlist;
+do not infer the app/fixture from Bundle ID alone. Archive logs only after close.
+
+Apply the same rule to native XCTest hosts. `MESHCHAN_TEST_HOST=disabled-owner-v1`
+prevents a storage owner from opening; it does not make a test bundle located in
+Documents exempt from macOS file-access prompts. Run Xcode from the external run
+directory with an absolute workspace path and `-derivedDataPath` under that run
+directory. Before launching tests, inspect build settings and the generated
+`.xctestrun` to verify that the host, products and test bundle resolve outside
+Documents, and retain the existing TestAction isolation configuration. `/tmp`
+and `/private/tmp` may name the same directory; compare canonical paths. Keep
+Xcode stdout/stderr and result bundles outside Documents as well, then archive
+evidence after the test host exits. Do not launch a checkout-local host merely
+because the product GUI fixture has already moved.
+
+This is a test-location choice, not a change to the product's Application Support
+default. Never open the default database for GUI validation or copy production
+data into a fixture. Do not solve test permission prompts by changing macOS
+privacy/security settings, granting Full Disk Access, changing signing, or
+repeatedly asking the user to approve Documents access. Move a fixture only after
+normal close and confirmed owner release; then update all PID/argv guards and
+reopen explicitly at the new owned path. A live-owner fixture is not a file-copy
+snapshot. Use unique directories for new acceptance rounds.
+
+Before every native UI read/action, verify the exact live PID, Bundle ID and
+`--data-dir`. After Quit, use only OS process state and existing logs; do not read
+a closed app through a tool that may relaunch it without fixture arguments.
+
+On this test Mac, the user confirmed on November 14, 2026 that **Command+Space
+switches input sources**. **Control+Space opens Raycast** and must not be used
+as an input-source shortcut. Caps Lock is additionally configured for quick
+Pinyin/ABC switching. The reusable personal Codex skill is `$macos-pinyin-input`
+at `~/.codex/skills/macos-pinyin-input/SKILL.md`; these are local user bindings,
+not universal macOS defaults.
+
+If the wrong shortcut opened Raycast, dismiss it with Escape without executing
+a search result. Verify actual keyboard-focus ownership before resuming test
+input: an overlay can receive keys while the underlying app still appears to be
+the foreground process. Foreground PID alone is insufficient.
+
+For actual Pinyin, the selected input-source ID alone is insufficient. Pinyin can
+be in an ABC/English state, producing ordinary Latin letters rather than marked
+text. On the current test Mac, the user configured **Caps Lock to switch quickly
+between Pinyin and ABC**. Selecting Pinyin may therefore still require one quick
+Caps Lock press. This is an existing user configuration, not a universal shortcut;
+confirm it for each machine and do not change keyboard or security preferences.
+
+Establish the intended state in the focused owned-fixture field. Verify visible
+composition underline/candidate UI and natural Chinese candidate commit, rather
+than counting pasted Chinese, unmarked `zhongwen`, or a successful TIS selection
+as IME evidence. Capture preedit, the deferred Save/navigation/quit attempt, and
+natural commit separately. Use real keyboard/pointer input; AX text-value writes
+are not proof of Flutter buffer changes. Preserve clipboard contents in memory,
+and restore the user's latest intended input mode after testing. User input-mode
+steering during an active run supersedes the mode recorded at its beginning.
+Recheck when moving to another field: in the 1D.5 settings limit field, selecting
+Pinyin still produced Latin text until the user's Caps Lock toggle was used.
+An automation preflight that detects Latin text must stop before exercising its
+Save/leave action, reset only its own fixture input, and establish actual marked
+text before retrying. Do not count the rejected preflight as composition coverage.
+
+The 1D.5 native follow-up driver uses System Events/CGEvent only after explicit
+user authorization, with exact owned-fixture guards and existing trusted input
+permissions. If those permissions are unavailable, record BLOCKED and stop native
+input; do not request or alter system security settings automatically. See the
+[1D.5 record](validation/phase-1d5-profiles-settings.md) for the concrete evidence.

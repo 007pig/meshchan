@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'probe_request.dart';
 import 'drafts/editor.dart';
 import 'device/view.dart';
+import 'diagnostics/view.dart';
 import 'profiles/view.dart';
 import 'drafts/view.dart';
 import 'drafts/quit_coordinator.dart';
@@ -185,6 +186,14 @@ class _NavigationState extends State<_Navigation> {
                       editor: quit!.profiles,
                       preview: quit!.preview,
                       prompt: prompt,
+                    ),
+                  )
+                else if (selected == 2 && quit != null)
+                  Expanded(
+                    child: DiagnosticsView(
+                      model: quit!.diagnostics,
+                      profiles: quit!.profiles,
+                      chooseDevice: () => navigate(1),
                     ),
                   )
                 else if (selected == 1 && quit != null)

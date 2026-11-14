@@ -108,6 +108,182 @@ void main() {
     expect(value.resourcesReleased, false);
     await op.streamsClose();
   });
+  test('final summary repairs missed broadcasts and rejects late pending regressions', () async {
+    final op = ControlledRecording();
+    final adapter = RecordingAdapter(op, 2, (_) {});
+    final finalCleanup = releasedCleanup(CleanupState.succeeded);
+    op.cleanupValue.complete(finalCleanup);
+    await Future<void>.delayed(Duration.zero);
+    op.cleanups.add(releasedCleanup(CleanupState.pending));
+    final result = finishedResult(saveFailed: true);
+    op.result.complete(result);
+    final value = await adapter.settled;
+    expect(value.coreCleanup, CleanupState.succeeded);
+    expect(value.saves.length, result.saves.length);
+    expect(value.coreDoneObserved, true);
+    await op.streamsClose();
+  });
+  test(
+    'known scope failures block health even while aggregate is pending',
+    () async {
+      final op = ControlledRecording();
+      final adapter = RecordingAdapter(op, 3, (_) {});
+      op.cleanups.add(
+        CleanupSummary(
+          core: CleanupScopeSummary(state: CleanupState.pending),
+          hostSubscriptions: CleanupScopeSummary(
+            state: CleanupState.pending,
+            failures: const [
+              FailureSummary(
+                domain: FailureDomain.host,
+                kind: FailureKind.cleanup,
+              ),
+            ],
+          ),
+          aggregate: CleanupState.pending,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(adapter.snapshot.resourceUncertainty, true);
+      expect(adapter.snapshot.cleanup!.hostSubscriptions.failureCount, 1);
+      op.cleanups.add(adapter.snapshot.cleanup!);
+      await Future<void>.delayed(Duration.zero);
+      expect(adapter.snapshot.cleanup!.hostSubscriptions.failureCount, 1);
+      op.result.complete(finishedResult());
+      await adapter.settled;
+      await op.streamsClose();
+    },
+  );
+  for (final ping in [
+    const PingSummary(
+      reason: LogicalReason.sendFailed,
+      matchingPongObserved: true,
+      exactContentValidated: true,
+      firstMatchingPongElapsedUs: 50,
+      roundTripSucceeded: false,
+    ),
+    const PingSummary(
+      reason: LogicalReason.completed,
+      matchingPongObserved: true,
+      exactContentValidated: true,
+      firstMatchingPongElapsedUs: 70,
+      applicationRttUs: 70,
+      roundTripSucceeded: true,
+    ),
+  ]) {
+    test(
+      'frozen PONG facts survive independent cleanup/save failure: ${ping.reason}',
+      () async {
+        final op = ControlledRecording();
+        final adapter = RecordingAdapter(op, 4, (_) {});
+        final base = finishedResult(
+          saveFailed: true,
+          cleanup: CleanupState.failed,
+        );
+        op.result.complete(
+          RecordedResult(
+            logical: ping,
+            cleanup: base.cleanup,
+            registration: base.registration,
+            logicalSave: base.logicalSave,
+            cleanupSave: base.cleanupSave,
+            saves: base.saves,
+          ),
+        );
+        final value = await adapter.settled;
+        expect(identical(value.summary, ping), true);
+        expect(
+          (value.summary as PingSummary).applicationRttUs,
+          ping.applicationRttUs,
+        );
+        expect(value.resourcesReleased, false);
+        await op.streamsClose();
+      },
+    );
+  }
+  test(
+    'zero responder counters and missing last send remain distinct',
+    () async {
+      final op = ControlledRecording();
+      final adapter = RecordingAdapter(op, 5, (_) {});
+      final base = finishedResult();
+      const response = RespondSummary(
+        reason: LogicalReason.completed,
+        listenStopReason: ListenStopReason.durationElapsed,
+        responseAttempts: 0,
+        localResponsesConfirmed: 0,
+        processedEntries: 0,
+      );
+      op.result.complete(
+        RecordedResult(
+          logical: response,
+          cleanup: base.cleanup,
+          registration: base.registration,
+          logicalSave: base.logicalSave,
+          cleanupSave: base.cleanupSave,
+          saves: base.saves,
+        ),
+      );
+      final value = await adapter.settled;
+      final summary = value.summary as RespondSummary;
+      expect(summary.responseAttempts, 0);
+      expect(summary.lastSend, null);
+      expect(summary.reception, null);
+      await op.streamsClose();
+    },
+  );
+  test(
+    'all app subscriptions cancel independently; failed cancel quarantines',
+    () async {
+      final op = FailingCancellationRecording();
+      final adapter = RecordingAdapter(op, 6, (_) {});
+      op.result.complete(finishedResult());
+      final value = await adapter.settled;
+      expect(op.cancellations, 2);
+      expect(value.observerCleanupFailureCount, 1);
+      expect(value.observerCleanup, CleanupState.failed);
+      expect(value.resourcesReleased, false);
+      await op.streamsClose();
+    },
+  );
+  test(
+    'named final cleanup save cannot regress even without finalCleanup',
+    () async {
+      final op = ControlledRecording();
+      final adapter = RecordingAdapter(op, 8, (_) {});
+      const failure = RecordingSave(
+        RecordingPhase.cleanup,
+        RecordingSaveState.failed,
+        error: CoreException(CoreErrorCode.storageWriteFailed),
+      );
+      op.cleanupSaveValue.complete(failure);
+      await Future<void>.delayed(Duration.zero);
+      op.saves.add(
+        const RecordingSave(
+          RecordingPhase.cleanup,
+          RecordingSaveState.committed,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(adapter.snapshot.cleanupSave!.state, RecordingSaveState.failed);
+      final base = finishedResult();
+      op.result.complete(
+        RecordedResult(
+          logical: base.logical,
+          cleanup: base.cleanup,
+          registration: base.registration,
+          logicalSave: base.logicalSave,
+          cleanupSave: failure,
+          saves: const [failure],
+        ),
+      );
+      expect(
+        (await adapter.settled).cleanupSave!.state,
+        RecordingSaveState.failed,
+      );
+      await op.streamsClose();
+    },
+  );
 }
 
 CleanupSummary releasedCleanup([
@@ -143,6 +319,21 @@ RecordedResult finishedResult({
 );
 
 class ControlledRecording implements RecordedOperation {
+  ControlledRecording() {
+    // A conforming operation settles its named signals before done. Individual
+    // tests may complete them earlier to control observation order.
+    result.future.then<void>((v) {
+      if (!preparedValue.isCompleted) preparedValue.complete(v.registration);
+      if (!logicalValue.isCompleted) logicalValue.complete(v.logical);
+      if (!logicalSaveValue.isCompleted) {
+        logicalSaveValue.complete(v.logicalSave);
+      }
+      if (!cleanupValue.isCompleted) cleanupValue.complete(v.cleanup);
+      if (!cleanupSaveValue.isCompleted) {
+        cleanupSaveValue.complete(v.cleanupSave);
+      }
+    }, onError: (Object _, StackTrace _) {});
+  }
   final preparedValue = Completer<RecordingSave>();
   final logicalValue = Completer<LogicalSummary?>();
   final logicalSaveValue = Completer<RecordingSave>();
@@ -178,4 +369,23 @@ class ControlledRecording implements RecordedOperation {
     await cleanups.close();
     await saves.close();
   }
+}
+
+class FailingCancellationRecording extends ControlledRecording {
+  int cancellations = 0;
+  late final first = StreamController<CleanupSummary>(
+    onCancel: () async {
+      cancellations++;
+      throw StateError('PRIVATE /dev/path route content');
+    },
+  );
+  late final second = StreamController<RecordingSave>(
+    onCancel: () async {
+      cancellations++;
+    },
+  );
+  @override
+  Stream<CleanupSummary> get cleanupUpdates => first.stream;
+  @override
+  Stream<RecordingSave> get saveUpdates => second.stream;
 }

@@ -968,3 +968,85 @@ preflight. The focused macOS mouse regression covers all three options. Future
 Start and record controls must retain this ordering as well as the gate/quit
 invariants. Native GUI evidence and software callbacks remain separate layers;
 see the unlocked follow-up in the 1D.6 validation record.
+
+## 1D.7 recorded diagnostic implementation
+
+`DiagnosticsModel` is owned by the sole application quit coordinator alongside
+Device, Drafts, Profiles and offline preview. It starts in PING, preserves
+presence-sensitive overrides, and provides finite Responder as the only other
+execution operation. PING invocation content remains outside presets and Drafts.
+`ParameterPreview` now accepts an initial operation and invalidates late selection
+and preview responses when input changes. Neither model creation nor navigation
+enumerates ports. Diagnostics reads `DeviceModel.selected`, exact availability,
+staleness and shared runtime admission; device-check budgets remain independent.
+
+The invocation-overrides expansion controller checks live composition before
+collapsing. Marked input keeps its editor mounted and focused; committing or
+canceling composition permits ordinary collapse again. The widget owns only this
+presentation controller, while input and recording lifetimes remain application
+owned. A build-time enabled flag or reopening after collapse is not the guard.
+
+`StartRecordedDiagnostic` carries a host attempt ID, exact local path and immutable
+public Ping/Respond request. `DiagnosticHandle.accepted` is a short admission
+exchange. The worker validates subtype/identity/state, synchronously acquires a
+generation-scoped shared device lease and installs the initial resolving snapshot
+and complete `_deviceWork` barrier before scheduling resolution. Only resolution
+joins the database queue to preserve earlier accepted CRUD order. Control requests
+bypass that queue. The worker resolves again and passes immutable effective input
+to public `record()` with a fresh lazy serial factory and app/build version.
+The core registration commit remains the only factory admission authority.
+
+The main controller observes fast admission errors immediately and keeps the
+first pending Start's latch when later Starts are rejected. Until the matching
+worker attempt arrives, the UI distinguishes the new request from retained older
+results. An unknown ACK outcome preserves the new host identity and frozen input;
+it is not treated as rejection. A bounded local port association stays tied to
+the matching observed attempt and never enters the safe result subtree.
+
+`CancelRecordedDiagnostic` binds worker generation and host attempt ID. Before
+record it latches intent and waits for accepted resolution to settle without
+recording; after record it invokes existing core cancellation immediately without
+awaiting the logical Future in an RPC. It does not call global Stop. Core run ID
+comes only from the committed registration snapshot. Record-before-prepared cancel
+can still create a real canceled record with notRequired cleanup. Stop/shutdown
+has a separate irreversible latch, including across delayed ACKs and finalizers.
+
+`RecordingAdapter` immediately observes both public streams and all named Futures.
+Its final barrier includes named observation settlement, `done`, cancellation
+observation and independent cancellation of each app subscription. `done` repairs
+missed broadcasts and supplies the authoritative save-attempt sequence. Final
+cleanup observations reject late intermediate updates. Public immutable typed
+logical/cleanup summaries and safe committed `DiagnosticRun` values retain nullable
+facts and controlled failures; raw requests/effective parameters never enter this
+result subtree. Core-managed host subscriptions and app observers are separate.
+
+Device release requires full adapter settlement, trusted observation and all
+three core cleanup states succeeded/notRequired. Known failures, final unknown
+cleanup or explicit cleanupUnconfirmed prevent release and quarantine the lease.
+A pre-record attempt can release only after its accepted local work settles with
+no resource uncertainty. Ordinary save or logical failure alone does not imply a
+resource fault. Device View reports a current diagnostic occupation independently
+of historical check information.
+
+The healthy occupied database exception now recognizes the tracked recording
+attempt from resolve through final settlement, including initial unconfirmed and
+normal pending cleanup. Known scope failures, final unknown cleanup, observer
+failure and explicit cleanupUnconfirmed block it. Existing target/session/stable-ID
+binding and one-use final Save remain intact. Continue resumes only allowed
+admission; it cannot undo real Stop. Shutdown waits the full device barrier,
+accepted database work, public maintenance wait and storage close, then owner
+release acknowledgement and actual worker exit. No final-unpin notification is
+invented; storage close retains its final drain responsibility.
+
+### 1D.8 handoff
+
+Use public history repositories for durable lists/details and export. Session
+snapshots are a different source and retain facts that a failed save may not have
+persisted. Preserve registration/logical/cleanup attempts, `finalCleanup` versus
+commit, nullable facts and the safe summary allowlist. Confirmed resource release
+and successful persistence are independent. Recovery never reruns PING/Responder
+and never establishes actual cleanup in the prior process. Maintenance is separate
+from committed saves; public wait observes requested work only. Keep the shared
+gate, sole storage owner, application lifecycle, explicit session port selection
+and absence of automatic device activity. No history UI/export or 1D.11 hardware
+stability acceptance is delivered by this step.

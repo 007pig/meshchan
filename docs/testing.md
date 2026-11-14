@@ -1301,3 +1301,36 @@ isolated native count is 11. Native automation must not redundantly raise or
 reactivate a window during a live preedit assertion. Preserve failed preflights
 and distinguish actual USB info success from a safely cleaned initialization
 failure; the 1D.6 record documents both outcomes on the explicitly selected port.
+
+## Recorded diagnostic checks (1D.7)
+
+Run app tests sequentially with native asset builds, and add the deterministic
+hardware-free process gate:
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub --concurrency=1)
+python3 apps/meshchan_app/tool/check_diagnostic_process.py --dart "$(command -v dart)"
+```
+
+The dedicated test-only worker builds public fake transports and real owned
+SQLite inside its isolate. It covers delayed admission ACK, real PING/PONG,
+resolve cancellation without record/factory, stop-latch retention, same-stack
+post-record cancellation before factory admission, pending cleanup/owner
+contention, three target-bound final saves/Continue, independent reopen and
+cleanup-failure quarantine preserving successful RTT. Fault-child exit is labeled
+reclamation and is never a normal-close pass. Product arguments expose no fake
+entry. The widget/core-worker tests additionally cover finite zero-response
+Responder, all nullable result fields, subscription cancellation failure and
+actual macOS pointer-down composing guards. See the 1D.7 validation record for
+actual current counts, limitations and toolchain receipts.
+
+A bridge regression withholds both the occupied snapshot and Start ACK, rejects
+repeated Starts locally, and verifies the earlier pending latch and responsive
+control channel. Model regressions preserve an unknown Start's host identity and
+frozen request while keeping any retained prior result's port association intact.
+
+Extend VM product `scenario.py preedit/defer/commit diagnostic` for actual Pinyin
+in PING content; each commit still requires separate original-image/focus review.
+VM runs do not enumerate or open hardware. Real USB/RF diagnostics require current
+explicit host port and wireless scope authorization; historical check permission
+is insufficient.

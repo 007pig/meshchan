@@ -60,7 +60,9 @@ class Scenario:
         self.expect('navigation-return','Selected port: None')
 
     def preedit(self, target):
-        if target == 'device':
+        if target == 'diagnostic':
+            self.act('nav','Diagnostics'); self.act('click','notProvided'); self.act('click','Text (UTF-8)'); self.field(0,'')
+        elif target == 'device':
             self.act('nav','Device'); self.field(0,'5')
         else:
             self.act('nav','Drafts'); self.act('click','New')
@@ -76,7 +78,10 @@ class Scenario:
         print('REVIEW_REQUIRED: inspect original screenshot and focused-field JSON before continuing')
 
     def defer(self, target, action):
-        if action == 'navigation': self.act('nav','Drafts' if target == 'device' else 'Device')
+        if target == 'diagnostic' and action == 'operation': self.act('pointer','ping')
+        elif target == 'diagnostic' and action == 'content': self.act('pointer','text')
+        elif target == 'diagnostic' and action == 'start': self.act('pointer','Start and record')
+        elif action == 'navigation': self.act('nav','Drafts' if target in ['device','diagnostic'] else 'Device')
         elif action == 'quit': self.act('key','q','command')
         elif target == 'draft' and action == 'save': self.act('pointer','Save')
         else: raise ValueError('Unsupported composing action')
@@ -102,8 +107,36 @@ class Scenario:
         assert restored['sourceID'] == self.product.state['products'][self.mode][target + 'OriginalSource']
         if target == 'device':
             self.expect('device-committed-invalid','Use decimal integers'); self.field(0,'5')
+        elif target == 'diagnostic':
+            self.act('nav','Device'); self.act('nav','Diagnostics'); self.act('field','0')
+            assert self.focus('diagnostic-navigation-retained')['value'] == '中文'
+            self.expect('diagnostic-no-port','Selected session port: None')
+            self.act('click','Preview parameters'); self.expect('diagnostic-preview-rejected','invalid_input')
         else:
             self.act('key','s','command'); self.expect('draft-saved','Saved')
+
+    def diagnostic_quit(self, choice):
+        if choice not in ['Save','Discard']:
+            raise ValueError('Choose Save or Discard')
+        self.act('click','ping'); self.act('click','Finite Responder')
+        self.expect('respond-choice','respond')
+        self.act('click','respond'); self.act('click','PING'); self.act('field','0')
+        assert self.focus('ping-return')['value'] == '中文'
+        self.act('nav','Drafts'); self.act('click','New')
+        self.field(0,'diagnosticgui'); self.field(1,'abc')
+        self.act('key','q','command'); self.expect('dirty-continue','Leave this draft?')
+        self.capture('dirty-continue'); self.act('click','Continue editing')
+        self.expect('continued-offline','Storage ready')
+        assert self.focus('continued-content')['value'] == 'abc'
+        self.act('key','q','command'); self.expect('dirty-' + choice,'Leave this draft?')
+        self.capture('dirty-' + choice); self.act('click',choice)
+        for _ in range(50):
+            try:
+                self.product.settled(self.mode)
+                return
+            except (ValueError,subprocess.CalledProcessError) as error:
+                last = error; time.sleep(0.1)
+        raise ValueError('Diagnostic navigation quit did not settle: ' + str(last))
 
     def quit_decision(self, choice):
         # Actual Latin input after source restoration proves the source is usable.
@@ -153,7 +186,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config',required=True); p.add_argument('--evidence',required=True)
     p.add_argument('mode',choices=MODES)
-    p.add_argument('stage',choices=['initial','preedit','defer','commit','quit','discard'])
+    p.add_argument('stage',choices=['initial','preedit','defer','commit','quit','discard','diagnostic-quit'])
     p.add_argument('value',nargs='?'); p.add_argument('action',nargs='?')
     p.add_argument('--visual-confirmed',action='store_true')
     args = p.parse_args()
@@ -166,6 +199,7 @@ def main():
         scenario.commit(args.value)
     elif args.stage == 'quit': scenario.quit_decision(args.value)
     elif args.stage == 'discard': scenario.discard()
+    elif args.stage == 'diagnostic-quit': scenario.diagnostic_quit(args.value)
 
 
 if __name__ == '__main__': main()

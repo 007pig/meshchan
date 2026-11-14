@@ -6,6 +6,7 @@ import 'editor.dart';
 import '../profiles/editor.dart';
 import '../profiles/preview.dart';
 import '../device/model.dart';
+import '../diagnostics/model.dart';
 
 /// Both native and Flutter exit requests share this application-owned decision.
 /// Cancel is never cached. Shutdown retains the runtime's late-release semantics.
@@ -14,19 +15,26 @@ final class DraftQuitCoordinator {
     : editor = DraftEditor(runtime),
       preview = ParameterPreview(runtime),
       device = DeviceModel(runtime) {
+    diagnostics = DiagnosticsModel(runtime, device);
     profiles = ProfilesEditor(
       runtime,
-      invalidatePreview: preview.storageChanged,
+      invalidatePreview: () {
+        preview.storageChanged();
+        diagnostics.storageChanged();
+      },
     );
   }
   final AppRuntime runtime;
   final DraftEditor editor;
   final ParameterPreview preview;
   final DeviceModel device;
+  late final DiagnosticsModel diagnostics;
   late final ProfilesEditor profiles;
   bool auxiliaryActive = false;
   Future<bool> leaveCurrent(LeavePrompt show) async {
-    if (device.composing || preview.composing) return false;
+    if (device.composing || diagnostics.composing || preview.composing) {
+      return false;
+    }
     return auxiliaryActive ? profiles.leave(show) : editor.leave(show);
   }
 
@@ -34,6 +42,7 @@ final class DraftQuitCoordinator {
     editor.dispose();
     profiles.dispose();
     preview.dispose();
+    diagnostics.dispose();
     device.dispose();
   }
 
@@ -56,6 +65,7 @@ final class DraftQuitCoordinator {
       return false;
     }
     if (device.composing ||
+        diagnostics.composing ||
         profiles.deferDepartureForComposition() ||
         preview.composing) {
       return false;

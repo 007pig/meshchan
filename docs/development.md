@@ -3944,3 +3944,28 @@ user authorization, with exact owned-fixture guards and existing trusted input
 permissions. If those permissions are unavailable, record BLOCKED and stop native
 input; do not request or alter system security settings automatically. See the
 [1D.5 record](validation/phase-1d5-profiles-settings.md) for the concrete evidence.
+
+## Finite device check development (1D.6)
+
+The product typed boundary is `refreshDevicePorts`, `startDeviceCheck` (immediate
+ID plus admission Future), `cancelDeviceCheck(id)` and the application runtime
+snapshot stream. Product requests always use the existing worker and owner;
+`tool/device_fixture.dart` and `device_process.dart` are hardware-free test-side
+worker injection, not GUI launch flags or developer probe requests. New device
+work must join the device shutdown barrier before its first asynchronous boundary.
+Do not await long native cleanup in the ordinary RPC or DB queue.
+
+Use the [device test gate](testing.md#finite-device-checks-1d6) with a new owned
+fixture. Actual GUI/native tests require external canonical paths for the complete
+app, fixture, cwd, logs, driver and XCTest products/host. The checkout is under
+Documents on this Mac, so checkout-local build fixtures alone do not provide
+that isolation. Keep local evidence under ignored `build/phase-1d6/<run-id>/`
+and its external owned run root; preserve prior protected/default-path incidents.
+No default database or system setting is part of device-flow validation.
+
+Actual USB access requires an exact current explicit selection, followed by an
+explicit Check. Metadata refresh does not authorize opening a result. The finite
+check sends only the public session initialization pair and immediately requests
+close. Drivers can reset boards on open; no passive/no-side-effect claim, RF
+command, auto retry, inbox drain or unsolicited reset is appropriate. Missing
+hardware evidence is separate from software completion and must remain NOT_RUN.

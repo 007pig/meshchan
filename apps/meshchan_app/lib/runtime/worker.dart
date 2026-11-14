@@ -7,6 +7,7 @@ import 'package:meshcore_link/meshcore_link.dart';
 
 import 'protocol.dart';
 import 'recording_adapter.dart';
+import 'device_check.dart';
 
 /// Production entry deliberately captures no host resources or closures.
 void runtimeWorkerEntry(WorkerBootstrap bootstrap) {
@@ -48,13 +49,25 @@ final class WorkerDispatcher {
     required this.send,
     required this.finish,
     Future<CoreStorage> Function(Directory)? openStorage,
-  }) : _openStorage =
+    List<SerialPortDescription> Function()? enumeratePorts,
+    CompanionTransport Function(String)? createCheckTransport,
+  }) : _enumeratePorts = enumeratePorts ?? SerialPorts().listPorts,
+       _createCheckTransport =
+           createCheckTransport ?? ((path) => SerialTransport(portPath: path)),
+       _openStorage =
            openStorage ??
            ((directory) => CoreStorage.open(dataDirectory: directory));
   final WorkerBootstrap bootstrap;
   final void Function(WorkerEvent) send;
   final void Function() finish;
   final Future<CoreStorage> Function(Directory) _openStorage;
+  final List<SerialPortDescription> Function() _enumeratePorts;
+  final CompanionTransport Function(String) _createCheckTransport;
+  FiniteDeviceCheck? _check;
+  DeviceCheckSnapshot? _checkSnapshot;
+  DeviceInformation? _lastDeviceInfo;
+  int _lastCheckId = 0;
+  bool _permanentStop = false;
   final gate = DeviceGate();
   CoreStorage? _storage;
   DiagnosticHistory? _history;
@@ -90,6 +103,8 @@ final class WorkerDispatcher {
     error: _error,
     maintenance: _maintenance,
     operation: _operation,
+    deviceCheck: _checkSnapshot,
+    lastDeviceInfo: _lastDeviceInfo,
   );
   void _emit() {
     _sequence++;
@@ -166,6 +181,109 @@ final class WorkerDispatcher {
     _lastId = id;
     final request = message.request;
     switch (request) {
+      case RefreshDevicePorts():
+        if (!_canAdmit) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.stopped),
+          );
+          return;
+        }
+        int lease;
+        try {
+          lease = gate.acquire();
+        } catch (e) {
+          _reply(id, error: e);
+          return;
+        }
+        _emit();
+        DevicePortsValue result;
+        try {
+          result = DevicePortsValue(request.generation, _enumeratePorts());
+        } catch (_) {
+          result = DevicePortsValue(
+            request.generation,
+            [],
+            failure: const DeviceFailure('enumerationFailed'),
+          );
+        }
+        // Metadata APIs do not open ports. Ordinary metadata errors are not
+        // evidence of an unknown device connection or an owner fault.
+        gate.settle(lease, released: true);
+        _emit();
+        _reply(id, value: result);
+      case StartDeviceCheck():
+        if (!_canAdmit) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.stopped),
+          );
+          return;
+        }
+        if (request.id <= _lastCheckId ||
+            request.port.trim().isEmpty ||
+            !request.options.valid) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.invalidState),
+          );
+          return;
+        }
+        int lease;
+        try {
+          lease = gate.acquire();
+        } catch (e) {
+          _reply(id, error: e);
+          return;
+        }
+        _lastCheckId = request.id;
+        final check = _check = FiniteDeviceCheck(
+          request.id,
+          request.port,
+          request.options,
+          createTransport: _createCheckTransport,
+          publish: (value) {
+            if (gate.generation != lease) return;
+            _checkSnapshot = value;
+            if (value.info != null) _lastDeviceInfo = value.info;
+            _emit();
+          },
+        );
+        _checkSnapshot = check.snapshot;
+        // Install the WHOLE barrier before scheduling resource creation.
+        final completion = Completer<void>();
+        _deviceWork = completion.future;
+        _emit();
+        unawaited(
+          _runCheck(check, lease).then<void>(
+            (_) {
+              _deviceWork = null;
+              completion.complete();
+            },
+            onError: (Object _, StackTrace _) {
+              gate.settle(lease, released: false);
+              _phase = RuntimePhase.fault;
+              _error = const RuntimeFault(
+                host: CoordinationFault.observationFailed,
+                cleanupUnconfirmed: true,
+              );
+              _emit();
+              completion.complete();
+            },
+          ),
+        );
+        _reply(id, value: const Accepted());
+      case CancelDeviceCheck():
+        if (_check?.id != request.id) {
+          _reply(
+            id,
+            error: const RuntimeFault(host: CoordinationFault.staleRequest),
+          );
+        } else {
+          _check!.cancel();
+          _reply(id, value: const Accepted());
+        }
+
       case BeginDraftDecision():
         if (!_canAdmit || request.decision.generation <= _lastDecision) {
           _reply(
@@ -187,7 +305,7 @@ final class WorkerDispatcher {
             _stop ||
             _closing ||
             _storage?.state != StorageState.open ||
-            gate.state != DeviceGateState.free ||
+            !_offlineGateHealthy ||
             _phase == RuntimePhase.fault) {
           _reply(
             id,
@@ -310,7 +428,7 @@ final class WorkerDispatcher {
             !_closing &&
             _phase == RuntimePhase.ready &&
             _storage?.state == StorageState.open &&
-            gate.state == DeviceGateState.free;
+            _offlineGateHealthy;
         if (request.decision != null && !permitted) {
           _reply(
             id,
@@ -366,7 +484,7 @@ final class WorkerDispatcher {
             error: const RuntimeFault(host: CoordinationFault.staleRequest),
           );
         } else {
-          _stopNow();
+          _stopNow(permanent: false);
           _reply(id, value: const Accepted());
         }
       case PauseAdmission():
@@ -374,11 +492,12 @@ final class WorkerDispatcher {
         _emit();
         _reply(id, value: const Accepted());
       case ResumeAdmission():
-        if (_closing ||
+        if (_permanentStop ||
+            _closing ||
             _decision != null ||
             _phase == RuntimePhase.fault ||
             _storage?.state != StorageState.open ||
-            gate.state != DeviceGateState.free) {
+            !_offlineGateHealthy) {
           _reply(
             id,
             error: const RuntimeFault(host: CoordinationFault.invalidState),
@@ -416,14 +535,42 @@ final class WorkerDispatcher {
     }
   }
 
-  void _stopNow() {
+  void _stopNow({bool permanent = true}) {
+    if (permanent) _permanentStop = true;
     _stop = true;
     _paused = true;
     if (!_closing) _phase = RuntimePhase.stopping;
     _adapter?.cancel();
+    _check?.cancel();
     // Receipt is distinct from application at the next awaited checkpoint.
     _stopApplied =
         _adapter != null || (_bootstrapSettled && _deviceWork == null);
+    _emit();
+  }
+
+  // Only this tracked finite check grants a database-only occupied exception.
+  bool get _offlineGateHealthy =>
+      gate.state == DeviceGateState.free ||
+      (gate.state == DeviceGateState.occupied &&
+          _check != null &&
+          _deviceWork != null &&
+          _checkSnapshot?.settled == false &&
+          _phase == RuntimePhase.ready &&
+          _owner == OwnerFact.held &&
+          _checkSnapshot?.observerFailure == null &&
+          _checkSnapshot?.sessionCleanup != DeviceCleanup.failed);
+
+  Future<void> _runCheck(FiniteDeviceCheck check, int lease) async {
+    await check.run();
+    gate.settle(lease, released: check.snapshot.released);
+    if (!check.snapshot.released) {
+      _phase = RuntimePhase.fault;
+      _error = const RuntimeFault(
+        host: CoordinationFault.releaseUnconfirmed,
+        cleanupUnconfirmed: true,
+      );
+    }
+    if (_stop) _stopApplied = true;
     _emit();
   }
 
@@ -457,7 +604,7 @@ final class WorkerDispatcher {
       !_closing &&
       _phase == RuntimePhase.ready &&
       _storage?.state == StorageState.open &&
-      gate.state == DeviceGateState.free;
+      _offlineGateHealthy;
 
   void _observeMaintenance() {
     unawaited(

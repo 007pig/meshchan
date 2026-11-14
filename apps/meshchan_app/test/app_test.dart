@@ -66,7 +66,8 @@ void main() {
         expect(
           find.textContaining(switch (phase) {
             RuntimePhase.busy => 'Directory in use',
-            RuntimePhase.fault => 'Runtime fault',
+            RuntimePhase.fault =>
+              'Runtime fault — resource release may be unknown',
             _ => 'Closing',
           }),
           findsOneWidget,

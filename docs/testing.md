@@ -1227,3 +1227,48 @@ Pinyin acceptance. Do not assume the shortcut on other machines or change their
 configuration. Restore the user's latest intended mode, including steering made
 while a test is running. Record the source/mode, actions, screenshots, and exact
 independent committed read after normal close.
+
+## Finite device checks (1D.6)
+
+Run the app suite sequentially (`dart_test.yaml` retains `concurrency:1`) and the
+new process gate, in addition to the existing runtime/Draft/Profile gates:
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub)
+python3 apps/meshchan_app/tool/check_device_process.py --dart "$(command -v dart)"
+```
+
+On this Mac use `/opt/homebrew/bin/python3` (verified stable 3.15+), bundled Dart
+and the existing Flutter SDK. `device_check_test.dart` combines the actual public
+session with an app-owned public `CompanionTransport`; the entire enumerator is
+injected, never just fake paths passed to native metadata handles. Tests cover
+separate information/cleanup results, constructor ownership, observer cleanup,
+initialization pair/no inbox, stage cancellation and timeout/no retry.
+`device_dispatcher_test.dart` checks authoritative raw admission, metadata errors,
+stop before resource construction and stale leases. `device_worker_test.dart`
+and `device_quit_test.dart` use the production dispatcher/controller, a real
+isolate, SQLite, blocked cleanup, delayed/lost ack, scoped cancellation, final
+save/Continue and coalesced Quit. `check_device_process.py` adds independent
+contender/reopen processes and a quarantined fault child. Explicit fault-child
+process exit is reclamation, never evidence of normal release. No test entry
+performs native serial enumeration/open by default.
+
+GUI evidence must use the complete external owned app/fixture/cwd/log/driver and
+native XCTest setup described above. Actual Refresh is an explicit metadata-only
+action. Never select/open an enumerated path on the user's behalf. Actual USB
+Check needs an exact path explicitly selected in the current task/app session;
+no hint, historical path or unique result grants that permission. Mark USB
+NOT_RUN when no such selection/hardware exists. Ready/info proves initialization,
+not authentication, radio TX/RX or a round trip. See the
+[1D.6 evidence](validation/phase-1d6-device-check.md) for tested layers and limits.
+
+The unlocked 1D.6 follow-up adds a focused **macOS mouse** regression for all
+Device inputs: use the EditableText descendant of the actual TextField, a valid
+selection/composing range and PointerDeviceKind.mouse. A touch-only or unfocused
+controller test misses default desktop outside-tap behavior. Actual Debug and
+Release then verified underlined Pinyin/candidates, physical menu/navigation/
+Cmd+Q deferral and natural exact commit. Final app count is 159; final-source
+isolated native count is 11. Native automation must not redundantly raise or
+reactivate a window during a live preedit assertion. Preserve failed preflights
+and distinguish actual USB info success from a safely cleaned initialization
+failure; the 1D.6 record documents both outcomes on the explicitly selected port.

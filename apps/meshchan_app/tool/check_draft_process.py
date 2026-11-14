@@ -24,7 +24,7 @@ def main():
         return [args.dart, 'run', target, mode, str(directory)]
 
     def run(mode, directory):
-        result = subprocess.run(command(mode, directory), cwd=root, text=True,
+        result = subprocess.run(command(mode, directory), cwd=evidence, text=True,
                                 capture_output=True, timeout=180)
         (evidence / (mode + '.log')).write_text(result.stdout + result.stderr)
         result.check_returncode()
@@ -33,7 +33,7 @@ def main():
             raise RuntimeError('Missing product process success: ' + mode)
         return lines[-1]
 
-    owner = subprocess.Popen(command('write', fixture), cwd=root, text=True,
+    owner = subprocess.Popen(command('write', fixture), cwd=evidence, text=True,
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     watchdog = threading.Timer(180, owner.terminate)
     watchdog.start()

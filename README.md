@@ -122,3 +122,5 @@ See the [1D.4 validation record](docs/validation/phase-1d4-drafts.md) for tested
 runtime, persistence, input and quit behavior and the handoff to presets/settings.
 
 The app also provides [complete profiles, settings and offline parameter preview](apps/meshchan_app/README.md#profiles-settings-and-offline-preview-1d5). See the [1D.5 validation record](docs/validation/phase-1d5-profiles-settings.md) for evidence and device-step boundaries.
+
+The macOS app also provides [explicit finite USB device checks](apps/meshchan_app/README.md#explicit-finite-device-checks-1d6): Refresh, select an exact port, initialize once, publish dated source information, and await actual close. See the [1D.6 validation record](docs/validation/phase-1d6-device-check.md) for software, native, GUI and USB evidence boundaries.

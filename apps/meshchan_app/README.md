@@ -55,7 +55,8 @@ logical completion do not release it. Final core/host/aggregate cleanup must all
 be `succeeded`/`notRequired`, and adapter observation must be sound, before release.
 `done` repairs missed broadcast events; final core unpin/drain still belongs to
 `CoreStorage.close()`. Pending/unconfirmed/failed release quarantines the gate.
-No product start-record or metadata button is exposed in this step. Test-only
+The 1D.3 checkpoint exposed no product start-record or metadata button;
+1D.6 adds the explicit metadata and finite-check flow described below. Test-only
 worker entries construct fake transports inside the worker and use the same
 dispatcher, gate, adapter and shutdown implementation.
 
@@ -396,3 +397,59 @@ Selecting the Pinyin input-source ID alone can still leave Latin input; verify
 actual marked text and candidates, using the existing shortcut if needed. Restore
 the user's latest intended mode and do not change keyboard preferences. See the
 [testing preflight](../../docs/testing.md#native-gui-preflight-storage-location-and-pinyinabc).
+
+## Explicit finite device checks (1D.6)
+
+Device is now a product flow: **Refresh → explicitly select an exact port →
+Check device → await actual close**. Startup, page navigation, presets, defaults,
+port hints and offline preview perform no serial enumeration or access. Refresh
+runs public `SerialPorts.listPorts()` in the existing worker under a short device
+lease. Empty results, per-item metadata warnings, a failed refresh and stale
+previous metadata have separate presentations. No first port is selected.
+Selecting a path grants only session-local permission for a later explicit Check;
+paths and USB metadata do not establish stable or authenticated device identity.
+
+The session-local options default to request **5 seconds**, initialization
+**15 seconds**, startup **0 milliseconds**. Request/initialization accept decimal
+integers 1–86400; startup accepts 0–86399999 and must be strictly less than the
+initialization budget in milliseconds. Raw invalid input is retained. Check
+freezes the path/options; edits and selection changes affect only the next check.
+These values are neither profile fields nor settings and require no final Save.
+
+Each Check constructs a fresh `SerialTransport` and `MeshCoreSession`, subscribes
+to session events before calling `connect()` once, and sends only the existing
+DEVICE_QUERY (app target 3) and APP_START (`Meshchan`) initialization pair. Opening
+and configuration can reset some boards, and initialization changes device-side
+session state. It is not a passive read. No inbox, PING, RF configuration,
+recording, history entry, retry, reconnect or extra probe is involved.
+
+Start acknowledges admission quickly. Cancel targets that check's host ID and
+acknowledges intent separately from worker application and resource release.
+Synchronous native calls cannot be immediately preempted. Cancellation does not
+stop offline CRUD. After complete information is observed, it is published with
+a fixed UTC time and source path, followed immediately by close. The UI displays
+local time with a timezone, signed dBm, kHz frequency, Hz bandwidth and raw
+protocol/coding-rate/mode codes. No public key, BLE PIN or frame crosses the app
+bridge. Last successful information remains historical after close or a later
+failure; selection, current/last attempt and history are independent.
+
+**Not connected** requires confirmed resource settlement. Initialization failure,
+session cleanup and host observer cleanup are separate facts. Pending close keeps
+the device gate occupied, while healthy offline work remains usable. Failed or
+unconfirmed cleanup quarantines the gate and vetoes normal quit. Navigation owns
+no resource lifetime. Dirty Draft/Profile/Settings quit Save and Continue can use
+the narrowly scoped database-only exception during a healthy tracked check;
+second device actions remain blocked. Genuine Stop/Shutdown is irreversible by
+Resume. Both native and Flutter Quit retain the existing shared close barrier.
+
+Hardware-free entry points and current evidence are documented in
+[testing](../../docs/testing.md#finite-device-checks-1d6) and the
+[1D.6 validation record](../../docs/validation/phase-1d6-device-check.md).
+
+The unlocked November 14 follow-up verified the final Debug/Release GUI, actual
+Pinyin, navigation, scoped USB cancel and dirty native quit using owned fixtures.
+It also fixed Device outside-tap composition preservation. Release obtained
+complete information twice on the explicitly selected USB path and closed
+normally; Debug's observed checks failed initialization but cleaned up normally.
+These distinct outcomes and the 159-test/11-XCTest final receipts are retained in
+the [validation follow-up](../../docs/validation/phase-1d6-device-check.md#unlocked-gui-and-explicitly-selected-usb-follow-up).

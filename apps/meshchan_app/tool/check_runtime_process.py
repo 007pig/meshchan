@@ -16,20 +16,24 @@ def reports(text):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dart', required=True)
+    parser.add_argument('--evidence-root', type=Path)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[3]
     app = root / 'apps/meshchan_app'
-    fixture = Path(tempfile.mkdtemp(prefix='meshchan-runtime-process-')).resolve()
+    evidence = (args.evidence_root or Path(tempfile.mkdtemp(prefix='meshchan-runtime-process-'))).resolve()
+    evidence.mkdir(parents=True, exist_ok=True)
+    fixture = Path(tempfile.mkdtemp(prefix='fixture-', dir=evidence)).resolve()
     target = str(app / 'tool/runtime_process.dart')
 
     def read():
         result = subprocess.run([args.dart, 'run', target, 'read', str(fixture)],
-                                cwd=root, text=True, capture_output=True, timeout=120)
+                                cwd=evidence, text=True, capture_output=True, timeout=120)
+        (evidence / ('read-' + str(len(list(evidence.glob('read-*.log')))) + '.log')).write_text(result.stdout + result.stderr)
         result.check_returncode()
         return reports(result.stdout)
 
     owner = subprocess.Popen([args.dart, 'run', target, 'hold', str(fixture)],
-                             cwd=root, text=True, stdin=subprocess.PIPE,
+                             cwd=evidence, text=True, stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     watchdog = threading.Timer(120, owner.terminate)
     watchdog.start()
@@ -49,6 +53,7 @@ def main():
         owner.stdin.write('close\n')
         owner.stdin.flush()
         tail, errors = owner.communicate(timeout=120)
+        (evidence / 'owner.log').write_text(tail + errors)
         if owner.returncode != 0 or not reports(tail)[-1]['released']:
             raise RuntimeError('Owner did not confirm release: ' + errors)
         reopened = read()

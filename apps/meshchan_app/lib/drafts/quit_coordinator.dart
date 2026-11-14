@@ -5,13 +5,15 @@ import '../runtime/protocol.dart';
 import 'editor.dart';
 import '../profiles/editor.dart';
 import '../profiles/preview.dart';
+import '../device/model.dart';
 
 /// Both native and Flutter exit requests share this application-owned decision.
 /// Cancel is never cached. Shutdown retains the runtime's late-release semantics.
 final class DraftQuitCoordinator {
   DraftQuitCoordinator(this.runtime, {this.afterShutdownIntent})
     : editor = DraftEditor(runtime),
-      preview = ParameterPreview(runtime) {
+      preview = ParameterPreview(runtime),
+      device = DeviceModel(runtime) {
     profiles = ProfilesEditor(
       runtime,
       invalidatePreview: preview.storageChanged,
@@ -20,10 +22,11 @@ final class DraftQuitCoordinator {
   final AppRuntime runtime;
   final DraftEditor editor;
   final ParameterPreview preview;
+  final DeviceModel device;
   late final ProfilesEditor profiles;
   bool auxiliaryActive = false;
   Future<bool> leaveCurrent(LeavePrompt show) async {
-    if (preview.composing) return false;
+    if (device.composing || preview.composing) return false;
     return auxiliaryActive ? profiles.leave(show) : editor.leave(show);
   }
 
@@ -31,6 +34,7 @@ final class DraftQuitCoordinator {
     editor.dispose();
     profiles.dispose();
     preview.dispose();
+    device.dispose();
   }
 
   final void Function()? afterShutdownIntent;
@@ -51,7 +55,9 @@ final class DraftQuitCoordinator {
         editor.confirming) {
       return false;
     }
-    if (profiles.deferDepartureForComposition() || preview.composing) {
+    if (device.composing ||
+        profiles.deferDepartureForComposition() ||
+        preview.composing) {
       return false;
     }
     if (editor.deferDepartureForComposition()) return false;

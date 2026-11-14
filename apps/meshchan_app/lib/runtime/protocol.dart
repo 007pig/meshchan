@@ -1,5 +1,10 @@
 import 'dart:isolate';
 
+import 'package:meshcore_link/meshcore_link.dart' show SerialPortDescription;
+
+import 'device_protocol.dart';
+export 'device_protocol.dart';
+
 import 'package:meshchan_core/meshchan_core.dart';
 
 enum RuntimePhase {
@@ -143,6 +148,8 @@ final class RuntimeSnapshot {
     this.error,
     this.maintenance,
     this.operation,
+    this.deviceCheck,
+    this.lastDeviceInfo,
   });
   final int generation, sequence;
   final RuntimePhase phase;
@@ -153,6 +160,8 @@ final class RuntimeSnapshot {
   final RuntimeFault? error;
   final MaintenanceSnapshot? maintenance;
   final OperationSnapshot? operation;
+  final DeviceCheckSnapshot? deviceCheck;
+  final DeviceInformation? lastDeviceInfo;
 }
 
 final class DraftSnapshot {
@@ -456,4 +465,32 @@ final class RestoreSettings extends RuntimeRequest {
 final class ResolveParameters extends RuntimeRequest {
   const ResolveParameters(this.request);
   final EffectiveParameterRequest request;
+}
+
+final class RefreshDevicePorts extends RuntimeRequest {
+  const RefreshDevicePorts(this.generation);
+  final int generation;
+}
+
+final class DevicePortsValue extends ReplyValue {
+  DevicePortsValue(
+    this.generation,
+    Iterable<SerialPortDescription> ports, {
+    this.failure,
+  }) : ports = List.unmodifiable(ports);
+  final int generation;
+  final List<SerialPortDescription> ports;
+  final DeviceFailure? failure;
+}
+
+final class StartDeviceCheck extends RuntimeRequest {
+  const StartDeviceCheck(this.id, this.port, this.options);
+  final int id;
+  final String port;
+  final DeviceCheckOptions options;
+}
+
+final class CancelDeviceCheck extends RuntimeRequest {
+  const CancelDeviceCheck(this.id);
+  final int id;
 }

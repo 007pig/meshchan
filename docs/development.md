@@ -1,5 +1,14 @@
 # Developer Guide
 
+## macOS VM GUI testing
+
+Use the [UTM macOS VM guide](macos-vm-gui-testing.md) and the repository's
+[GUI testing skill](../.agents/skills/macos-vm-gui-testing/SKILL.md) for
+guest-side native input, host-input isolation and real Pinyin composition.
+The guide includes installation, guest permissions, reusable scripts and
+historical evidence. TextEdit baseline success is separate from product GUI
+acceptance against an owned fixture.
+
 ## Offline draft editor checks (1D.4)
 
 The [app guide](../apps/meshchan_app/README.md#offline-drafts-1d4) describes explicit

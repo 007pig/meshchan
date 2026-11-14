@@ -20,9 +20,10 @@ before its commit; do not automate the visual approval flags.
 
 These optional interactive tests require an unlocked configured VM and are not
 ordinary CI entrypoints. They do not enumerate or open hardware by default.
-Explicit metadata Refresh is part of the product UI scenario; actual port
-selection/initialization is a separate, explicitly authorized step. A virtual
-SPICE port is not sufficient evidence of a physical USB mapping. Normal quit
+Real USB/serial tests, including native metadata Refresh, run on the host Mac
+under the user's current routing decision. The VM scenario does not click native
+Refresh and no longer accepts `check --port`. Use fake widget tests or host GUI
+acceptance for port menus that need metadata. Normal quit
 requires the application's resource-release/worker-exit receipt, followed by
 independent inspection of an external owned copy of its closed fixture.
 

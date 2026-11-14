@@ -54,9 +54,6 @@ class Scenario:
             assert self.focus('default-' + str(index))['value'] == value
         self.expect('device-no-selection','Selected port: None')
         self.capture('device-initial')
-        self.act('click','Refresh')
-        self.expect('device-explicit-refresh','Selected port: None')
-        self.capture('device-refresh')
         self.field(0,'0'); self.expect('invalid-request','Use decimal integers')
         self.field(0,'5'); self.field(2,'15000'); self.expect('invalid-startup','Use decimal integers')
         self.field(2,'0'); self.act('nav','Drafts'); self.act('nav','Device')
@@ -82,7 +79,6 @@ class Scenario:
         if action == 'navigation': self.act('nav','Drafts' if target == 'device' else 'Device')
         elif action == 'quit': self.act('key','q','command')
         elif target == 'draft' and action == 'save': self.act('pointer','Save')
-        elif target == 'device' and action == 'menu': self.act('pointer','Select a port')
         else: raise ValueError('Unsupported composing action')
         rows = self.state(target + '-deferred-' + action)
         assert not any(r.get('title','').startswith('Leave this') or r.get('value','').startswith('Leave this') for r in rows)
@@ -152,47 +148,14 @@ class Scenario:
                 last = error; time.sleep(0.1)
         raise ValueError('Discard quit did not settle: ' + str(last))
 
-    def check(self, port):
-        if not port or not port.strip(): raise ValueError('An explicitly authorized exact guest port is required')
-        self.act('nav','Device'); self.act('click','Refresh')
-        self.expect('hardware-before-selection','Selected port: None')
-        self.act('click','Select a port'); self.act('click',port)
-        rows = self.expect('hardware-selected','Selected port: ' + port)
-        assert not any('Active / last attempt' in r['value'] for r in rows)
-        self.capture('hardware-selected')
-        self.act('click','Check device'); self.state('hardware-check-start')
-        self.capture('hardware-check-start')
-        deadline = time.monotonic() + 25
-        sample = 0
-        while True:
-            sample += 1
-            rows = self.state('hardware-check-' + str(sample))
-            texts = [r[k] for r in rows for k in ['title','value','description']]
-            if 'Not connected' in texts and any('Active / last attempt' in t for t in texts): break
-            if time.monotonic() > deadline:
-                self.capture('hardware-cleanup-unconfirmed')
-                raise ValueError('Actual check/cleanup not settled; do not retry or force owner exit')
-            time.sleep(0.2)
-        assert any('Session cleanup: succeeded' in t and 'Host observer cleanup: succeeded' in t for t in texts)
-        sources = [t for t in texts if t.startswith('Source port:')]
-        failure = [t for t in texts if t.startswith('Initialization:')]
-        result = {'port':port,'informationObtained':bool(sources),'sourceAndTime':sources,'initialization':failure,'sessionCleanup':'succeeded','observerCleanup':'succeeded','notConnected':True}
-        (self.out / 'hardware-result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
-        self.capture('hardware-settled')
-        self.act('nav','Diagnostics'); self.act('nav','Device')
-        after = self.state('hardware-navigation-retained')
-        assert [r['value'] for r in after if r['value'].startswith('Source port:')] == sources
-        print(self.mode + ': explicitly selected finite check settled; information=' + str(bool(sources)))
-
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config',required=True); p.add_argument('--evidence',required=True)
     p.add_argument('mode',choices=MODES)
-    p.add_argument('stage',choices=['initial','preedit','defer','commit','quit','discard','check'])
+    p.add_argument('stage',choices=['initial','preedit','defer','commit','quit','discard'])
     p.add_argument('value',nargs='?'); p.add_argument('action',nargs='?')
     p.add_argument('--visual-confirmed',action='store_true')
-    p.add_argument('--port',help='Exact guest port explicitly selected by the user; required only for check')
     args = p.parse_args()
     scenario = Scenario(Product(args.config,args.evidence),args.mode)
     if args.stage == 'initial': scenario.initial()
@@ -203,9 +166,6 @@ def main():
         scenario.commit(args.value)
     elif args.stage == 'quit': scenario.quit_decision(args.value)
     elif args.stage == 'discard': scenario.discard()
-    elif args.stage == 'check':
-        if args.port is None: p.error('check requires --port with the explicitly authorized exact guest path')
-        scenario.check(args.port)
 
 
 if __name__ == '__main__': main()

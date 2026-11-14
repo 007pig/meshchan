@@ -24,3 +24,8 @@
   leave the host mouse and keyboard available. Follow its identity, focus,
   Pinyin evidence and owned-fixture requirements.
 - Ordinary unit tests do not require loading this skill.
+- Run real USB/serial hardware validation on the host Mac, including native port
+  enumeration, device checks, Cancel/cleanup and quit with active hardware.
+  Use the VM for hardware-free UI, Pinyin, navigation, offline quit and fake tests.
+- Do not continue VM USB passthrough or SPICE-port hardware testing under this
+  routing policy. Preserve the historical VM results as historical evidence.

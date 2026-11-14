@@ -7,6 +7,20 @@ focus, clicks and types. The repository skill is
 The bundled executable probes exercise TextEdit; Meshchan needs its own product
 fixture and input-target checks.
 
+## Current test routing
+
+The user decided on November 14, 2026 to keep real USB/serial hardware tests on
+the host Mac. This includes native port enumeration, device initialization,
+Cancel/cleanup and quit while hardware is active. Host runs still require owned
+external fixtures and an explicitly selected exact host port.
+
+Use the VM for hardware-free Device UI, real Pinyin, navigation, offline editing
+and quit, plus fake/automated tests. The current VM `initial` scenario does not
+click native Refresh, and its hardware `check --port` entrypoint is retired.
+Port-menu cases needing real metadata belong to host GUI acceptance or fake
+widget tests. The earlier USB passthrough investigation below is historical;
+its failures and NOT_RUN results do not create a remaining VM hardware gate.
+
 ## Install and configure a new guest
 
 On an Apple silicon Mac, install UTM and create an Apple-virtualized macOS VM
@@ -351,7 +365,6 @@ view their retained images, and commit through one natural Space:
 
 ```bash
 scenario Debug defer device navigation
-scenario Debug defer device menu
 scenario Debug defer device quit
 scenario Debug commit device --visual-confirmed
 scenario Debug preedit draft
@@ -373,11 +386,10 @@ results use their own assertions and shutdown receipts; the TextEdit verifier
 rejects a `product` run instead of reporting a misleading pass.
 
 Fresh `DebugDiscard` / `ReleaseDiscard` fixtures support the `discard` scenario
-without changing the saved Pinyin fixtures. Explicit native checks use fresh
-`DebugDevice` / `ReleaseDevice` fixtures and require the separate opt-in command
-`scenario MODE check --port /exact/authorized/guest/path`. The helper keeps that
-path verbatim, records primary failure and cleanup separately, and never picks
-another port or adjusts budgets after failure. Meshchan's product helper currently
+without changing the saved Pinyin fixtures. The old `DebugDevice` / `ReleaseDevice`
+labels remain available for Device UI fixtures, but native hardware acceptance
+now runs on the host. The former `check --port` command is not accepted.
+Meshchan's product helper currently
 uses the default dedicated guest root, `~/utm-ui-isolation`; custom-root TextEdit
 deployments are a separate supported path described above.
 
@@ -388,6 +400,10 @@ the new desktop is unlocked and begin a new run. A product runner deadline or
 external termination is not a successful application shutdown.
 
 ## USB passthrough and serial forwarding
+
+This section retains the earlier investigation and upstream research. Under the
+current routing decision, do not use it to resume VM hardware testing or USB
+driver troubleshooting; run USB acceptance on the host instead.
 
 On macOS 27+, UTM's Apple backend supports USB passthrough. First assign the
 specific device to UTM using the **host** menu-bar **Virtual Machine Accessories**

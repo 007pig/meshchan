@@ -67,6 +67,19 @@ class ToolingChecks(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'product runner'):
                 vm.verify(run)
 
+    def test_vm_hardware_entrypoint_retired_before_connection(self):
+        source = vm.HERE.parents[3] / 'apps/meshchan_app/tool/macos_vm/scenario.py'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = subprocess.run([
+                sys.executable,str(source),'--config',str(root/'MISSING-CONFIG'),
+                '--evidence',str(root/'evidence'),'DebugDevice','check',
+                '--port','/dev/cu.com.redhat.spice.01',
+            ],capture_output=True,text=True)
+            self.assertEqual(result.returncode,2)
+            self.assertIn('invalid choice',result.stderr)
+            self.assertFalse((root/'evidence').exists())
+
     def test_product_custom_root_rejected_before_owner_or_evidence(self):
         import importlib.util
         source = vm.HERE.parents[3] / 'apps/meshchan_app/tool/macos_vm/host.py'

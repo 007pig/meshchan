@@ -18,6 +18,13 @@ never copy that file into a skill, example, log or test artifact.
 
 ## Execution boundary
 
+The user's current Meshchan policy keeps real USB/serial hardware tests on the
+host Mac, including native metadata enumeration, finite checks, Cancel/cleanup
+and quit with active hardware. Use the VM for hardware-free UI, Pinyin,
+navigation, offline quit and fake tests. Do not resume VM USB passthrough/driver
+troubleshooting or select a SPICE port for hardware acceptance. Historical USB
+attempts in the guide are evidence, not instructions for future VM runs.
+
 Run key events, pointer actions, focus queries and screenshots **inside the
 identified guest**. The host controller uses SSH/SCP only. Before every remote
 operation it checks VirtualMac hardware, the expected hardware UUID and the
@@ -88,7 +95,7 @@ Treat the old run as interrupted unless it has a normal shutdown receipt. Archiv
 a stale lock only after verifying that its runner and product owner are gone;
 do not reuse old PIDs or count reboot termination as a resource-release pass.
 USB passthrough and serial forwarding are different. A newly visible SPICE port
-does not identify the selected physical device; verify the mapping and obtain
-explicit selection before opening it. See the guide's USB section for macOS 27.
+does not identify a physical USB device. The guide retains the earlier USB
+investigation for reference; current hardware acceptance belongs on the host.
 Check upstream fixes against the actual backend: a macOS-host USB fix can affect
 only QEMU and provide no evidence for an Apple Virtualization guest.

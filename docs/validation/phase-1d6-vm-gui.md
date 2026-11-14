@@ -2,6 +2,23 @@
 
 Date: November 14, 2026, Europe/Dublin (UTC+0). Guest desktop time is Pacific.
 
+## Subsequent routing decision
+
+The user subsequently directed all real USB/serial hardware testing to the host
+Mac. Native metadata enumeration, finite checks, Cancel/cleanup and quit with
+active hardware belong there. VM coverage continues for hardware-free UI,
+Pinyin, navigation, offline editing/quit and fake tests. Historical VM failures
+and NOT_RUN results below remain unchanged; successful VM USB initialization is
+no longer a required acceptance gate.
+
+The VM scenario's native Refresh, port-menu action and `check --port` entrypoint
+were removed from the current workflow. Historical reproduction of those cases
+uses commit `a2a38a8`; future runs follow the host/VM routing above. The routing
+change is checked without SSH or hardware: the retired command is rejected by
+argument parsing before configuration or evidence/owner creation. Python is
+`/opt/homebrew/bin/python3`, 3.15.2. The controller suite has 12 checks after this
+addition; the earlier 11-check result below belongs to the original GUI run.
+
 ## Scope and inputs
 
 The user requested a rerun inside the existing UTM macOS guest, following the
@@ -150,10 +167,10 @@ same verified guest. Its interfaces had class/subclass/protocol 2/2/0, 10/2/0 an
 `usb-binding-after-replug.json`. Both metadata-only follow-up apps exited through
 normal Cmd+Q with full release receipts; no USB path was invented or opened.
 
-Actual finite USB information, USB-scoped Cancel and occupied-check dirty quit
-in this VM remain **BLOCKED / NOT_RUN** until the guest exposes an openable port
-and the user explicitly selects its exact path. The prior host USB acceptance
-is preserved separately and is not reused as a VM pass. Seeing a USB device,
+At the investigation cutoff, actual finite USB information, USB-scoped Cancel
+and occupied-check dirty quit in this VM were **BLOCKED / NOT_RUN**. Those
+results remain historical after the routing decision above. The prior host USB
+acceptance is preserved separately and is not reused as a VM pass. Seeing a USB device,
 seeing a serial path and obtaining Companion information are separate facts.
 The [guide](../macos-vm-gui-testing.md#usb-passthrough-and-serial-forwarding) explains
 the macOS 27 menu-bar assignment and the difference from Serial configuration.
@@ -164,9 +181,10 @@ as an Apple-backend remedy. No verified repair for this guest was found.
 ## Reproduction and checks
 
 Use the [product runner commands](../macos-vm-gui-testing.md#meshchan-product-ui-runner).
-Explicit hardware testing additionally requires `scenario.py MODE check --port
-/exact/authorized/guest/path`; there is no default device or scan. Do not use
-the TextEdit verifier for product runs. Evidence collection and finish require
+The former hardware command in commit `a2a38a8` was used only after explicit
+guest-path authorization. It is retired from the current VM runner; hardware
+testing continues on the host. Do not use the TextEdit verifier for product runs.
+Evidence collection and finish require
 the exact run ID and real shutdown receipts.
 
 The skill's eleven offline behavioral checks passed with Python 3.15.2; shell and

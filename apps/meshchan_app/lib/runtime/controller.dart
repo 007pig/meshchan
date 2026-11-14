@@ -24,6 +24,9 @@ abstract interface class AppRuntime {
   Stream<OfflineSnapshot> get offlineChanges;
   OfflineSnapshot? get offline;
   Future<void> start();
+  Future<DevicePortsValue> refreshDevicePorts(int generation);
+  DeviceCheckHandle startDeviceCheck(String port, DeviceCheckOptions options);
+  Future<void> cancelDeviceCheck(int id);
   Future<OfflineSnapshot> refresh({int pageSize = 20, DraftCursor? after});
   Future<DraftPage> listDrafts({int size = 20, DraftCursor? after});
   Future<DraftSnapshot> readDraft(String id);
@@ -112,6 +115,8 @@ final class RuntimeController implements AppRuntime {
   bool _workerSpawned = false;
   bool get _workerMayOwnResources => _spawnPending || _workerSpawned;
   int _nextId = 0, _offlineVersion = 0;
+  int _nextCheck = 0;
+  bool _checkStarting = false;
   int _decisionGeneration = 0;
   DraftDecision? _decision;
   bool _hostSaveUsed = false, _hostPaused = false;
@@ -228,7 +233,7 @@ final class RuntimeController implements AppRuntime {
         _queued.clear();
         _sendShutdownIfPossible();
       case SnapshotEvent():
-        if (!_terminalFault) _project(event.snapshot);
+        _project(event.snapshot, retainFault: _terminalFault);
         if (event.snapshot.phase != RuntimePhase.opening &&
             !_boot.isCompleted) {
           _boot.complete();
@@ -264,22 +269,29 @@ final class RuntimeController implements AppRuntime {
     }
   }
 
-  void _project(RuntimeSnapshot value, {bool force = false, bool? exited}) {
+  void _project(
+    RuntimeSnapshot value, {
+    bool force = false,
+    bool? exited,
+    bool retainFault = false,
+  }) {
     if (!force && value.sequence < _snapshot.sequence) return;
     _snapshot = RuntimeSnapshot(
       generation: generation,
       sequence: value.sequence,
-      phase: value.phase,
-      owner: value.owner,
+      phase: retainFault ? RuntimePhase.fault : value.phase,
+      owner: retainFault ? _snapshot.owner : value.owner,
       storage: value.storage,
       gate: value.gate,
       stopReceived: value.stopReceived,
       stopApplied: value.stopApplied,
-      admissionPaused: value.admissionPaused,
+      admissionPaused: retainFault || value.admissionPaused,
       workerExited: exited ?? _workerExited,
-      error: value.error,
+      error: _terminalFault ? _snapshot.error : value.error,
       maintenance: value.maintenance,
       operation: value.operation,
+      deviceCheck: value.deviceCheck,
+      lastDeviceInfo: value.lastDeviceInfo,
     );
     _changes.add(_snapshot);
   }
@@ -314,6 +326,8 @@ final class RuntimeController implements AppRuntime {
       error: error,
       maintenance: _snapshot.maintenance,
       operation: _snapshot.operation,
+      deviceCheck: _snapshot.deviceCheck,
+      lastDeviceInfo: _snapshot.lastDeviceInfo,
     );
     _changes.add(_snapshot);
     for (final pending in _pending.values) {
@@ -334,7 +348,21 @@ final class RuntimeController implements AppRuntime {
             const RuntimeFault(host: CoordinationFault.invalidState),
       );
     }
+    if (request is StopRuntime || request is ShutdownRuntime) {
+      _stopIntent = true;
+    }
+    if (request is ResumeAdmission && _stopIntent) {
+      return Future.error(const RuntimeFault(host: CoordinationFault.stopped));
+    }
+    if ((request is RefreshDevicePorts || request is StartDeviceCheck) &&
+        (_snapshot.gate != DeviceGateState.free || _checkStarting)) {
+      return Future.error(
+        const RuntimeFault(host: CoordinationFault.deviceBusy),
+      );
+    }
     final ordinary =
+        request is RefreshDevicePorts ||
+        request is StartDeviceCheck ||
         request is ReadOffline ||
         request is ListDrafts ||
         request is ReadDraft ||
@@ -413,6 +441,39 @@ final class RuntimeController implements AppRuntime {
       _queued.add(message);
     }
     return completion.future;
+  }
+
+  @override
+  Future<DevicePortsValue> refreshDevicePorts(int generation) async =>
+      await request(RefreshDevicePorts(generation)) as DevicePortsValue;
+
+  @override
+  DeviceCheckHandle startDeviceCheck(String port, DeviceCheckOptions options) {
+    final id = ++_nextCheck;
+    if (_checkStarting) {
+      final rejected = Future<void>.error(
+        const RuntimeFault(host: CoordinationFault.deviceBusy),
+      );
+      unawaited(
+        rejected.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+      );
+      return DeviceCheckHandle(id, rejected);
+    }
+    final reply = request(StartDeviceCheck(id, port, options));
+    _checkStarting = true;
+    final accepted = reply
+        .then<void>((_) {})
+        .whenComplete(() => _checkStarting = false);
+    // Observe immediately even if the caller attaches after requesting cancel.
+    unawaited(
+      accepted.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+    );
+    return DeviceCheckHandle(id, accepted);
+  }
+
+  @override
+  Future<void> cancelDeviceCheck(int id) async {
+    await request(CancelDeviceCheck(id));
   }
 
   @override

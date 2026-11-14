@@ -14,3 +14,18 @@
 - Do not install or upgrade Python or change global PATH/settings automatically.
   Record the actual interpreter path and version in new validation records;
   preserve historical records with their original toolchain facts.
+
+## macOS VM GUI automation
+
+- Before running real GUI, host-input isolation, or Chinese input-method tests
+  inside a macOS VM, read
+  [the macos-vm-gui-testing skill](.agents/skills/macos-vm-gui-testing/SKILL.md).
+- Use its guest-side event execution and SSH orchestration when the test must
+  leave the host mouse and keyboard available. Follow its identity, focus,
+  Pinyin evidence and owned-fixture requirements.
+- Ordinary unit tests do not require loading this skill.
+- Run real USB/serial hardware validation on the host Mac, including native port
+  enumeration, device checks, Cancel/cleanup and quit with active hardware.
+  Use the VM for hardware-free UI, Pinyin, navigation, offline quit and fake tests.
+- Do not continue VM USB passthrough or SPICE-port hardware testing under this
+  routing policy. Preserve the historical VM results as historical evidence.

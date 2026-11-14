@@ -1,0 +1,4 @@
+interface:
+  display_name: "macOS VM GUI Testing"
+  short_description: "Run isolated macOS guest GUI and Pinyin tests"
+  default_prompt: "Use $macos-vm-gui-testing to run and verify GUI tests inside the configured macOS VM."

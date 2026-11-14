@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'probe_request.dart';
 import 'drafts/editor.dart';
+import 'device/view.dart';
 import 'profiles/view.dart';
 import 'drafts/view.dart';
 import 'drafts/quit_coordinator.dart';
@@ -161,6 +162,10 @@ class _NavigationState extends State<_Navigation> {
                 ),
                 Text(_status(state)),
                 if (state != null) Text('Owner: ${state!.owner.name}'),
+                if (state?.deviceCheck case final check?)
+                  Text(
+                    'Device check ${check.id}: ${check.state.name} · session cleanup ${check.sessionCleanup.name} · host cleanup ${check.observerCleanup.name}',
+                  ),
                 if (state?.error case final error?)
                   Text(
                     '${state!.phase == RuntimePhase.fault ? 'Runtime fault' : 'Last request error'}: ${error.code}',
@@ -182,6 +187,8 @@ class _NavigationState extends State<_Navigation> {
                       prompt: prompt,
                     ),
                   )
+                else if (selected == 1 && quit != null)
+                  Expanded(child: DeviceView(model: quit!.device))
                 else
                   Text(
                     selected == 1

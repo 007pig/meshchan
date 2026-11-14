@@ -65,6 +65,9 @@ jobs:
       - name: Verify product profiles, settings, resolver and lost writes
         run: python3 apps/meshchan_app/tool/check_profile_process.py --dart "$(command -v dart)"
 
+      - name: Verify finite device checks and cleanup across processes
+        run: python3 apps/meshchan_app/tool/check_device_process.py --dart "$(command -v dart)"
+
       - name: Test finite acceptance plan validation without hardware
         run: python3 -m unittest discover -s tool -p '*_test.py'
 
@@ -136,6 +139,8 @@ jobs:
         run: python3 apps/meshchan_app/tool/check_draft_process.py --dart "$(command -v dart)"
       - name: Verify profile product process persistence
         run: python3 apps/meshchan_app/tool/check_profile_process.py --dart "$(command -v dart)"
+      - name: Verify finite device check process lifecycle
+        run: python3 apps/meshchan_app/tool/check_device_process.py --dart "$(command -v dart)"
       - name: Build debug and release apps sequentially
         working-directory: apps/meshchan_app
         run: |

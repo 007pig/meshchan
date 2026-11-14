@@ -891,3 +891,80 @@ for the decision. Window close still uses the original windowShouldClose path.
 Caps Lock does not prevent matching; Command+Shift/Control/Option+Q and other
 shortcuts are not intercepted. Two native event-matching regressions accompany
 the actual Pinyin/quit proof; no SDK, engine or security configuration changed.
+
+## 1D.6 finite device check implementation
+
+The Device View and application-session `DeviceModel` own explicit selection and
+raw option text, and `RuntimeController` owns the typed port refresh/start/cancel
+bridge. `RuntimeSnapshot.deviceCheck` carries the latest bounded attempt;
+`lastDeviceInfo` independently retains source path, UTC observation time and the
+public parsed display fields (without public key). The model lives with the
+shared quit coordinator, not the page. No constructor, navigation, preset,
+default, hint, preview or lifecycle observer performs serial I/O.
+
+`WorkerDispatcher` uses injected whole metadata enumeration and lazy transport
+factories, with production defaults `SerialPorts().listPorts()` and
+`SerialTransport(portPath: exactPath)`. Tests construct public fake transports
+inside their worker. No test transport/bootstrap flag is exposed by product
+launch configuration. Ordinary production bootstrap retains `fixtureWrites:false`.
+The public link/core APIs, platform guards and native cleanup are unchanged.
+
+Refresh synchronously obtains a short generation-scoped device lease before the
+synchronous metadata call. Ordinary warnings/controlled enumeration errors end
+that lease; they do not assert native connection ownership or quarantine storage.
+Bridge timeouts and worker failure retain their existing terminal unknown policy.
+Check admission validates path/options, obtains the same gate synchronously and
+registers the entire connect/close/observer settlement barrier before scheduling
+construction. Start returns an admission acknowledgement, never waits for the
+finite work in the ordinary RPC/database queue. Check IDs, worker generation,
+RPC IDs, gate leases and list generations have distinct roles. Stale cancel and
+old gate callbacks cannot affect a newer attempt. Lost admission acknowledgements
+are not retried; terminal faults preserve information and allow late cleanup facts
+without reopening admission.
+
+The worker-owned `FiniteDeviceCheck` constructs a fresh unused transport/session,
+observes events before one connect, publishes complete information immediately,
+and awaits that same session's actual close Future. If construction fails before
+session ownership, the host closes the unowned transport. Session cleanup and
+app observer cancellation have distinct results. Failure retains the main cause's
+controlled kind/stage/opcodes/device-error fields without native cause or stack.
+Successful close never erases initialization failure or dated information. There
+is no taskTimeout, forced-release timer, reader subscriber, inbox consumer or
+recording operation. Session state alone is never release proof.
+
+A healthy tracked finite check, including ordinary initialization failure with
+close still pending, permits normal offline work. During a human quit decision,
+ordinary admission pauses as before. The exact one-use Draft/Profile/Settings
+final-save capability additionally allows database-only work while that finite
+check holds the device gate. EndDecision/Resume may restore offline admission
+while the same healthy check continues. The exception requires the correct
+document/target/session, open storage, valid owner, trusted observation and no
+stop/shutdown/fault/quarantine; it does not apply to recording or arbitrary gate
+occupants. Cleanup failure or observation loss removes the exception. Accepted
+saves drain normally; no gate is temporarily freed and storage is not closed to
+work around device ownership.
+
+Scoped check cancel neither pauses nor stops the global runtime. Genuine
+StopRuntime/ShutdownRuntime sets an irreversible worker and host stop latch;
+legacy isolated recording cancellation can retain its reversible pause behavior.
+Quit requests close the active check, wait for its full barrier, drain accepted
+DB/maintenance, close storage, acknowledge release and observe worker exit. No
+pending or failed cleanup is turned into success by the host's observation
+window. The existing AppKit composition/termination barrier is retained.
+
+### 1D.7 handoff
+
+Start and record must acquire the same device gate after a prior check actually
+releases it. Each diagnostic must pass a fresh lazy transport/session factory to
+the existing recording coordinator. Never reuse a check session, automatically
+check/reconnect, or treat selected port and resolved profile parameters as one
+fact. No recording, PING/Responder, historical device info, history UI or export
+is implemented by 1D.6. Full USB/LoRa, unplug and beta acceptance remain 1D.11.
+
+The actual 1D.6 Pinyin follow-up confirmed that Device TextFields must also
+suppress default desktop outside-tap unfocus, matching Draft/Profile fields.
+Otherwise pointer-down can end marked text before GuardedChoice's onPressed
+preflight. The focused macOS mouse regression covers all three options. Future
+Start and record controls must retain this ordering as well as the gate/quit
+invariants. Native GUI evidence and software callbacks remain separate layers;
+see the unlocked follow-up in the 1D.6 validation record.

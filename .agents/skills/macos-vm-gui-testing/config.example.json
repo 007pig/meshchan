@@ -1,0 +1,9 @@
+{
+  "host": "192.168.64.34",
+  "user": "meshchantest",
+  "uuid": "15B75AC9-E5C6-56CD-9FAA-86EC9AAF57A2",
+  "known_hosts": "/private/tmp/meshchan-vm/known_hosts",
+  "runtime_dir": "/private/tmp/meshchan-vm/runtime",
+  "evidence_dir": "/private/tmp/meshchan-vm/evidence",
+  "guest_root": "/Users/meshchantest/utm-ui-isolation"
+}

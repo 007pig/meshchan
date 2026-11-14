@@ -27,6 +27,11 @@ abstract interface class AppRuntime {
   Future<DevicePortsValue> refreshDevicePorts(int generation);
   DeviceCheckHandle startDeviceCheck(String port, DeviceCheckOptions options);
   Future<void> cancelDeviceCheck(int id);
+  DiagnosticHandle startRecordedDiagnostic(
+    String port,
+    EffectiveParameterRequest parameters,
+  );
+  Future<void> cancelRecordedDiagnostic(DiagnosticHandle handle);
   Future<OfflineSnapshot> refresh({int pageSize = 20, DraftCursor? after});
   Future<DraftPage> listDrafts({int size = 20, DraftCursor? after});
   Future<DraftSnapshot> readDraft(String id);
@@ -115,7 +120,8 @@ final class RuntimeController implements AppRuntime {
   bool _workerSpawned = false;
   bool get _workerMayOwnResources => _spawnPending || _workerSpawned;
   int _nextId = 0, _offlineVersion = 0;
-  int _nextCheck = 0;
+  int _nextCheck = 0, _nextDiagnostic = 0;
+  bool _diagnosticStarting = false;
   bool _checkStarting = false;
   int _decisionGeneration = 0;
   DraftDecision? _decision;
@@ -354,8 +360,12 @@ final class RuntimeController implements AppRuntime {
     if (request is ResumeAdmission && _stopIntent) {
       return Future.error(const RuntimeFault(host: CoordinationFault.stopped));
     }
-    if ((request is RefreshDevicePorts || request is StartDeviceCheck) &&
-        (_snapshot.gate != DeviceGateState.free || _checkStarting)) {
+    if ((request is RefreshDevicePorts ||
+            request is StartDeviceCheck ||
+            request is StartRecordedDiagnostic) &&
+        (_snapshot.gate != DeviceGateState.free ||
+            _checkStarting ||
+            _diagnosticStarting)) {
       return Future.error(
         const RuntimeFault(host: CoordinationFault.deviceBusy),
       );
@@ -363,6 +373,7 @@ final class RuntimeController implements AppRuntime {
     final ordinary =
         request is RefreshDevicePorts ||
         request is StartDeviceCheck ||
+        request is StartRecordedDiagnostic ||
         request is ReadOffline ||
         request is ListDrafts ||
         request is ReadDraft ||
@@ -381,7 +392,10 @@ final class RuntimeController implements AppRuntime {
       return Future.error(const RuntimeFault(host: CoordinationFault.stopped));
     }
     if (_decision != null &&
-        (request is ListProfiles ||
+        (request is StartRecordedDiagnostic ||
+            request is StartDeviceCheck ||
+            request is RefreshDevicePorts ||
+            request is ListProfiles ||
             request is ReadProfile ||
             request is DeleteProfile ||
             request is ReadSettings ||
@@ -441,6 +455,51 @@ final class RuntimeController implements AppRuntime {
       _queued.add(message);
     }
     return completion.future;
+  }
+
+  @override
+  DiagnosticHandle startRecordedDiagnostic(
+    String port,
+    EffectiveParameterRequest parameters,
+  ) {
+    final id = ++_nextDiagnostic;
+    if (_diagnosticStarting) {
+      return _diagnosticHandle(
+        id,
+        Future.error(const RuntimeFault(host: CoordinationFault.deviceBusy)),
+      );
+    }
+    if (parameters is! PingParameterRequest &&
+            parameters is! RespondParameterRequest ||
+        port.trim().isEmpty) {
+      return _diagnosticHandle(
+        id,
+        Future.error(const RuntimeFault(host: CoordinationFault.invalidState)),
+      );
+    }
+    // request checks the other in-flight starts before this latch is installed.
+    final accepted = request(StartRecordedDiagnostic(id, port, parameters))
+        .then<void>((_) {});
+    _diagnosticStarting = true;
+    final observed = accepted.whenComplete(() => _diagnosticStarting = false);
+    return _diagnosticHandle(id, observed);
+  }
+
+  DiagnosticHandle _diagnosticHandle(int id, Future<void> accepted) {
+    // Keep fast failures observed even when a caller first sends scoped Cancel
+    // or attaches to accepted later. Only the admitted Start owns its latch.
+    unawaited(
+      accepted.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+    );
+    return DiagnosticHandle(generation, id, accepted);
+  }
+
+  @override
+  Future<void> cancelRecordedDiagnostic(DiagnosticHandle handle) async {
+    if (handle.generation != generation) {
+      throw const RuntimeFault(host: CoordinationFault.staleRequest);
+    }
+    await request(CancelRecordedDiagnostic(handle.generation, handle.id));
   }
 
   @override

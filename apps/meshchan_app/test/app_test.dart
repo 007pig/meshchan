@@ -39,10 +39,7 @@ void main() {
       );
       await tester.tap(find.text('Diagnostics'));
       await tester.pumpAndSettle();
-      expect(
-        find.textContaining('No checks have been started'),
-        findsOneWidget,
-      );
+      expect(find.text('Start and record'), findsOneWidget);
       expect(find.textContaining('History is not connected'), findsOneWidget);
       await tester.tap(find.text('Drafts').first);
       await tester.pumpAndSettle();

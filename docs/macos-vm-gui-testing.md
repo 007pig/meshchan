@@ -466,3 +466,21 @@ metadata and narrowly scoped CDC-driver diagnostics for an upstream report.
 Do not change firmware, kernel extensions, signing or security settings based
 on unrelated old driver workarounds. Do not publish a report without the user's
 instruction to send it.
+
+### Recorded Diagnostics UI (1D.7)
+
+The product scenario runner additionally accepts `preedit diagnostic`,
+`defer diagnostic operation|content|navigation|quit`, `commit diagnostic
+--visual-confirmed`, and `diagnostic-quit Save|Discard`. Start in Latin mode on a
+fresh owned fixture. The preedit stage selects exact UTF-8 PING content and uses
+real Pinyin keycodes; review the original screenshot and focus JSON for that
+individual composition before any defer or natural Space commit. Commit checks
+exact Chinese content and navigation retention, then exercises an intentionally
+incomplete resolver preview without device access. The final stage switches
+PING/finite Responder, verifies retained invocation text and performs a real dirty
+Draft Continue followed by Save or Discard and normal shutdown receipts.
+
+The current [1D.7 validation record](validation/phase-1d7-recorded-diagnostics.md)
+separates functional IME/lifecycle observations from Release VM text raster
+artifacts, and separates all GUI work from public fake transport and host RF
+acceptance. These scenarios never refresh or open a real port.

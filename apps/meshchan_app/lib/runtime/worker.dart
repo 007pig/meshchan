@@ -51,7 +51,11 @@ final class WorkerDispatcher {
     Future<CoreStorage> Function(Directory)? openStorage,
     List<SerialPortDescription> Function()? enumeratePorts,
     CompanionTransport Function(String)? createCheckTransport,
-  }) : _enumeratePorts = enumeratePorts ?? SerialPorts().listPorts,
+    CompanionTransport Function(String)? createDiagnosticTransport,
+  }) : _createDiagnosticTransport =
+           createDiagnosticTransport ??
+           ((path) => SerialTransport(portPath: path)),
+       _enumeratePorts = enumeratePorts ?? SerialPorts().listPorts,
        _createCheckTransport =
            createCheckTransport ?? ((path) => SerialTransport(portPath: path)),
        _openStorage =
@@ -63,6 +67,9 @@ final class WorkerDispatcher {
   final Future<CoreStorage> Function(Directory) _openStorage;
   final List<SerialPortDescription> Function() _enumeratePorts;
   final CompanionTransport Function(String) _createCheckTransport;
+  final CompanionTransport Function(String) _createDiagnosticTransport;
+  _RecordingAttempt? _attempt;
+  int _lastAttemptId = 0;
   FiniteDeviceCheck? _check;
   DeviceCheckSnapshot? _checkSnapshot;
   DeviceInformation? _lastDeviceInfo;
@@ -158,6 +165,8 @@ final class WorkerDispatcher {
       !_paused &&
       !_stop &&
       !_closing &&
+      _phase == RuntimePhase.ready &&
+      _offlineGateHealthy &&
       _owner == OwnerFact.held &&
       _storage?.state == StorageState.open &&
       gate.state != DeviceGateState.quarantined;
@@ -181,6 +190,48 @@ final class WorkerDispatcher {
     _lastId = id;
     final request = message.request;
     switch (request) {
+      case StartRecordedDiagnostic():
+        try {
+          if (request.id <= _lastAttemptId ||
+              request.port.trim().isEmpty ||
+              (request.parameters is! PingParameterRequest &&
+                  request.parameters is! RespondParameterRequest)) {
+            throw const RuntimeFault(host: CoordinationFault.invalidState);
+          }
+          _beginRecording(
+            request.id,
+            (storage) => storage.resolveParameters(request.parameters),
+            () => _createDiagnosticTransport(request.port),
+          );
+          _lastAttemptId = request.id;
+          _reply(id, value: const Accepted());
+        } catch (e) {
+          _reply(id, error: e);
+        }
+      case CancelRecordedDiagnostic():
+        final attempt = _attempt;
+        if (request.generation != bootstrap.generation ||
+            attempt == null ||
+            attempt.id != request.id ||
+            attempt.lease != gate.generation) {
+          // Idempotent completion of the most recently settled attempt.
+          if (request.generation == bootstrap.generation &&
+              _operation?.attemptId == request.id &&
+              _operation?.done == true) {
+            _reply(id, value: const Accepted());
+          } else {
+            _reply(
+              id,
+              error: const RuntimeFault(host: CoordinationFault.staleRequest),
+            );
+          }
+        } else {
+          attempt.canceled = true;
+          _adapter?.cancel();
+          _operation = _adapter?.snapshot ?? _attemptSnapshot(attempt);
+          _emit();
+          _reply(id, value: const Accepted());
+        }
       case RefreshDevicePorts():
         if (!_canAdmit) {
           _reply(
@@ -257,7 +308,9 @@ final class WorkerDispatcher {
         unawaited(
           _runCheck(check, lease).then<void>(
             (_) {
-              _deviceWork = null;
+              if (gate.generation == lease && identical(_check, check)) {
+                _deviceWork = null;
+              }
               completion.complete();
             },
             onError: (Object _, StackTrace _) {
@@ -497,7 +550,9 @@ final class WorkerDispatcher {
             _decision != null ||
             _phase == RuntimePhase.fault ||
             _storage?.state != StorageState.open ||
-            !_offlineGateHealthy) {
+            !(_offlineGateHealthy ||
+                (gate.state == DeviceGateState.free &&
+                    _owner == OwnerFact.held))) {
           _reply(
             id,
             error: const RuntimeFault(host: CoordinationFault.invalidState),
@@ -540,6 +595,7 @@ final class WorkerDispatcher {
     _stop = true;
     _paused = true;
     if (!_closing) _phase = RuntimePhase.stopping;
+    _attempt?.canceled = true;
     _adapter?.cancel();
     _check?.cancel();
     // Receipt is distinct from application at the next awaited checkpoint.
@@ -548,17 +604,28 @@ final class WorkerDispatcher {
     _emit();
   }
 
-  // Only this tracked finite check grants a database-only occupied exception.
-  bool get _offlineGateHealthy =>
-      gate.state == DeviceGateState.free ||
-      (gate.state == DeviceGateState.occupied &&
-          _check != null &&
-          _deviceWork != null &&
-          _checkSnapshot?.settled == false &&
-          _phase == RuntimePhase.ready &&
-          _owner == OwnerFact.held &&
-          _checkSnapshot?.observerFailure == null &&
-          _checkSnapshot?.sessionCleanup != DeviceCleanup.failed);
+  bool get _offlineGateHealthy {
+    if (_phase != RuntimePhase.ready ||
+        _owner != OwnerFact.held ||
+        _storage?.state != StorageState.open ||
+        _stop ||
+        _closing) {
+      return false;
+    }
+    if (gate.state == DeviceGateState.free) return true;
+    if (gate.state != DeviceGateState.occupied || _deviceWork == null) {
+      return false;
+    }
+    final attempt = _attempt;
+    if (attempt != null && attempt.lease == gate.generation) {
+      return _operation?.attemptId == attempt.id &&
+          !(_operation?.resourceUncertainty ?? false);
+    }
+    return _check != null &&
+        _checkSnapshot?.settled == false &&
+        _checkSnapshot?.observerFailure == null &&
+        _checkSnapshot?.sessionCleanup != DeviceCleanup.failed;
+  }
 
   Future<void> _runCheck(FiniteDeviceCheck check, int lease) async {
     await check.run();
@@ -686,50 +753,123 @@ final class WorkerDispatcher {
     );
   }
 
-  /// Future product requests must call this boundary. Test-side worker entries
-  /// exercise it with real core/fake transport, without a production start API.
+  /// Internal fixture seam shares the exact admission and settlement path.
   Future<void> startRecording({
     required Future<EffectiveParameters> Function(CoreStorage) resolve,
     required CompanionTransport Function() createTransport,
-  }) {
+  }) => _beginRecording(++_lastAttemptId, resolve, createTransport);
+
+  OperationSnapshot _attemptSnapshot(
+    _RecordingAttempt attempt, {
+    bool done = false,
+    RuntimeFault? error,
+  }) => OperationSnapshot(
+    generation: attempt.lease,
+    attemptId: attempt.id,
+    preparation: done
+        ? DiagnosticPreparation.settled
+        : DiagnosticPreparation.resolving,
+    cancelRequested: attempt.canceled,
+    error: error,
+    noResourcesAcquired: done && !(error?.cleanupUnconfirmed ?? false),
+    done: done,
+  );
+
+  Future<void> _beginRecording(
+    int id,
+    Future<EffectiveParameters> Function(CoreStorage) resolve,
+    CompanionTransport Function() createTransport,
+  ) {
     if (!_canAdmit) throw const RuntimeFault(host: CoordinationFault.stopped);
-    final lease = gate.acquire(); // Before the first await, including resolve.
+    final lease = gate.acquire();
+    final attempt = _attempt = _RecordingAttempt(id, lease);
+    _adapter = null;
+    final completion = Completer<void>();
+    _deviceWork = completion.future;
+    _operation = _attemptSnapshot(attempt);
     _emit();
-    final work = _record(lease, resolve, createTransport);
-    _deviceWork = work;
-    return work;
+    unawaited(
+      _record(attempt, resolve, createTransport).then<void>(
+        (_) {
+          if (identical(_attempt, attempt)) {
+            _attempt = null;
+            _adapter = null;
+            _deviceWork = null;
+          }
+          completion.complete();
+        },
+        onError: (Object _, StackTrace _) {
+          gate.settle(lease, released: false);
+          _phase = RuntimePhase.fault;
+          _error = const RuntimeFault(
+            host: CoordinationFault.observationFailed,
+            cleanupUnconfirmed: true,
+          );
+          _emit();
+          completion.complete();
+        },
+      ),
+    );
+    return completion.future;
   }
 
   Future<void> _record(
-    int lease,
+    _RecordingAttempt attempt,
     Future<EffectiveParameters> Function(CoreStorage) resolve,
     CompanionTransport Function() createTransport,
   ) async {
-    bool constructed = false;
+    bool obtainedOperation = false;
     try {
-      await _checkpoint();
-      if (_stop) return;
-      final parameters = await resolve(_storage!);
-      await _checkpoint();
-      if (_stop) return;
+      // Only resolution joins the DB queue. Previously accepted CRUD retains
+      // order; the hardware lifecycle never blocks database control requests.
+      final resolved = Completer<EffectiveParameters?>();
+      _databaseQueue = _databaseQueue.then((_) async {
+        try {
+          await _checkpoint();
+          if (attempt.canceled || _stop) {
+            resolved.complete(null);
+            return;
+          }
+          resolved.complete(await resolve(_storage!));
+        } catch (e, stack) {
+          resolved.completeError(e, stack);
+        }
+      });
+      final parameters = await resolved.future;
+      if (parameters == null || attempt.canceled || _stop) return;
       final operation = _storage!.record(
         parameters: parameters,
-        appVersion: '0.1.0-dev.3',
-        createTransport: () {
-          // record's own cancel gate handles stops observed before prepared.
-          constructed = true;
-          return createTransport();
-        },
+        appVersion:
+            '${const String.fromEnvironment('FLUTTER_BUILD_NAME', defaultValue: '0.1.0-dev.3')}+${const String.fromEnvironment('FLUTTER_BUILD_NUMBER', defaultValue: '1')}',
+        createTransport: createTransport,
       );
-      final adapter = RecordingAdapter(operation, lease, (value) {
-        if (value.generation != gate.generation) return;
-        _operation = value;
-        _emit();
-      });
-      _adapter = adapter;
-      if (_stop) adapter.cancel();
+      obtainedOperation = true;
+      final adapter = _adapter = RecordingAdapter(
+        operation,
+        attempt.lease,
+        (value) {
+          if (!identical(_attempt, attempt) ||
+              attempt.lease != gate.generation) {
+            return;
+          }
+          _operation = value;
+          if (value.observationFailure) {
+            _phase = RuntimePhase.fault;
+            _error = const RuntimeFault(
+              host: CoordinationFault.observationFailed,
+              cleanupUnconfirmed: true,
+            );
+          }
+          _emit();
+        },
+        attemptId: attempt.id,
+        isCancelRequested: () => attempt.canceled,
+      );
+      _operation = adapter.snapshot;
+      _emit();
+      if (attempt.canceled || _stop) adapter.cancel();
       final result = await adapter.settled;
-      gate.settle(lease, released: result.resourcesReleased);
+      gate.settle(attempt.lease, released: result.resourcesReleased);
       if (!result.resourcesReleased) {
         _error = const RuntimeFault(
           host: CoordinationFault.releaseUnconfirmed,
@@ -739,20 +879,26 @@ final class WorkerDispatcher {
       }
     } catch (e) {
       _error = RuntimeFault.from(e);
-      gate.settle(lease, released: !constructed && !_error!.cleanupUnconfirmed);
+      if (!obtainedOperation) {
+        _operation = _attemptSnapshot(attempt, done: true, error: _error);
+      }
+      gate.settle(
+        attempt.lease,
+        released: !obtainedOperation && !_error!.cleanupUnconfirmed,
+      );
       if (gate.state == DeviceGateState.quarantined) {
         _phase = RuntimePhase.fault;
       }
     } finally {
-      // Only a path which did not construct resources can release without a
-      // recorded cleanup result. A settled ambiguous adapter remains occupied.
-      if (gate.state == DeviceGateState.occupied && _adapter == null) {
-        gate.settle(lease, released: !constructed);
+      if (!obtainedOperation &&
+          gate.state == DeviceGateState.occupied &&
+          identical(_attempt, attempt)) {
+        _operation = _attemptSnapshot(attempt, done: true);
+        gate.settle(attempt.lease, released: true);
       }
       if (_stop) _stopApplied = true;
-      _adapter = null;
-      _deviceWork = null;
       _captureMaintenance();
+      _observeMaintenance();
       _emit();
     }
   }
@@ -822,4 +968,10 @@ final class WorkerDispatcher {
     // Only an explicit main acknowledgement closes the receive port. onExit on
     // another port can therefore never outrun the trusted release report.
   }
+}
+
+final class _RecordingAttempt {
+  _RecordingAttempt(this.id, this.lease);
+  final int id, lease;
+  bool canceled = false;
 }

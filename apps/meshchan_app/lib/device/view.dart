@@ -22,6 +22,11 @@ class DeviceView extends StatelessWidget {
             Text(
               unknown
                   ? 'Runtime fault — retained device cleanup facts below'
+                  : model.snapshot.gate == DeviceGateState.occupied &&
+                        model.snapshot.operation?.done == false
+                  ? 'Device is in use by the current diagnostic; release is pending.'
+                  : model.snapshot.gate != DeviceGateState.free
+                  ? 'Device resource release is unconfirmed.'
                   : released
                   ? 'Not connected'
                   : 'Check ${attempt!.id}: ${attempt.state.name}',

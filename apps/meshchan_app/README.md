@@ -453,3 +453,33 @@ complete information twice on the explicitly selected USB path and closed
 normally; Debug's observed checks failed initialization but cleaned up normally.
 These distinct outcomes and the 159-test/11-XCTest final receipts are retained in
 the [validation follow-up](../../docs/validation/phase-1d6-device-check.md#unlocked-gui-and-explicitly-selected-usb-follow-up).
+
+## Recorded diagnostics (1D.7)
+
+Diagnostics supports one explicit PING or finite Responder at a time. Refresh
+and select an available exact path on Device in this application session, then
+choose the diagnostic operation, saved/default preset, presence-sensitive field
+overrides and (for PING only) invocation content. No successful device check is
+required. Preview resolves saved parameters without accessing hardware. Click
+**Start and record** to capture the request and selected path; the worker resolves
+again, freezes the effective parameters and calls public `CoreStorage.record()`.
+The core commits registration before invoking a fresh lazy transport factory.
+The actual app/build version is recorded as `0.1.0-dev.3+1` by default.
+
+Cancel requests cancellation of that attempt only. It does not pause offline
+editing, retract transmission or release the device gate. Navigation retains the
+form and current/latest session result. Dirty quit uses the existing single
+coordinator: Continue keeps the finite task, while Save/Discard precede the
+irreversible shutdown and complete recording/observer/storage/worker barriers.
+
+Task facts, nullable send/reception details, successful application RTT, first
+matching PONG elapsed time, Responder counters and last-send facts appear
+independently from core/host/app observer cleanup, registration/logical/cleanup
+saves, coordination faults and known history maintenance. Missing is not false
+or zero. Local confirmation does not prove peer receipt; a completed Responder
+with zero responses is valid but establishes no round trip. Save failure does not
+retry RF or erase in-memory results. Unconfirmed cleanup quarantines device work.
+
+History lists, recovery UI and export remain 1D.8. The current/latest snapshot is
+session memory, not a history repository. See the
+[implementation and validation record](../../docs/validation/phase-1d7-recorded-diagnostics.md).

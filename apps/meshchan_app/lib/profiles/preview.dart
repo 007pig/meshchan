@@ -10,14 +10,17 @@ import 'parameter_form.dart';
 enum ContentMode { notProvided, text, hex }
 
 class ParameterPreview extends ChangeNotifier {
-  ParameterPreview(this.runtime) {
+  ParameterPreview(
+    this.runtime, {
+    DiagnosticOperation operation = DiagnosticOperation.send,
+  }) : form = ParameterForm(operation, overrides: true) {
     content.addListener(invalidate);
     for (final c in form.inputs.values) {
       c.addListener(invalidate);
     }
   }
   final AppRuntime runtime;
-  final form = ParameterForm(DiagnosticOperation.send, overrides: true);
+  final ParameterForm form;
   final content = TextEditingController();
   ContentMode mode = ContentMode.notProvided;
   String? profileId, error, selectionError, notice;
@@ -35,6 +38,7 @@ class ParameterPreview extends ChangeNotifier {
 
   void invalidate() {
     _generation++;
+    _selection++;
     result = null;
     error = null;
     notice = null;

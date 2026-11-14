@@ -87,13 +87,19 @@ final class SaveSnapshot {
     this.finalCleanup,
     this.error, {
     this.cleanupUnconfirmed = false,
+    this.phase,
+    this.snapshot,
   });
   factory SaveSnapshot.from(RecordingSave save) => SaveSnapshot(
     save.state,
     save.finalCleanup,
     save.error?.code,
     cleanupUnconfirmed: save.error?.cleanupUnconfirmed ?? false,
+    phase: save.phase,
+    snapshot: save.state == RecordingSaveState.committed ? save.snapshot : null,
   );
+  final RecordingPhase? phase;
+  final DiagnosticRun? snapshot;
   final RecordingSaveState state;
   final bool finalCleanup;
   final CoreErrorCode? error;
@@ -104,6 +110,21 @@ final class OperationSnapshot {
   const OperationSnapshot({
     required this.generation,
     this.runId,
+    this.attemptId,
+    this.preparation = DiagnosticPreparation.recording,
+    this.cancelRequested = false,
+    this.error,
+    this.summary,
+    this.cleanup,
+    this.saves = const [],
+    this.coordination,
+    this.coreDoneObserved = false,
+    this.cleanupDoneObserved = false,
+    this.observerCleanupComplete = false,
+    this.observerCleanup,
+    this.observerCleanupFailureCount = 0,
+    this.fullySuccessful,
+    this.noResourcesAcquired = false,
     this.logical,
     this.registration,
     this.logicalSave,
@@ -117,6 +138,21 @@ final class OperationSnapshot {
     this.done = false,
   });
   final int generation;
+  final int? attemptId;
+  final DiagnosticPreparation preparation;
+  final bool cancelRequested,
+      coreDoneObserved,
+      cleanupDoneObserved,
+      observerCleanupComplete;
+  final CleanupState? observerCleanup;
+  final int observerCleanupFailureCount;
+  final RuntimeFault? error;
+  final LogicalSummary? summary;
+  final CleanupSummary? cleanup;
+  final List<SaveSnapshot> saves;
+  final FailureSummary? coordination;
+  final bool? fullySuccessful;
+  final bool noResourcesAcquired;
   final String? runId;
   final LogicalReason? logical;
   final SaveSnapshot? registration, logicalSave, cleanupSave;
@@ -124,11 +160,34 @@ final class OperationSnapshot {
   final bool coordinationFailure, observationFailure, done;
   final FailureKind? coordinationKind;
   bool get resourcesReleased =>
+      (noResourcesAcquired && done && !observationFailure) ||
       done &&
-      !observationFailure &&
-      _released(coreCleanup) &&
-      _released(hostCleanup) &&
-      _released(aggregate);
+          !observationFailure &&
+          observerCleanupComplete &&
+          coreDoneObserved &&
+          !resourceUncertainty &&
+          _released(coreCleanup) &&
+          _released(hostCleanup) &&
+          _released(aggregate);
+  bool get resourceUncertainty =>
+      observationFailure ||
+      [
+        registration,
+        logicalSave,
+        cleanupSave,
+        ...saves,
+      ].any((s) => s?.cleanupUnconfirmed == true) ||
+      [cleanup?.core, cleanup?.hostSubscriptions].any(
+        (s) =>
+            s != null &&
+            (s.failureCount > 0 ||
+                s.state == CleanupState.failed ||
+                s.state == CleanupState.unconfirmedAfterExit),
+      ) ||
+      ((cleanupDoneObserved || done) &&
+          (!_released(coreCleanup) ||
+              !_released(hostCleanup) ||
+              !_released(aggregate)));
   static bool _released(CleanupState? state) =>
       state == CleanupState.succeeded || state == CleanupState.notRequired;
 }
@@ -493,4 +552,25 @@ final class StartDeviceCheck extends RuntimeRequest {
 final class CancelDeviceCheck extends RuntimeRequest {
   const CancelDeviceCheck(this.id);
   final int id;
+}
+
+/// Admission, registration and settlement are independent observations.
+enum DiagnosticPreparation { resolving, recording, settled }
+
+final class StartRecordedDiagnostic extends RuntimeRequest {
+  const StartRecordedDiagnostic(this.id, this.port, this.parameters);
+  final int id;
+  final String port;
+  final EffectiveParameterRequest parameters;
+}
+
+final class CancelRecordedDiagnostic extends RuntimeRequest {
+  const CancelRecordedDiagnostic(this.generation, this.id);
+  final int generation, id;
+}
+
+final class DiagnosticHandle {
+  const DiagnosticHandle(this.generation, this.id, this.accepted);
+  final int generation, id;
+  final Future<void> accepted;
 }

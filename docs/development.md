@@ -3987,3 +3987,15 @@ check sends only the public session initialization pair and immediately requests
 close. Drivers can reset boards on open; no passive/no-side-effect claim, RF
 command, auto retry, inbox drain or unsolicited reset is appropriate. Missing
 hardware evidence is separate from software completion and must remain NOT_RUN.
+
+## Recorded diagnostic application entry (1D.7)
+
+The application now exposes only explicit single PING and finite Responder
+recording. The worker uses the existing public resolver/recorder and shared gate;
+`DiagnosticHandle.accepted` acknowledges admission and a generation/attempt-bound
+Cancel does not stop offline editing. Recording summaries, cleanup, save attempts,
+maintenance and storage/worker close remain independent. The session-owned
+Diagnostics model joins the existing quit/composition guards. No package version,
+schema, dependency or core/link public API change is needed. Follow
+[the current validation record](validation/phase-1d7-recorded-diagnostics.md) for
+actual evidence and the 1D.8 history/export handoff.

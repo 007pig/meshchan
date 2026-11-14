@@ -12,12 +12,13 @@ class SaveDraftIntent extends Intent {
 Future<LeaveChoice> showDraftLeaveDialog(
   BuildContext context, {
   required bool unknown,
+  String subject = 'draft',
 }) async =>
     await showDialog<LeaveChoice>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: Text(unknown ? 'Write result unknown' : 'Leave this draft?'),
+        title: Text(unknown ? 'Write result unknown' : 'Leave this $subject?'),
         content: Text(
           unknown
               ? 'The earlier save or delete may already have committed. Discard only abandons local edits; it cannot undo that write. Safely close and inspect records in a new session.'

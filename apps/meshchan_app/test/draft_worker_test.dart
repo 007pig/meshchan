@@ -76,7 +76,7 @@ void main() {
     final next = await runtime.listDrafts(size: 1, after: page.nextCursor);
     expect({page.items.single.id, next.items.single.id}, {a.id, b.id});
     expect(next.nextCursor, null);
-    final permit = await runtime.beginDraftDecision(7);
+    final permit = await runtime.beginDraftDecision(7, targetId: a.id);
     await expectLater(
       runtime.saveDraft(title: 'ordinary', body: ''),
       throwsA(isA<RuntimeFault>()),
@@ -87,6 +87,7 @@ void main() {
       title: a.title,
       body: changed.body,
       decision: permit,
+      session: 7,
     );
     expect(finalSave.revision, 2);
     await expectLater(
@@ -96,6 +97,7 @@ void main() {
         title: '',
         body: '',
         decision: permit,
+        session: 7,
       ),
       throwsA(isA<RuntimeFault>()),
     );

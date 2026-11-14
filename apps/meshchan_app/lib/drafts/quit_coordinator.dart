@@ -3,14 +3,36 @@ import 'dart:async';
 import '../runtime/controller.dart';
 import '../runtime/protocol.dart';
 import 'editor.dart';
+import '../profiles/editor.dart';
+import '../profiles/preview.dart';
 
 /// Both native and Flutter exit requests share this application-owned decision.
 /// Cancel is never cached. Shutdown retains the runtime's late-release semantics.
 final class DraftQuitCoordinator {
   DraftQuitCoordinator(this.runtime, {this.afterShutdownIntent})
-    : editor = DraftEditor(runtime);
+    : editor = DraftEditor(runtime),
+      preview = ParameterPreview(runtime) {
+    profiles = ProfilesEditor(
+      runtime,
+      invalidatePreview: preview.storageChanged,
+    );
+  }
   final AppRuntime runtime;
   final DraftEditor editor;
+  final ParameterPreview preview;
+  late final ProfilesEditor profiles;
+  bool auxiliaryActive = false;
+  Future<bool> leaveCurrent(LeavePrompt show) async {
+    if (preview.composing) return false;
+    return auxiliaryActive ? profiles.leave(show) : editor.leave(show);
+  }
+
+  void disposeEditors() {
+    editor.dispose();
+    profiles.dispose();
+    preview.dispose();
+  }
+
   final void Function()? afterShutdownIntent;
   LeavePrompt? prompt;
   Future<bool>? _attempt;
@@ -20,19 +42,45 @@ final class DraftQuitCoordinator {
       _attempt ??= _quit().whenComplete(() => _attempt = null);
   Future<bool> _quit() async {
     if (_closing) return (await runtime.shutdown()).canExit;
-    if (editor.deciding || editor.deleting || editor.confirming) return false;
+    if (profiles.deciding ||
+        profiles.deleting ||
+        profiles.confirming ||
+        profiles.restoring ||
+        editor.deciding ||
+        editor.deleting ||
+        editor.confirming) {
+      return false;
+    }
+    if (profiles.deferDepartureForComposition() || preview.composing) {
+      return false;
+    }
     if (editor.deferDepartureForComposition()) return false;
     editor.setQuitting(true);
+    profiles.setQuitting(true);
     DraftDecision? decision;
     var allowed = false;
     try {
       // Early startup has no document/context to wait for and owns no edits.
       if (runtime.snapshot.phase == RuntimePhase.ready) {
-        decision = await runtime.beginDraftDecision(editor.documentGeneration);
+        decision = auxiliaryActive
+            ? await runtime.beginDraftDecision(
+                profiles.session,
+                target: profiles.target,
+                targetId: profiles.target == EditorTarget.profile
+                    ? profiles.baseline?.id.value
+                    : null,
+              )
+            : await runtime.beginDraftDecision(
+                editor.documentGeneration,
+                targetId: editor.baseline?.id,
+              );
       }
-      if (editor.needsDecision) {
+      if (auxiliaryActive ? profiles.needsDecision : editor.needsDecision) {
         final show = prompt;
-        if (show == null || !await editor.leave(show, decision: decision)) {
+        if (show == null ||
+            !(auxiliaryActive
+                ? await profiles.leave(show, decision: decision)
+                : await editor.leave(show, decision: decision))) {
           return false;
         }
       }
@@ -52,6 +100,7 @@ final class DraftQuitCoordinator {
         }
       }
       editor.setQuitting(_closing);
+      profiles.setQuitting(_closing);
       if (!_closing &&
           !allowed &&
           runtime.snapshot.phase == RuntimePhase.ready &&

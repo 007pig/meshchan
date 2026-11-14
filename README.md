@@ -120,3 +120,5 @@ above. This dev.3 delivery adds no new RF acceptance.
 The macOS app now has an [offline draft list and explicit-save editor](apps/meshchan_app/README.md#offline-drafts-1d4).
 See the [1D.4 validation record](docs/validation/phase-1d4-drafts.md) for tested
 runtime, persistence, input and quit behavior and the handoff to presets/settings.
+
+The app also provides [complete profiles, settings and offline parameter preview](apps/meshchan_app/README.md#profiles-settings-and-offline-preview-1d5). See the [1D.5 validation record](docs/validation/phase-1d5-profiles-settings.md) for evidence and device-step boundaries.

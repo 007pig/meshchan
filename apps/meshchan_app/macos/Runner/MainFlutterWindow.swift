@@ -4,6 +4,22 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var platformChannel: FlutterMethodChannel?
 
+  static func isQuitEquivalent(_ event: NSEvent) -> Bool {
+    let shortcutModifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])
+    return event.type == .keyDown && shortcutModifiers == [.command]
+      && event.charactersIgnoringModifiers?.lowercased() == "q"
+  }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if Self.isQuitEquivalent(event) {
+      // Consume before Flutter's input method can interpret a vetoed quit as q.
+      // Keep the original AppKit request and the sole Dart quit coordinator.
+      NSApplication.shared.terminate(nil)
+      return true
+    }
+    return super.performKeyEquivalent(with: event)
+  }
+
   override func awakeFromNib() {
     let project = FlutterDartProject()
     // Forward launch arguments explicitly in debug and release/AOT alike.

@@ -840,3 +840,54 @@ its answer. If an accepted mutation becomes unknown while a regular dialog is
 open or while its chosen Discard waits for the write, a second unknown-result
 prompt must be acknowledged. Continue editing at either prompt retains the buffer
 and vetoes departure; resource release never changes the unknown mutation fact.
+
+### 1D.5 implementation
+
+The auxiliary Profiles and settings entry uses `ProfilesEditor` for a single
+persistent Profile/Settings session, `ParameterForm` for complete parameters and
+independent invocation presence, and `ParameterPreview` for explicit generation-
+bound resolution. Public immutable core models cross the isolate boundary in
+small typed replies. Core/link implementation, schema, dependencies, versions,
+device and recording contracts are unchanged. The native composition follow-up
+below includes a narrow Command+Q event-routing correction in the runner.
+
+`AppRuntime` now exposes independent profile pages/reads/mutations, settings
+read/save/restore and typed resolve methods. WorkerDispatcher routes them through
+the same short database queue and owner. Core settings mutations themselves
+request independent maintenance; worker observes completion and projects latest
+and sticky facts without turning maintenance failure into save failure.
+
+The historical `DraftDecision` wire name is retained for compatibility. It now
+also identifies EditorTarget, document/session generation and stable target ID.
+Both bridge sides reject ordinary paused requests and consume one final Save
+before enqueueing it. Pending new-profile creation can bind only its own returned
+ID; Draft writes also carry session identity. The existing DraftQuitCoordinator
+owns both editors and preview and remains the sole native/Flutter quit decision.
+The auxiliary form never accesses storage in Widget disposal.
+
+See [the new validation record](../validation/phase-1d5-profiles-settings.md).
+Earlier 1D.4 GUI evidence and its default-directory isolation incident remain
+historical. Step 1D.6 must obtain independent, explicit port selection authorization;
+profile selection, resolved parameters and portHint do not provide it.
+
+### 1D.5 native composition follow-up
+
+Actual native Pinyin testing exposed that DropdownButton's menu route can open
+before onChanged checks composition, committing marked text on focus loss. The
+profile/settings/preview selectors now use a small GuardedChoice: its button checks
+live composing values before showMenu, and checks again before applying a choice.
+It retains operation/ID/presence semantics and adds no persistence API. Five mouse
+Widget regressions reproduce the original menu-opening failure and pass after the
+fix. The app suite now passes 124 tests. Native evidence and the user-configured
+Pinyin/ABC Caps Lock setup are recorded in the [1D.5 validation record](../validation/phase-1d5-profiles-settings.md).
+
+The same actual-input run exposed a native Command+Q issue: after the Dart
+coordinator deferred quit for active composition, Flutter's input method could
+still insert `q` into the pending phonetics. MainFlutterWindow now consumes only
+the unmodified Command+Q key equivalent before forwarding to Flutter and calls
+the original AppKit terminate entry. The existing native request/reply,
+composition veto, shared coordinator and shutdown barriers remain responsible
+for the decision. Window close still uses the original windowShouldClose path.
+Caps Lock does not prevent matching; Command+Shift/Control/Option+Q and other
+shortcuts are not intercepted. Two native event-matching regressions accompany
+the actual Pinyin/quit proof; no SDK, engine or security configuration changed.

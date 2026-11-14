@@ -20,6 +20,8 @@ DraftSnapshot draft(
 );
 
 final class DraftRuntime implements AppRuntime {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
   final states = StreamController<RuntimeSnapshot>.broadcast(sync: true);
   final writes = <WriteDraft>[];
   final deletes = <DeleteDraft>[];
@@ -74,6 +76,7 @@ final class DraftRuntime implements AppRuntime {
     required String body,
     String? id,
     int? expectedRevision,
+    int? session,
     DraftDecision? decision,
   }) async {
     final request = WriteDraft(
@@ -81,6 +84,7 @@ final class DraftRuntime implements AppRuntime {
       body: body,
       id: id,
       expectedRevision: expectedRevision,
+      session: session,
       decision: decision,
     );
     writes.add(request);
@@ -107,9 +111,18 @@ final class DraftRuntime implements AppRuntime {
   }
 
   @override
-  Future<DraftDecision> beginDraftDecision(int documentGeneration) async {
+  Future<DraftDecision> beginDraftDecision(
+    int documentGeneration, {
+    EditorTarget target = EditorTarget.draft,
+    String? targetId,
+  }) async {
     begins++;
-    decision = DraftDecision(begins, documentGeneration);
+    decision = DraftDecision(
+      begins,
+      documentGeneration,
+      target: target,
+      targetId: targetId,
+    );
     setPhase(RuntimePhase.ready, paused: true);
     return decision!;
   }

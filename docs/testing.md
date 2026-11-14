@@ -1167,3 +1167,63 @@ query an exited application through Computer Use, which was observed to relaunch
 it without arguments. Launch every new session explicitly with its fixture first.
 The follow-up records one such default-directory opening as an isolation exception;
 its GUI passes do not imply complete fixture isolation.
+
+## Profile/settings and presence checks (1D.5)
+
+Use the existing Flutter SDK and the local stable Python 3.15+ described above.
+`profiles_test.dart` checks complete subtype mapping, A/B save state, raw lexical
+failures, exact text, presence and content bytes, settings replacement, late
+preview/unknown, shared quit, composition, scoped shortcuts and real worker
+admission. `check_profile_process.py` uses fixtureWrites false with public core,
+real SQLite, independent owner/contender/reopen processes, delayed create/final
+update and committed reply loss. CI runs it in both jobs, sequentially with shared
+native hooks. It neither imports private storage hooks nor opens serial hardware.
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub)
+python3 apps/meshchan_app/tool/check_profile_process.py --dart "$(command -v dart)"
+```
+
+On this Mac, use command-local Apple Clang PATH and explicitly invoke
+`/opt/homebrew/bin/python3`; its children use `sys.executable`. Protocol integers
+use decimal or 0x/0X hex; budgets/durations/limits use decimal; paths/Hex content
+use even-length ASCII hex without separators/prefix. No trim, fallback or clamp.
+Preview is explicit and offline; missing required fields must fail through core.
+
+All GUI/Debug/Release/process validation must use a new owned `--data-dir`.
+Before native UI reads, verify the live PID and its exact fixture argv. After
+Quit, inspect only OS process state and existing logs; do not ask Computer Use
+to read a closed app (it may relaunch without arguments). Restart explicitly
+with fixture arguments for each new round. XCTest retains disabled-owner isolation
+before engine/bootstrap and does not inherit ordinary Launch arguments. Platform
+GUI, IME, Undo and dirty quit are separate from software callbacks; record NOT_RUN
+or BLOCKED where actual input cannot be verified. See the
+[1D.5 evidence](validation/phase-1d5-profiles-settings.md).
+
+## Native GUI preflight: storage location and Pinyin/ABC
+
+Follow the [reusable macOS GUI setup](development.md#reusable-macos-gui-fixture-and-input-setup).
+Use an owned `/private/tmp` fixture and complete copied app, with stdout/stderr
+also outside Documents, launched from an unprotected cwd with explicit `--data-dir`. A repository `build/` directory inside
+Documents is still protected Documents access and caused repeated permission
+dialogs during 1D.5 testing. Avoid those paths for routine GUI runs; keep receipts
+and evidence in ignored build output, and do not change product defaults or macOS
+security settings. Copy/move fixture data only after confirmed normal owner close.
+Native XCTest needs the same external host/products/cwd/log setup, in addition
+to disabled-owner isolation. Preflight `TARGET_BUILD_DIR`, `TEST_HOST` and the
+generated `.xctestrun` before running the test host. A copied product GUI does
+not relocate a separate checkout-local XCTest host. Canonicalize `/tmp` and
+`/private/tmp` when checking the owned directory boundary.
+
+On the current Mac **Command+Space switches input sources**; **Control+Space
+opens Raycast**. Caps Lock is additionally user-configured to toggle Pinyin/ABC.
+Use the personal `$macos-pinyin-input` skill for the full reusable procedure.
+After any launcher overlay, dismiss it without running a result and recheck the
+actual keyboard-focus owner as well as the foreground PID. Input-source
+selection does not establish Chinese composition: check actual underlined preedit
+and candidates in the focused fixture field, and press Caps Lock once if needed
+under that existing configuration. Plain Latin text and pasted Chinese are not
+Pinyin acceptance. Do not assume the shortcut on other machines or change their
+configuration. Restore the user's latest intended mode, including steering made
+while a test is running. Record the source/mode, actions, screenshots, and exact
+independent committed read after normal close.

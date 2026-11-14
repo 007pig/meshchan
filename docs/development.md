@@ -8,6 +8,12 @@ guest-side native input, host-input isolation and real Pinyin composition.
 The guide includes installation, guest permissions, reusable scripts and
 historical evidence. TextEdit baseline success is separate from product GUI
 acceptance against an owned fixture.
+Meshchan's reusable product runner is documented in the guide's
+[product section](macos-vm-gui-testing.md#meshchan-product-ui-runner).
+The user-requested local VM configuration is
+`~/.config/meshchan-vm/config.json`; credentials remain outside Git and are
+referenced only by that private configuration. Reconnect and verify identity
+after reboot, and retain interrupted evidence rather than reusing old PIDs.
 
 ## Offline draft editor checks (1D.4)
 

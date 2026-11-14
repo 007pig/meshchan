@@ -9,7 +9,7 @@ actual_uuid=$(/usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice | /usr/bin/awk -F '
 pid=$(cat "$base/active.lock/pid")
 case "$pid" in ''|*[!0-9]*) exit 64;; esac
 command_line=$(ps -p "$pid" -o command=)
-[[ ( "$command_line" == *"$base/guest.sh"* || "$command_line" == *"$base/pinyin.sh"* ) && "$command_line" == *"$expected_uuid"* ]] || exit 65
+[[ ( "$command_line" == *"$base/guest.sh"* || "$command_line" == *"$base/pinyin.sh"* || "$command_line" == *"$base/product.sh"* ) && "$command_line" == *"$expected_uuid"* ]] || exit 65
 kill -TERM "$pid"
 for attempt in {1..100}; do
     [[ -d "$base/active.lock" ]] || { echo STOPPED; exit 0; }

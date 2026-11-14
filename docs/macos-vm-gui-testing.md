@@ -90,6 +90,29 @@ keys, exact hardware UUID, a VirtualMac model and the test account's console
 session. A closed control connection requires reconnecting unless another
 already-authorized SSH authentication method is available.
 
+### Optional local credentials
+
+When the user explicitly requests stored credentials for a disposable test VM,
+the private configuration can contain `credentials_file`, pointing to a regular
+file owned by the host user with mode `0600`, outside the repository. That JSON
+has `user`, `host`, `uuid` and `password` fields. The first three must exactly
+match the private VM configuration. On this host the user requested
+`~/.config/meshchan-vm/credentials.json`; only its location is documented here.
+The durable private configuration and independently verified host key are kept
+alongside it as `config.json` and `known_hosts`, so host temporary-directory
+cleanup does not discard those setup facts. Verify their current identity before
+reuse; these local files are not repository or installation dependencies.
+Do not print, collect or commit its contents. No credential is provided by the
+repository example or installed automatically for another user.
+
+The controller uses SSH's askpass protocol with the selected `sys.executable`;
+the password is not a command-line argument. With this option it can establish
+a new temporary connection before an operation if the control socket is gone.
+It preserves strict known-host checking and does not retry a remote command
+after an uncertain result. Without the option, run `connect` and authenticate in
+the operator's terminal. Use the complete script and configuration paths if
+running from a different directory; `vm.py` and `config.json` are not root files.
+
 The build downloads official [cliclick 5.1](https://github.com/BlueM/cliclick/releases/tag/5.1),
 checks archive SHA-256
 `710910fd2dade6a3b5889594bfc019e7d4c2beee09fd777503e71ea82acc91bc`,
@@ -242,6 +265,7 @@ To retire the setup, stop and disconnect, revoke the app's guest Accessibility
 and Screen Recording grants, disable guest Remote Login, and delete the owned
 guest test directory after preserving needed evidence. Remove host private
 configuration, known-hosts entry and runtime directory when no longer needed.
+Remove any user-requested local credential file separately when retiring its VM.
 The VM and documents remain until explicitly removed. No host privacy grant is
 required by this workflow.
 
@@ -283,3 +307,146 @@ It does not cover lock/sleep/reboot unattended operation, arbitrary remote-contr
 implementations, or Meshchan product text fields. Product IME regression needs
 real marked text, its own target/focus checks, normal Save/close behavior and an
 independent reopen against an owned fixture.
+
+## Meshchan product UI runner
+
+The product-specific tools are in `apps/meshchan_app/tool/macos_vm/`. They reuse
+the existing signed `UTMUIProbe.app`: its child dispatches the explicitly deployed
+`product.sh`. No replacement executor signature or new privacy grant is needed
+on the already-authorized VM. The host controller sends commands over the
+identity-checked SSH channel; key, pointer, focus and screenshot operations run
+inside the guest. It never drives the host keyboard for product testing.
+
+Use a new ignored evidence directory for each run. The app, working directory,
+fixture, output and screenshots reside below the guest's dedicated
+`~/utm-ui-isolation/products/RUN_ID-MODE/`, outside Documents and the default
+Meshchan directory. Full Debug and Release app bundles must pass
+`codesign --verify --deep --strict --all-architectures` before and after copying.
+The native helper refuses the host and verifies the exact executable, PID,
+Bundle ID, `--data-dir`, foreground application and actual input owner.
+
+From the repository root, using an already built and verified app:
+
+```bash
+product() {
+  /opt/homebrew/bin/python3 apps/meshchan_app/tool/macos_vm/host.py \
+    --config /private/tmp/meshchan-vm/config.json \
+    --evidence build/phase-1d6/vm-RUN_ID "$@"
+}
+scenario() {
+  /opt/homebrew/bin/python3 apps/meshchan_app/tool/macos_vm/scenario.py \
+    --config /private/tmp/meshchan-vm/config.json \
+    --evidence build/phase-1d6/vm-RUN_ID "$@"
+}
+product prepare
+product launch Debug /absolute/path/to/verified/Debug/Meshchan.app
+scenario Debug initial
+scenario Debug preedit device
+```
+
+`preedit` stops after collecting its original screenshot and focused-field JSON.
+View both: confirm the precise fixture, matching foreground/focus PID, marked
+`zhong wen`, candidate `中文` and no overlay. Then test the composing controls,
+view their retained images, and commit through one natural Space:
+
+```bash
+scenario Debug defer device navigation
+scenario Debug defer device menu
+scenario Debug defer device quit
+scenario Debug commit device --visual-confirmed
+scenario Debug preedit draft
+# Review this new screenshot and JSON independently before its commit.
+scenario Debug defer draft save
+scenario Debug defer draft navigation
+scenario Debug defer draft quit
+scenario Debug commit draft --visual-confirmed
+scenario Debug quit 'Continue editing'
+scenario Debug quit Save
+product settled Debug
+```
+
+Run Release with a separate product fixture in the same executor run or use a
+new run. `product finish` requires normal resource-release/worker-exit receipts
+and zero pending requests/receive ports. It stops the executor, not the app by
+force. Read a collected fixture independently only after normal close. Product
+results use their own assertions and shutdown receipts; the TextEdit verifier
+rejects a `product` run instead of reporting a misleading pass.
+
+Fresh `DebugDiscard` / `ReleaseDiscard` fixtures support the `discard` scenario
+without changing the saved Pinyin fixtures. Explicit native checks use fresh
+`DebugDevice` / `ReleaseDevice` fixtures and require the separate opt-in command
+`scenario MODE check --port /exact/authorized/guest/path`. The helper keeps that
+path verbatim, records primary failure and cleanup separately, and never picks
+another port or adjusts budgets after failure. Meshchan's product helper currently
+uses the default dedicated guest root, `~/utm-ui-isolation`; custom-root TextEdit
+deployments are a separate supported path described above.
+
+If interrupted by a reboot, retain the old evidence and classify it as
+interrupted. Verify no matching runner or Meshchan process remains before
+archiving `active.lock`; do not simply delete it or reuse a saved PID. Confirm
+the new desktop is unlocked and begin a new run. A product runner deadline or
+external termination is not a successful application shutdown.
+
+## USB passthrough and serial forwarding
+
+On macOS 27+, UTM's Apple backend supports USB passthrough. First assign the
+specific device to UTM using the **host** menu-bar **Virtual Machine Accessories**
+item, then confirm the connection in the VM toolbar's **USB Devices** list.
+Unassigned devices are absent from that list; an empty/querying UTM menu does not
+prove that the backend lacks USB support. See the current
+[official USB guide](https://docs.getutm.app/guest-support/sharing/usb/).
+Changing this mapping is a setup action, outside any host-isolation measurement.
+
+Forwarding a host serial device through a VM Serial configuration can instead
+produce `/dev/cu.com.redhat.spice.*` paths in the guest. Those names alone do not
+prove which physical device is attached. Verify the exact host-to-guest mapping
+and explicit user selection before checking a forwarded port. Never open the
+guest tools console port or substitute the first/only enumerated path. Use the
+product's explicit Refresh/Select/Check flow; VM metadata alone is not a finite
+USB initialization result. Record direct USB, forwarded serial, and no-device
+results separately, including the actual guest source path.
+
+Confirm three layers independently: the selected USB device is visible in guest
+System Information; its compatible driver has created a serial node listed by
+Meshchan's explicit Refresh; and a user-selected finite Check has obtained
+Companion information and actually closed. A USB row is not a serial node or a
+successful session. In the November 14 product follow-up, Espressif `303a:1001`
+was visible with `AppleUSBCDCCompositeDevice`, but its interfaces had no serial
+driver children and Refresh still listed only SPICE ports. Do not substitute a
+SPICE console, invent a USB path or patch the app enumerator for that condition.
+Retain the binding/metadata evidence and resolve the guest device/driver setup.
+A user-controlled disconnect/reconnect of the same assigned accessory can request
+fresh enumeration, with possible board reset; this is separate from an app check.
+
+### Upstream research, November 14, 2026
+
+The [same-device UTM report #7947](https://github.com/utmapp/UTM/issues/7947)
+uses Espressif `303A:1001`, macOS host/guest 27.0.1, UTM 5.0.6 and the Apple
+backend. It remains open with no posted workaround. Its device was absent from
+guest System Information, unlike this run's visible USB device with no serial
+driver binding. It is a related report, not proof of an identical root cause.
+
+The apparently relevant [replug fix #8133](https://github.com/utmapp/UTM/pull/8133)
+was merged on November 12, after the current
+[5.0.8 release](https://github.com/utmapp/UTM/releases/tag/v5.0.8) on October 17.
+Its actual diff changes only
+`Platform/macOS/Display/VMDisplayQemuDisplayController.swift`. It is a QEMU/SPICE
+fix, not evidence of an Apple-backend CDC fix; do not recommend a development
+build solely on that title.
+
+[Espressif #18516](https://github.com/espressif/esp-idf/issues/18516) concerns
+location-based macOS port names caused by colons in this device's USB serial
+descriptor. It explains path changes, not the absence of every USB serial node.
+[Espressif #19192](https://github.com/espressif/esp-idf/issues/19192) reports a C6
+USB-Serial/JTAG endpoint stuck after a bus reset; its reporter recovered by a
+power cycle. That is a different failure stage/chip report and not a verified
+fix for this guest. The operator's physical unplug/replug here did not create
+a serial node.
+
+No matching, validated Apple-backend CDC repair was found. A full UTM process
+restart followed by explicit accessory assignment is a possible diagnostic
+comparison, not a published successful workaround. Preserve the current tree,
+metadata and narrowly scoped CDC-driver diagnostics for an upstream report.
+Do not change firmware, kernel extensions, signing or security settings based
+on unrelated old driver workarounds. Do not publish a report without the user's
+instruction to send it.

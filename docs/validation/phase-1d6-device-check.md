@@ -1,5 +1,10 @@
 # Phase 1 / 1D / Step 6 — Explicit finite device checks
 
+The subsequent [VM product GUI follow-up](phase-1d6-vm-gui.md) is separate from
+the host acceptance below. It records the new guest-side runner, real Pinyin,
+reboot recovery and the guest's USB/serial-mapping boundary. It does not replace
+or retroactively broaden the physical USB results recorded here.
+
 ## Latest unlocked follow-up outcome — November 14, 2026
 
 The user unlocked macOS and explicitly selected `/dev/cu.usbmodem211101` for

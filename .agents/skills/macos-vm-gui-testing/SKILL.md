@@ -10,6 +10,11 @@ installation, permissions, command examples, historical evidence and recovery.
 Use `scripts/vm.py --help` for orchestration. Use the project's verified Python
 3.15+ interpreter; on the validated host this is `/opt/homebrew/bin/python3`.
 Copy `config.example.json` outside the repository and verify its identity values.
+If the user explicitly asks to retain the disposable VM's credentials, use a
+private file outside Git and reference it with `credentials_file` in the private
+configuration. On this host the user-requested file is
+`~/.config/meshchan-vm/credentials.json`. Read the guide's authentication section;
+never copy that file into a skill, example, log or test artifact.
 
 ## Execution boundary
 
@@ -55,7 +60,13 @@ a stale lock until process identity and termination have been established.
 
 ## Extend to Meshchan
 
-The bundled probes target TextEdit only. For product testing, deploy the intended
+The bundled baseline/Pinyin probes target TextEdit only. Meshchan's product
+runner is [tool/macos_vm](../../../apps/meshchan_app/tool/macos_vm/host.py);
+read the guide's Meshchan section before using it. Its `product` stage reuses the
+authorized executor and requires a separately deployed product-owned script.
+TextEdit's `verify` deliberately refuses product results.
+
+For product testing, deploy the intended
 app and use an owned fixture directory outside protected Documents paths and
 outside the product's default data directory. Verify its exact PID, arguments,
 window and actual focused control before sending input. Capture real marked text
@@ -65,3 +76,19 @@ Never replace real IME composition with pasted Chinese, Unicode injection,
 AX value assignment or direct document edits. Restore the intended input source
 and verify it with actual input when possible. If focus/composition is uncertain,
 stop before Save and retain evidence; do not switch repeatedly during preedit.
+
+Flutter's unfocused accessibility proxies can have empty values. Verify the
+actual focused native input, exact expected text and selected range; a key event
+being posted does not prove that Select All or another shortcut was applied.
+Use the product helper's tested modifier sequence rather than assuming the
+TextEdit keyboard path establishes Flutter's hardware-key state.
+
+After a guest reboot, reconnect and recheck identity, unlock state and processes.
+Treat the old run as interrupted unless it has a normal shutdown receipt. Archive
+a stale lock only after verifying that its runner and product owner are gone;
+do not reuse old PIDs or count reboot termination as a resource-release pass.
+USB passthrough and serial forwarding are different. A newly visible SPICE port
+does not identify the selected physical device; verify the mapping and obtain
+explicit selection before opening it. See the guide's USB section for macOS 27.
+Check upstream fixes against the actual backend: a macOS-host USB fix can affect
+only QEMU and provide no evidence for an Apple Virtualization guest.

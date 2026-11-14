@@ -24,6 +24,64 @@ class ToolingChecks(unittest.TestCase):
         result = subprocess.run([sys.executable, str(vm.HERE / 'vm.py'), 'run', 'unknown'], capture_output=True)
         self.assertEqual(result.returncode, 2)
 
+    def test_private_askpass_and_permissions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            credentials = root / 'credentials.json'
+            credentials.write_text(json.dumps({'password':'disposable-test-value'}))
+            credentials.chmod(0o600)
+            import os
+            env = dict(os.environ, MESHCHAN_VM_PYTHON=sys.executable,
+                       MESHCHAN_VM_CREDENTIALS=str(credentials))
+            result = subprocess.run([str(vm.HERE / 'askpass.sh'),'Guest password:'], env=env,capture_output=True,text=True)
+            self.assertEqual(result.stdout,'disposable-test-value\n')
+            self.assertEqual(result.returncode,0)
+            for prompt in ['Host key verification?', 'Key passphrase:']:
+                result = subprocess.run([str(vm.HERE / 'askpass.sh'),prompt],env=env,capture_output=True)
+                self.assertNotEqual(result.returncode,0)
+                self.assertEqual(result.stdout,b'')
+            credentials.chmod(0o644)
+            result = subprocess.run([str(vm.HERE / 'askpass.sh'),'Guest password:'],env=env,capture_output=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertEqual(result.stdout,b'')
+
+    def test_private_credential_identity_before_authentication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'known_hosts').touch()
+            credential_path = root / 'credentials.json'
+            credential_path.write_text(json.dumps({'host':'192.0.2.2','user':'test','uuid':'00000000-0000-0000-0000-000000000000','password':'disposable-test-value'}))
+            credential_path.chmod(0o600)
+            config = dict(host='192.0.2.1',user='test',uuid='00000000-0000-0000-0000-000000000000',known_hosts=str(root/'known_hosts'),runtime_dir=str(root/'runtime'),evidence_dir=str(root/'evidence'),guest_root='/Users/test/probe',credentials_file=str(credential_path))
+            (root / 'config.json').write_text(json.dumps(config))
+            with patch.object(vm,'call') as call:
+                with self.assertRaisesRegex(ValueError,'must match'):
+                    vm.VM(root / 'config.json').connect()
+            call.assert_not_called()
+
+    def test_product_cannot_pass_textedit_verifier(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / '20260101T000000Z-product-123'
+            run.mkdir()
+            (run / 'exit-code').write_text('0\n')
+            with self.assertRaisesRegex(ValueError,'product runner'):
+                vm.verify(run)
+
+    def test_product_custom_root_rejected_before_owner_or_evidence(self):
+        import importlib.util
+        source = vm.HERE.parents[3] / 'apps/meshchan_app/tool/macos_vm/host.py'
+        spec = importlib.util.spec_from_file_location('product_ui',source)
+        product = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(product)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'known_hosts').touch()
+            config = dict(host='192.0.2.1',user='test',uuid='00000000-0000-0000-0000-000000000000',known_hosts=str(root/'known_hosts'),runtime_dir=str(root/'runtime'),evidence_dir=str(root/'evidence'),guest_root='/Users/test/custom')
+            (root/'config.json').write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError,'before launching an owner'):
+                product.Product(root/'config.json',root/'evidence')
+            self.assertFalse((root/'evidence').exists())
+
     def test_native_helpers_refuse_host(self):
         if BUILD is None:
             self.skipTest('Pass build directory to exercise native guards')

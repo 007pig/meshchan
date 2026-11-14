@@ -8,6 +8,34 @@ stable Python 3.15 or newer for local Python scripts, as described in the
 [local toolchain selection](development.md#local-python-toolchain). Python is a
 development tool only; the distributed CLI does not require it.
 
+## macOS guest product GUI checks
+
+Use the [VM guide](macos-vm-gui-testing.md#meshchan-product-ui-runner) and
+[repository skill](../.agents/skills/macos-vm-gui-testing/SKILL.md) for actual
+guest UI input. `apps/meshchan_app/tool/macos_vm/host.py` deploys complete signed
+app bundles to owned guest fixtures and reuses the authorized guest executor.
+`scenario.py` separates Device/Draft preedit capture, composing actions and
+review-confirmed natural commits. Inspect each original image and focus JSON
+before its commit; do not automate the visual approval flags.
+
+These optional interactive tests require an unlocked configured VM and are not
+ordinary CI entrypoints. They do not enumerate or open hardware by default.
+Explicit metadata Refresh is part of the product UI scenario; actual port
+selection/initialization is a separate, explicitly authorized step. A virtual
+SPICE port is not sufficient evidence of a physical USB mapping. Normal quit
+requires the application's resource-release/worker-exit receipt, followed by
+independent inspection of an external owned copy of its closed fixture.
+
+Run the skill's offline controller checks on macOS with:
+
+```bash
+/opt/homebrew/bin/python3 .agents/skills/macos-vm-gui-testing/scripts/check_tooling.py
+```
+
+An optional native-helper build directory also exercises their host-refusal
+checks. The [VM product validation](validation/phase-1d6-vm-gui.md) records the
+actual Debug/Release run and its hardware/isolation limits.
+
 ## Offline draft editor checks (1D.4)
 
 The [app guide](../apps/meshchan_app/README.md#offline-drafts-1d4) describes explicit

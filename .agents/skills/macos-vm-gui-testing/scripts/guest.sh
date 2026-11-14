@@ -5,7 +5,7 @@ base=${3:-"$HOME/utm-ui-isolation"}
 export PATH="$base/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 expected_uuid=${1:?expected VM hardware UUID required}
 stage=${2:?baseline, background, or minimized required}
-case "$stage" in pinyin) rounds=0;; baseline) rounds=3;; background|minimized) rounds=30;; *) exit 64;; esac
+case "$stage" in pinyin|product) rounds=0;; baseline) rounds=3;; background|minimized) rounds=30;; *) exit 64;; esac
 actual_uuid=$(ioreg -rd1 -c IOPlatformExpertDevice | awk -F '"' '/IOPlatformUUID/ {print $(NF-1)}')
 [[ "$actual_uuid" == "$expected_uuid" ]] || { echo 'REFUSED: guest identity mismatch' >&2; exit 65; }
 model=$(sysctl -n hw.model)
@@ -13,6 +13,7 @@ model=$(sysctl -n hw.model)
 [[ $(stat -f %Su /dev/console) == "$(id -un)" ]] || { echo 'No console session for SSH user' >&2; exit 66; }
 [[ $(/usr/sbin/ioreg -a -n Root -d1 | /usr/bin/plutil -extract IOConsoleLocked raw -o - -) == false ]] || { echo 'BLOCKED: guest is locked' >&2; exit 66; }
 if [[ "$stage" == pinyin ]]; then exec /bin/bash "$base/pinyin.sh" "$expected_uuid" "$base"; fi
+if [[ "$stage" == product ]]; then exec /bin/bash "$base/product.sh" "$expected_uuid" "$base"; fi
 cliclick=$(command -v cliclick) || { echo 'cliclick is not installed in guest' >&2; exit 69; }
 mkdir -p "$base/runs"
 lock="$base/active.lock"

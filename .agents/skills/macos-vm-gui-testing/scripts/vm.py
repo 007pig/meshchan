@@ -18,10 +18,19 @@ import urllib.request
 HERE = Path(__file__).resolve().parent
 CLICLICK_URL = 'https://github.com/BlueM/cliclick/releases/download/5.1/cliclick.zip'
 CLICLICK_SHA256 = '710910fd2dade6a3b5889594bfc019e7d4c2beee09fd777503e71ea82acc91bc'
-RUN = re.compile(r'\d{8}T\d{6}Z-(baseline|background|minimized|pinyin)-\d+')
+RUN = re.compile(r'\d{8}T\d{6}Z-(baseline|background|minimized|pinyin|product)-\d+')
 
 def call(args, **kwargs):
-    return subprocess.run(args, check=True, **kwargs)
+    try:
+        return subprocess.run(args, check=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        if args[0] in ('ssh', 'scp') and error.returncode == 255:
+            raise ValueError('SSH connection unavailable. Check the diagnostic above. '
+                             'For Permission denied or an expired control connection, run '
+                             'vm.py --config /absolute/path/config.json connect in your own '
+                             'terminal and authenticate there; never put a password in chat '
+                             'or configuration.') from None
+        raise
 
 def build(out):
     out = Path(out).expanduser().resolve()
@@ -94,8 +103,31 @@ class VM:
         ])
 
     def remote(self, command, **kwargs):
+        if self.c.get('credentials_file'):
+            control = subprocess.run(['ssh', *self.opts, '-O', 'check', self.target], capture_output=True)
+            if control.returncode:
+                self.connect()
         return call(['ssh', *self.opts, '-o', 'BatchMode=yes', self.target,
                      self.guard + ' && {\n' + command + '\n}'], **kwargs)
+
+    def connect(self):
+        env = dict(os.environ)
+        options = {}
+        if self.c.get('credentials_file'):
+            credential_path = Path(self.c['credentials_file']).expanduser()
+            if credential_path.is_symlink() or not credential_path.is_file():
+                raise ValueError('credentials_file must be a regular private file')
+            info = credential_path.stat()
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise ValueError('credentials_file must be owned by current user with mode 0600')
+            credentials = json.loads(credential_path.read_text())
+            if any(credentials.get(k) != self.c[k] for k in ['user', 'host', 'uuid']) or not isinstance(credentials.get('password'), str) or not credentials['password']:
+                raise ValueError('Private credentials must match configured user, host and UUID')
+            env.update(SSH_ASKPASS=str(HERE / 'askpass.sh'), SSH_ASKPASS_REQUIRE='force',
+                       DISPLAY='meshchan-vm-auth', MESHCHAN_VM_CREDENTIALS=str(credential_path.resolve()),
+                       MESHCHAN_VM_PYTHON=sys.executable)
+            options['stdin'] = subprocess.DEVNULL
+        call(['ssh', *self.opts, '-M', '-o', 'ControlPersist=30m', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3', '-fNT', self.target], env=env, **options)
 
     def runpath(self, run):
         if not RUN.fullmatch(run):
@@ -137,6 +169,7 @@ echo DEPLOYED_APP_PRESERVED_IF_PRESENT'''
 root={q(self.root)}
 test "$(/usr/sbin/ioreg -a -n Root -d1 | /usr/bin/plutil -extract IOConsoleLocked raw -o - -)" = false || {{ echo 'BLOCKED: unlock the guest desktop' >&2; exit 66; }}
 test ! -d "$root/active.lock"
+if test {q(stage)} = product; then test -f "$root/product.sh" || {{ echo 'Deploy the product-owned runner first' >&2; exit 69; }}; fi
 for item in UTMUIProbe.app/Contents/MacOS/UTMUIProbe bin/key-input bin/place-window bin/cliclick pinyin-bin/ime-inspect pinyin-bin/key-input; do test -x "$root/$item"; done
 before=$(cat "$root/latest-run" 2>/dev/null || true)
 open -n "$root/UTMUIProbe.app" --args {q(self.c['uuid'])} {q(stage)} "$root"
@@ -184,6 +217,8 @@ def verify(path):
     if not match:
         raise ValueError('Evidence directory name must be a run ID')
     stage = match.group(1)
+    if stage == 'product':
+        raise ValueError('Use the product runner\'s independent verifier; TextEdit checks do not validate product results')
     if (path / 'exit-code').read_text().strip() != '0':
         raise ValueError('Run failed or was interrupted')
     expected = b'ABC\n\xe4\xb8\xad\xe6\x96\x87\nABC\n\xe4\xbd\xa0\xe5\xa5\xbd\nABC\n' if stage == 'pinyin' else ''.join(f'VM-{stage}-{i:03d}\n' for i in range(1, 4 if stage == 'baseline' else 31)).encode()
@@ -232,7 +267,7 @@ def main():
     for name in ['connect', 'disconnect', 'check', 'stop']:
         sub.add_parser(name)
     p = sub.add_parser('deploy'); p.add_argument('--build-dir', required=True)
-    p = sub.add_parser('run'); p.add_argument('stage', choices=['baseline', 'background', 'minimized', 'pinyin'])
+    p = sub.add_parser('run'); p.add_argument('stage', choices=['baseline', 'background', 'minimized', 'pinyin', 'product'])
     for name in ['status', 'collect']:
         p = sub.add_parser(name); p.add_argument('run_id')
     for name in ['review', 'approve']:
@@ -246,7 +281,7 @@ def main():
     if not args.config: parser.error('--config is required for VM operations')
     vm = VM(args.config)
     if args.command == 'connect':
-        call(['ssh', *vm.opts, '-M', '-o', 'ControlPersist=30m', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3', '-fNT', vm.target])
+        vm.connect()
         vm.check()
     elif args.command == 'disconnect':
         call(['ssh', *vm.opts, '-O', 'exit', vm.target])

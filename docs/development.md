@@ -3999,3 +3999,21 @@ Diagnostics model joins the existing quit/composition guards. No package version
 schema, dependency or core/link public API change is needed. Follow
 [the current validation record](validation/phase-1d7-recorded-diagnostics.md) for
 actual evidence and the 1D.8 history/export handoff.
+
+## 1D.8 history and host export development
+
+History bridge/UI lives in `apps/meshchan_app/lib/history/`; the application-owned
+file lifecycle is in `lib/export/coordinator.dart`. Core/link public APIs,
+workspace membership, lockfile, schema/summary versions and product options stay
+unchanged. Use `HistorySelection.after` as the current page input cursor; never
+substitute the returned next cursor for export. Keep the core JSON string intact
+through UTF-8 writing; parse only the safe returned `runs` length for metadata.
+
+Run `check_history_process.py` alongside the existing five process gates. On this
+Mac select Apple compiler discovery within the validation process as documented
+for other native-asset checks, and call `/opt/homebrew/bin/python3` explicitly
+(Python 3.15.2). Never modify SDK/cache/vendor sources to fix discovery. The new
+process fixture is test-only and uses public recorder APIs; normal product
+startup still has no fake/seed switch. The platform boundary uses installed
+macOS SDK `renamex_np`/`RENAME_EXCL` and `NSSavePanelDelegate.panel(_:validate:)`.
+Keep builds/tests/native asset generation sequential in one checkout.

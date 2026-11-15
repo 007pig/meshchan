@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'probe_request.dart';
 import 'drafts/editor.dart';
 import 'device/view.dart';
-import 'diagnostics/view.dart';
+import 'history/diagnostics_panel.dart';
 import 'profiles/view.dart';
 import 'drafts/view.dart';
 import 'drafts/quit_coordinator.dart';
@@ -190,9 +190,8 @@ class _NavigationState extends State<_Navigation> {
                   )
                 else if (selected == 2 && quit != null)
                   Expanded(
-                    child: DiagnosticsView(
-                      model: quit!.diagnostics,
-                      profiles: quit!.profiles,
+                    child: DiagnosticsPanel(
+                      coordinator: quit!,
                       chooseDevice: () => navigate(1),
                     ),
                   )
@@ -205,10 +204,6 @@ class _NavigationState extends State<_Navigation> {
                         : selected == 2
                         ? 'Diagnostics are not connected yet. No checks have been started.'
                         : 'Storage is unavailable.',
-                  ),
-                if (selected == 2)
-                  const Text(
-                    'History is not connected yet. Saved results are not loaded.',
                   ),
               ],
             ),

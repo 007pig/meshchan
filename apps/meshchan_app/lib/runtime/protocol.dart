@@ -61,11 +61,13 @@ final class MaintenanceSnapshot {
     this.failureCount, {
     this.latestReport,
     this.unacknowledgedReport,
+    this.revision = 0,
   });
   final HistoryMaintenanceState? latest;
   final CoreErrorCode? failure;
   final int failureCount;
   final MaintenanceReportSnapshot? latestReport, unacknowledgedReport;
+  final int revision;
 }
 
 final class MaintenanceReportSnapshot {
@@ -209,6 +211,7 @@ final class RuntimeSnapshot {
     this.operation,
     this.deviceCheck,
     this.lastDeviceInfo,
+    this.maintenanceAction,
   });
   final int generation, sequence;
   final RuntimePhase phase;
@@ -221,6 +224,7 @@ final class RuntimeSnapshot {
   final OperationSnapshot? operation;
   final DeviceCheckSnapshot? deviceCheck;
   final DeviceInformation? lastDeviceInfo;
+  final MaintenanceActionSnapshot? maintenanceAction;
 }
 
 final class DraftSnapshot {
@@ -573,4 +577,84 @@ final class DiagnosticHandle {
   const DiagnosticHandle(this.generation, this.id, this.accepted);
   final int generation, id;
   final Future<void> accepted;
+}
+
+/// Offline history requests never acquire the device gate or resolve presets.
+sealed class HistoryRequest extends RuntimeRequest {
+  const HistoryRequest();
+}
+
+final class HistorySelection {
+  const HistorySelection({this.filter, this.size = 50, this.after});
+  final HistoryQuery? filter;
+  final int size;
+  final HistoryCursor? after;
+}
+
+final class QueryHistory extends HistoryRequest {
+  const QueryHistory(this.selection);
+  final HistorySelection selection;
+}
+
+final class ReadHistory extends HistoryRequest {
+  const ReadHistory(this.id);
+  final String id;
+}
+
+final class DeleteHistory extends HistoryRequest {
+  const DeleteHistory(this.id);
+  final String id;
+}
+
+final class ExportHistoryPage extends HistoryRequest {
+  const ExportHistoryPage(this.selection);
+  final HistorySelection selection;
+}
+
+final class ReadMaintenanceStatus extends HistoryRequest {
+  const ReadMaintenanceStatus();
+}
+
+final class StartMaintenance extends HistoryRequest {
+  const StartMaintenance(this.id);
+  final int id;
+}
+
+final class AcknowledgeMaintenance extends HistoryRequest {
+  const AcknowledgeMaintenance(this.generation, this.revision, this.count);
+  final int generation, revision, count;
+}
+
+final class HistoryPageValue extends ReplyValue {
+  const HistoryPageValue(this.page);
+  final Page<DiagnosticRun, HistoryCursor> page;
+}
+
+final class HistoryRunValue extends ReplyValue {
+  const HistoryRunValue(this.run);
+  final DiagnosticRun run;
+}
+
+final class HistoryExportValue extends ReplyValue {
+  const HistoryExportValue(this.page);
+  final DiagnosticSummaryPage page;
+}
+
+final class MaintenanceValue extends ReplyValue {
+  const MaintenanceValue(this.snapshot, this.action);
+  final MaintenanceSnapshot snapshot;
+  final MaintenanceActionSnapshot? action;
+}
+
+final class MaintenanceActionSnapshot {
+  const MaintenanceActionSnapshot(
+    this.id, {
+    this.done = false,
+    this.report,
+    this.error,
+  });
+  final int id;
+  final bool done;
+  final MaintenanceReportSnapshot? report;
+  final RuntimeFault? error;
 }

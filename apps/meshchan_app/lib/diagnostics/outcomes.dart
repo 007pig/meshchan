@@ -15,6 +15,16 @@ List<(String, Object?)> logicalFacts(LogicalSummary s) => [
   ('Reason', s.reason),
   ('Stage', s.stage),
   ...failureFacts('Failure', s.failure),
+  if (s is SendSummary) ...sendFacts('Send', s.send),
+  if (s is ListenSummary) ...[
+    ...receptionFacts(s.reception),
+    ('Listen reception reason', s.receptionReason),
+    ('Listen published entries', s.publishedEntries),
+    ('Processed entries', s.processedEntries),
+    ('Matching datagrams', s.matchingDatagrams),
+    ('Filtered datagrams', s.filteredDatagrams),
+    ('Ordinary messages', s.ordinaryMessages),
+  ],
   if (s is PingSummary) ...[
     ...sendFacts('Send', s.send),
     ...receptionFacts(s.reception),
@@ -84,16 +94,36 @@ List<(String, Object?)> configurationFacts(DiagnosticRun run) {
     ('Recorded operation', c.operation),
     ('App version', run.appVersion),
     ('Saved profile ID', run.profileId?.value),
+    ('Diagnostic summary version', run.diagnosticSummaryFormatVersion),
+    ('App target version', c.appTargetVersion),
+    ('Max queued commands', c.maxQueuedCommands),
     ('Request timeout (s)', c.budgets.requestTimeoutSeconds),
     ('Initialization timeout (s)', c.budgets.initializationTimeoutSeconds),
     ('Startup delay (ms)', c.budgets.startupDelayMilliseconds),
     ('Task timeout (s)', c.budgets.taskTimeoutSeconds),
+    if (c is SendConfiguration) ...[
+      ('Send channel', c.sendChannelIndex),
+      ('Data type', c.dataType),
+      ('Route descriptor', c.route.routeDescriptor),
+      ('Route path bytes', c.route.pathByteCount),
+      ('Payload bytes', c.payloadByteLength),
+    ],
+    if (c is ListenConfiguration) ...[
+      ('Receive channel', c.receiveChannelIndex),
+      ('Data type filter (null means all)', c.dataType),
+      ('Listen duration (s)', c.listenDurationSeconds),
+      ('Max entries', c.maxEntries),
+      ('Max reads per batch', c.maxReadsPerBatch),
+    ],
     if (c is TaskConfiguration) ...[
       ('Send channel', c.sendChannelIndex),
       ('Receive channel', c.receiveChannelIndex),
       ('Route descriptor', c.route.routeDescriptor),
       ('Route path bytes', c.route.pathByteCount),
       ('Max entries', c.maxEntries),
+      ('Diagnostic wire version', c.diagnosticWireVersion),
+      ('Diagnostic data type', c.diagnosticDataType),
+      ('Max reads per batch', c.maxReadsPerBatch),
     ],
     if (c is PingConfiguration) ...[
       ('Response timeout (s)', c.responseTimeoutSeconds),
@@ -102,6 +132,8 @@ List<(String, Object?)> configurationFacts(DiagnosticRun run) {
     if (c is RespondConfiguration) ...[
       ('Listen duration (s)', c.listenDurationSeconds),
       ('Max responses', c.maxResponses),
+      ('Cache capacity', c.cacheCapacity),
+      ('Cache TTL (µs)', c.cacheTtlUs),
     ],
   ];
 }

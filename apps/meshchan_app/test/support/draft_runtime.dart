@@ -26,6 +26,10 @@ final class DraftRuntime implements AppRuntime {
   final writes = <WriteDraft>[];
   final deletes = <DeleteDraft>[];
   final records = <String, DraftSnapshot>{};
+  Future<ReplyValue> Function(HistoryRequest)? onHistory;
+  @override
+  Future<ReplyValue> historyRequest(HistoryRequest request) =>
+      onHistory!(request);
   Future<DraftSnapshot> Function(WriteDraft)? onSave;
   Future<DraftSnapshot> Function(String)? onRead;
   Future<DraftPage> Function(DraftCursor?)? onList;

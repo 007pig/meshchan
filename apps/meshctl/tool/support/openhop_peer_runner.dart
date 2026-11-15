@@ -19,6 +19,14 @@ final class OpenHopPeerConfig {
     baseUrl = Uri.parse(json['baseUrl'] as String);
     companionName = json['companionName'] as String;
     validateOpenHopEndpoint(baseUrl, companionName);
+    final explicitTcpPort = json['tcpPort'];
+    if (explicitTcpPort != null &&
+        (explicitTcpPort is! int ||
+            explicitTcpPort < 1 ||
+            explicitTcpPort > 65535)) {
+      throw const FormatException('Invalid explicit TCP port.');
+    }
+    tcpPort = explicitTcpPort as int?;
     endpointLabel = json['endpointLabel'] as String;
     if (!RegExp(r'^[A-Za-z0-9_.-]{1,64}$').hasMatch(endpointLabel)) {
       throw const FormatException('Invalid endpoint label.');
@@ -121,6 +129,7 @@ final class OpenHopPeerConfig {
   final String operation;
   late final Uri baseUrl;
   late final String companionName, endpointLabel;
+  late final int? tcpPort;
   late final Map<String, String>? jwtReference, apiKeyReference;
   late final Duration requestTimeout,
       initializationTimeout,
@@ -128,6 +137,19 @@ final class OpenHopPeerConfig {
       taskTimeout;
   DatagramOptions? options;
   Uint8List? expectedPayload;
+
+  CompanionTransport createTransport(String jwt) => tcpPort == null
+      ? OpenHopFrameTransport(
+          baseUrl: baseUrl,
+          companionName: companionName,
+          jwt: jwt,
+          connectTimeout: requestTimeout,
+        )
+      : OpenHopTcpTransport(
+          host: baseUrl.host,
+          port: tcpPort!,
+          connectTimeout: requestTimeout,
+        );
 
   static int _number(Map<String, dynamic> json, String key, int min, int max) {
     final value = json[key];
@@ -525,7 +547,9 @@ Future<int> runOpenHopPeer(
     'failure': failure,
     'preflight': preflight,
     'result': result,
-    'localWriteMeaning': 'Local WebSocket submission only; Companion OK is separate; no RF completion claim',
+    'localWriteMeaning': config.tcpPort == null
+        ? 'Local WebSocket submission only; Companion OK is separate; no RF completion claim'
+        : 'Local TCP sink flush only; Companion OK is separate; no RF completion claim',
   });
   await output.drain();
   return output.failed ? 74 : code;

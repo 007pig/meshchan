@@ -70,12 +70,7 @@ Future<void> main(List<String> arguments) async {
     exitCode = await runOpenHopPeer(
       config,
       output: output,
-      createTransport: () => OpenHopFrameTransport(
-        baseUrl: config.baseUrl,
-        companionName: config.companionName,
-        jwt: jwt!,
-        connectTimeout: config.requestTimeout,
-      ),
+      createTransport: () => config.createTransport(jwt!),
       stopRequests: processStopRequests(),
       preflight: preflight,
     );

@@ -24,6 +24,7 @@ abstract interface class AppRuntime {
   Stream<OfflineSnapshot> get offlineChanges;
   OfflineSnapshot? get offline;
   Future<void> start();
+  Future<ReplyValue> historyRequest(HistoryRequest request);
   Future<DevicePortsValue> refreshDevicePorts(int generation);
   DeviceCheckHandle startDeviceCheck(String port, DeviceCheckOptions options);
   Future<void> cancelDeviceCheck(int id);
@@ -298,6 +299,7 @@ final class RuntimeController implements AppRuntime {
       operation: value.operation,
       deviceCheck: value.deviceCheck,
       lastDeviceInfo: value.lastDeviceInfo,
+      maintenanceAction: value.maintenanceAction,
     );
     _changes.add(_snapshot);
   }
@@ -334,6 +336,7 @@ final class RuntimeController implements AppRuntime {
       operation: _snapshot.operation,
       deviceCheck: _snapshot.deviceCheck,
       lastDeviceInfo: _snapshot.lastDeviceInfo,
+      maintenanceAction: _snapshot.maintenanceAction,
     );
     _changes.add(_snapshot);
     for (final pending in _pending.values) {
@@ -354,6 +357,9 @@ final class RuntimeController implements AppRuntime {
             const RuntimeFault(host: CoordinationFault.invalidState),
       );
     }
+    if (request is HistoryRequest && !ordinaryAdmissionOpen) {
+      return Future.error(const RuntimeFault(host: CoordinationFault.stopped));
+    }
     if (request is StopRuntime || request is ShutdownRuntime) {
       _stopIntent = true;
     }
@@ -371,6 +377,7 @@ final class RuntimeController implements AppRuntime {
       );
     }
     final ordinary =
+        request is HistoryRequest ||
         request is RefreshDevicePorts ||
         request is StartDeviceCheck ||
         request is StartRecordedDiagnostic ||
@@ -392,7 +399,8 @@ final class RuntimeController implements AppRuntime {
       return Future.error(const RuntimeFault(host: CoordinationFault.stopped));
     }
     if (_decision != null &&
-        (request is StartRecordedDiagnostic ||
+        (request is HistoryRequest ||
+            request is StartRecordedDiagnostic ||
             request is StartDeviceCheck ||
             request is RefreshDevicePorts ||
             request is ListProfiles ||
@@ -456,6 +464,10 @@ final class RuntimeController implements AppRuntime {
     }
     return completion.future;
   }
+
+  @override
+  Future<ReplyValue> historyRequest(HistoryRequest request) =>
+      this.request(request);
 
   @override
   DiagnosticHandle startRecordedDiagnostic(
@@ -801,4 +813,25 @@ final class _Pending {
   const _Pending(this.completer, this.timer);
   final Completer<ReplyValue> completer;
   final Timer timer;
+}
+
+/// Main-isolate admission must include intent saved before any worker ACK or
+/// snapshot arrives. Other public runtime implementations use their snapshots.
+extension RuntimeAdmission on AppRuntime {
+  bool get ordinaryAdmissionOpen {
+    final runtime = this;
+    if (runtime is RuntimeController &&
+        (runtime._stopIntent ||
+            runtime._hostPaused ||
+            runtime._decision != null ||
+            runtime._terminalFault ||
+            runtime._disposed ||
+            runtime._workerExited)) {
+      return false;
+    }
+    return snapshot.phase == RuntimePhase.ready &&
+        !snapshot.admissionPaused &&
+        !snapshot.stopReceived &&
+        snapshot.gate != DeviceGateState.quarantined;
+  }
 }

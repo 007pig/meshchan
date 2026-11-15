@@ -1050,3 +1050,68 @@ from committed saves; public wait observes requested work only. Keep the shared
 gate, sole storage owner, application lifecycle, explicit session port selection
 and absence of automatic device activity. No history UI/export or 1D.11 hardware
 stability acceptance is delivered by this step.
+
+## 1D.8 implementation: persisted history and host output
+
+`HistoryRequest` is the offline typed request family in the existing protocol.
+`RuntimeController.historyRequest` applies ordinary admission, including main
+intent before worker acknowledgment; the dispatcher independently checks its
+own admission and enqueues public `DiagnosticHistory` work on the same owner.
+The application owns `HistoryModel`, its filter controllers, applied selection,
+input/next cursors, previous cursor stack, page/detail generations and captured
+single-delete identity. Widget disposal owns no accepted database or file work.
+Cached rows remain visible after a failed page request, but both continuation
+directions and export stay disabled until a page loads successfully. Explicit
+Refresh retries the attempted selection; a successful response supplies the only
+next cursor that can resume navigation, preventing old cursors from being used
+with a failed filter or page-size change.
+`HistoryDetail` renders `DiagnosticRun` directly. Shared outcome helpers cover
+Send/Listen/PING/Responder; session-only observer/save/lease facts remain in the
+session renderer. Recovery is read-only presentation of open's existing facts.
+
+Maintenance snapshots include the complete latest/sticky projection and a
+monotonic app revision, scoped by worker generation. Capture compares the
+public sticky report identity and count. Acknowledgment recaptures current
+facts, compares generation/revision/count and calls synchronous core ack with
+no intervening await. Clear and a subsequent same-code/count failure are still
+different revisions. Manual maintenance installs its whole action barrier before
+fast ACK, releases the ordinary request queue, and publishes a final report or
+controlled observation error. Automatic wait observers and manual actions drain
+before owner release; close remains core's final continuation/unpin barrier.
+
+`ExportCoordinator` owns one immutable selection job, generated original JSON,
+actual returned count/more metadata, native panel, staging IO and publication.
+`MacExportPlatform` adds only panel/cancel/exclusive-publish methods to the
+existing channel. `SummaryOutput` uses URL validation for feedback and the
+exclusive rename syscall for authority. No exists-then-rename fallback exists.
+`LocalExportFiles` creates a temporary child of the selected target's parent,
+uses `writeAsBytes(..., flush: true)` and deletes only its known staging file and
+empty directory. Unknown directory contents are preserved. Unsupported filesystems
+fail safely; the strategy does not promise power-loss durability everywhere.
+
+The sole `DraftQuitCoordinator` owns History and Export alongside all existing
+editors/models. Live composition and departure preflight precede export cancel.
+A real quit attempt pauses new history/export admission, cancels pre-writer work
+and closes a pending sheet before a dirty-document modal. Continue only restores
+eligible admission. Final shutdown permanently stops export admission, drains
+runtime and host work independently, and checks both on first and reentrant quit.
+No host file task uses the device gate or acquires another storage owner.
+
+### 1D.9 handoff after History integration
+
+Keep three primary destinations and Diagnostics Run/History; Profiles/Settings
+remain auxiliary. Reuse the sole quit coordinator and its accepted DB/manual
+maintenance/recording/host-output barriers. Test desktop shortcuts, window/menu
+and Save panel late callbacks against the same live-composition guards. Preserve
+source boundaries: session observations, persisted run, fresh summary selection,
+maintenance memory and host file publication are independent. There is no permanent
+save-attempt audit, full-database count or final-unpin event. New files only;
+replacement/full backup and unsupported-volume fallback are outside scope.
+The validation record lists actual product cutoffs and remaining GUI cases.
+1D.10 mobile risk checks and 1D.11 RF/beta acceptance remain later stages.
+
+The native Save sheet sets `preventsApplicationTerminationWhenModal=false`.
+AppKit's default otherwise prevents application termination before consulting the
+application delegate. This per-panel setting lets ordinary system Quit reach the
+existing termination bridge, where Dart cancels/drains the owned output job and
+all runtime work. No panel-specific key monitor or second quit path is installed.

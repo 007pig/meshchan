@@ -17,6 +17,152 @@ typedef OpenHopConnector = Future<WebSocket> Function(
   HttpClient client,
 );
 
+typedef OpenHopTcpConnector = Future<Socket> Function(
+  String host,
+  int port,
+  Duration timeout,
+);
+
+/// Explicit development-only TCP byte pipe; never reconnects or falls back.
+final class OpenHopTcpTransport implements CompanionTransport {
+  OpenHopTcpTransport({
+    required this.host,
+    required this.port,
+    required this.connectTimeout,
+    OpenHopTcpConnector? connector,
+  }) : _connector = connector ?? _connect {
+    if (host.isEmpty ||
+        RegExp(r'[\s/]').hasMatch(host) ||
+        port < 1 ||
+        port > 65535 ||
+        connectTimeout <= Duration.zero) {
+      throw const FormatException('Invalid explicit TCP endpoint or budget.');
+    }
+    _frames = StreamController<Uint8List>(
+      onPause: _requestClose,
+      onCancel: _requestClose,
+    );
+  }
+
+  static Future<Socket> _connect(String host, int port, Duration timeout) =>
+      Socket.connect(host, port, timeout: timeout);
+  final String host;
+  final int port;
+  final Duration connectTimeout;
+  final OpenHopTcpConnector _connector;
+  final _decoder = SerialFrameDecoder();
+  late final StreamController<Uint8List> _frames;
+  Socket? _socket;
+  StreamSubscription<Uint8List>? _input;
+  Future<void>? _opening, _closing;
+  bool _used = false, _stopping = false, _failed = false;
+
+  @override
+  Stream<Uint8List> get frames => _frames.stream;
+
+  @override
+  Future<void> open() {
+    if (_used || _stopping || !_frames.hasListener) {
+      return Future.error(
+        const OpenHopTransportFailure('open', 'invalidState'),
+      );
+    }
+    _used = true;
+    final future = _opening = _open();
+    future.ignore();
+    return future;
+  }
+
+  Future<void> _open() async {
+    try {
+      final socket = _socket = await _connector(host, port, connectTimeout);
+      socket.done.then<void>((_) {}, onError: (Object _) {}).ignore();
+      if (_stopping) {
+        throw const OpenHopTransportFailure('open', 'canceled');
+      }
+      _input = socket.listen(
+        (bytes) {
+          if (_stopping || _failed) return;
+          final result = _decoder.add(bytes);
+          for (final frame in result.frames) {
+            _frames.add(frame);
+          }
+          if (result.error case final error?) _fail(error.kind.name);
+        },
+        onError: (Object _) => _fail('socketError'),
+        onDone: () {
+          if (!_stopping) {
+            _fail(_decoder.finish().error?.kind.name ?? 'socketClosed');
+          }
+        },
+      );
+    } catch (_) {
+      throw OpenHopTransportFailure(
+        'open',
+        _stopping ? 'canceled' : 'connectionFailed',
+      );
+    }
+  }
+
+  void _fail(String reason) {
+    if (_failed || _stopping) return;
+    _failed = true;
+    _frames.addError(OpenHopTransportFailure('receive', reason));
+    _requestClose();
+  }
+
+  void _requestClose() => close().ignore();
+
+  @override
+  Future<void> sendFrame(Uint8List content) async {
+    final bytes = encodeSerialFrame(content);
+    if (_socket == null || _stopping || _failed) {
+      throw const OpenHopTransportFailure('send', 'invalidState');
+    }
+    try {
+      _socket!.add(bytes);
+      await _socket!.flush();
+    } catch (_) {
+      _fail('submissionFailed');
+      throw const OpenHopTransportFailure('send', 'submissionFailed');
+    }
+  }
+
+  @override
+  Future<void> close() {
+    if (_closing case final future?) return future;
+    _stopping = true;
+    final future = _closing = _close();
+    future.ignore();
+    return future;
+  }
+
+  Future<void> _close() async {
+    var failed = false;
+    try {
+      try {
+        await _opening;
+      } catch (_) {
+        /* The open owner observes failure. */
+      }
+      try {
+        await _socket?.close();
+      } catch (_) {
+        failed = true;
+      }
+      _socket?.destroy();
+      try {
+        await _input?.cancel();
+      } catch (_) {
+        failed = true;
+      }
+    } finally {
+      _frames.close().ignore();
+    }
+    if (failed) throw const OpenHopTransportFailure('close', 'releaseFailed');
+  }
+}
+
 /// Development-only, single-use WS byte pipe. Not a product transport export.
 final class OpenHopFrameTransport implements CompanionTransport {
   OpenHopFrameTransport({

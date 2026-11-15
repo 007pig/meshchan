@@ -1,8 +1,8 @@
 # Meshchan macOS host
 
 This Flutter workspace member provides Drafts, Device, and Diagnostics navigation.
-The pages describe editing/device features that are not connected yet. Normal
-launch creates one application runtime and one long-lived worker owning one
+Draft editing, device checks, recorded diagnostics and persisted history are
+connected through public core APIs. Normal launch creates one application runtime and one long-lived worker owning one
 `CoreStorage`. It reads settings and one bounded draft page without device I/O.
 Navigation, rebuilds, focus and minimization do not reopen storage or recover again.
 The public core packages and CLI remain pure Dart. The application uses the same
@@ -480,6 +480,46 @@ or zero. Local confirmation does not prove peer receipt; a completed Responder
 with zero responses is valid but establishes no round trip. Save failure does not
 retry RF or erase in-memory results. Unconfirmed cleanup quarantines device work.
 
-History lists, recovery UI and export remain 1D.8. The current/latest snapshot is
-session memory, not a history repository. See the
+The current/latest snapshot remains session memory, separate from the persisted
+History page described below. See the
 [implementation and validation record](../../docs/validation/phase-1d7-recorded-diagnostics.md).
+
+### Diagnostic history and one-page export (1D.8)
+
+Open **Diagnostics → History** without selecting a device. Apply operation,
+record-state and strict UTC registration-time filters; empty bounds are open.
+UTC input is `YYYY-MM-DDTHH:mm:ss[.ffffff]Z`, with an inclusive lower and
+exclusive upper bound. Page sizes use the public 1–200 range (default 50).
+Previous/Next retain seek cursors, Refresh page repeats the current selection,
+and First page resets continuation. Counts describe only this page.
+
+Select a run to read its persisted `DiagnosticRun`, including four operation
+configurations/results and independent cleanup/recovery facts. The current
+session's **Read this run from history** also performs a repository read.
+Missing records remain identified; the app never substitutes another row or
+reconstructs a session snapshot. Delete selected record freezes the confirmed
+ID and reports success only after core commit. Active pins and ineligible
+records can return `conflict`; failed terminal cleanup is not proof of release.
+
+History displays latest and sticky maintenance reports separately, including
+committed deletions, deferred eligible excess pins, nullable limit and errors.
+Refresh status reads current worker memory without retry/acknowledgment.
+Run maintenance uses global Settings retention, with a fast accepted action
+and separately observed completion. Acknowledge failures is explicit and rejects
+an unseen newer failure revision; these reports are handle-lifetime memory.
+
+**Export one page of redacted summaries** captures the applied filter, page
+size and the page's input cursor, and makes a fresh bounded core selection.
+It can differ from the displayed rows. A native macOS Save panel requires a new
+file name. The main isolate writes core JSON UTF-8 bytes unchanged to owned
+same-directory staging, flushes/closes, then uses `renamex_np(RENAME_EXCL)`.
+Existing files/directories/symlinks and unsupported exclusive publication fail
+without replacement or fallback. Published-file success and staging cleanup
+warnings remain separate. This summary omits profile IDs and execution inputs;
+it is neither anonymous data nor a restorable database backup.
+
+Export survives navigation. Before writer admission Cancel/Quit cancels output
+while observing accepted generation/pre-IO; after admission Quit waits for
+write, publication and cleanup. Runtime release and worker exit alone cannot
+permit exit while host output is pending. Continue editing never restarts a
+canceled export. No device enumeration, preset resolution or transport is needed.

@@ -52,6 +52,12 @@ def main():
     if session != {'commandSeconds': 5, 'initializationSeconds': 15,
                    'startupDelayMilliseconds': 0, 'taskSeconds': 90}:
         parser.error('This finite starting plan requires the documented 5/15/0/90 budgets.')
+    b_command_seconds = data.get('bCommandSeconds', 5)
+    if type(b_command_seconds) is not int or b_command_seconds not in (5, 15):
+        parser.error('B command budget must be explicitly 5 or 15 seconds.')
+    tcp_port = data.get('tcpPort')
+    if tcp_port is not None and (type(tcp_port) is not int or not 1 <= tcp_port <= 65535):
+        parser.error('An explicit development TCP port must be in 1..65535.')
     exact_idle = data.get('idleTimeoutSeconds')
     observed_window = data.get('idleWindowLowerBoundSeconds')
     if type(exact_idle) is int and exact_idle >= 90 and observed_window is None:
@@ -86,6 +92,9 @@ def main():
         config = {k: data[k] for k in ('baseUrl', 'companionName', 'endpointLabel', 'jwt', 'session')}
         config['idleTimeoutSeconds'] = exact_idle
         config['session'] = dict(config['session'])
+        config['session']['commandSeconds'] = b_command_seconds
+        if 'tcpPort' in data:
+            config['tcpPort'] = data['tcpPort']
         if operation == 'ping':
             config['session']['taskSeconds'] = 60
         if observed_window is not None:
@@ -148,6 +157,9 @@ def main():
                      'receiverFirst': 'B' if case in ('H1', 'H3', 'H5') else 'A',
                      'actualAExit': None, 'actualBExit': None})
     info = {k: data[k] for k in ('baseUrl', 'companionName', 'endpointLabel', 'jwt', 'session')}
+    info['session'] = dict(info['session'], commandSeconds=b_command_seconds)
+    if 'tcpPort' in data:
+        info['tcpPort'] = data['tcpPort']
     info['idleTimeoutSeconds'] = exact_idle
     if observed_window is not None:
         info['idleWindowLowerBoundSeconds'] = observed_window

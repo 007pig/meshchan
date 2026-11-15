@@ -87,6 +87,52 @@ class AcceptancePlanTest(unittest.TestCase):
             self.assertEqual(list(selected), [case_id])
             self.assertEqual(selected[case_id], limits[case_id])
 
+    def test_generation_captures_b_budget_without_changing_a(self):
+        source = self.folder / 'input.json'
+        data = json.loads(source.read_text())
+        data['bCommandSeconds'] = 15
+        data['tcpPort'] = 5050
+        source.write_text(json.dumps(data))
+        output = self.folder / 'b15'
+        subprocess.run([sys.executable, str(self.root / 'tool/prepare_openhop_acceptance.py'),
+                        '--input', str(source), '--output', str(output),
+                        '--candidate', str(self.folder / 'candidate')], check=True, capture_output=True)
+        plan = json.loads((output / 'plan.json').read_text())
+        for case in plan['cases']:
+            if case['bArgv'] is not None:
+                config = json.loads(Path(case['bArgv'][4]).read_text())
+                self.assertEqual(config['session']['commandSeconds'], 15)
+                self.assertEqual(config['tcpPort'], 5050)
+            if case['id'] != 'H0':
+                self.assertIn('--timeout=5', case['aArgv'])
+        acceptance.validate_plan(plan)
+
+    def test_generation_rejects_unreviewed_b_budget(self):
+        source = self.folder / 'input.json'
+        data = json.loads(source.read_text())
+        for value in (True, 0, 6, 16):
+            with self.subTest(value=value):
+                data['bCommandSeconds'] = value
+                source.write_text(json.dumps(data))
+                output = self.folder / ('invalid-b-' + str(value))
+                result = subprocess.run([sys.executable, str(self.root / 'tool/prepare_openhop_acceptance.py'),
+                                         '--input', str(source), '--output', str(output),
+                                         '--candidate', str(self.folder / 'candidate')], capture_output=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertFalse(output.exists())
+
+    def test_generation_rejects_invalid_development_tcp_port(self):
+        source = self.folder / 'input.json'
+        data = json.loads(source.read_text())
+        data['tcpPort'] = 65536
+        source.write_text(json.dumps(data))
+        output = self.folder / 'invalid-tcp'
+        result = subprocess.run([sys.executable, str(self.root / 'tool/prepare_openhop_acceptance.py'),
+                                 '--input', str(source), '--output', str(output),
+                                 '--candidate', str(self.folder / 'candidate')], capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(output.exists())
+
     def test_content_counts_follow_the_actual_a_or_b_initiator(self):
         original = copy.deepcopy(self.plan)
         for case_id in acceptance._CASE_OPERATIONS:
@@ -348,6 +394,64 @@ class DriverSettlementTest(unittest.TestCase):
             path.write_bytes(('synthetic ' + name).encode())
             self.hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def test_candidate_manifest_covers_current_bytes_and_all_assets(self):
+        candidate = self.folder / 'candidate'
+        manifest = self.folder / 'native.json'
+        manifest.write_text(json.dumps({'nativeHashes': self.hashes}))
+        self.assertEqual(acceptance.verify_candidate(candidate, manifest), self.hashes)
+        (candidate / 'lib/extra.dylib').write_bytes(b'extra asset')
+        with self.assertRaises(ValueError):
+            acceptance.verify_candidate(candidate, manifest)
+        (candidate / 'lib/extra.dylib').unlink()
+        (candidate / 'bin/meshctl').write_bytes(b'changed')
+        with self.assertRaises(ValueError):
+            acceptance.verify_candidate(candidate, manifest)
+
+    def test_candidate_manifest_rejects_paths_outside_candidate(self):
+        manifest = self.folder / 'native.json'
+        for name in ('../outside', '/tmp/outside', 'other/asset'):
+            with self.subTest(name=name):
+                manifest.write_text(json.dumps({'nativeHashes': self.hashes | {name: '0' * 64}}))
+                with self.assertRaises(ValueError):
+                    acceptance.verify_candidate(self.folder / 'candidate', manifest)
+
+    def test_initialization_retry_is_bounded_and_never_repeats_an_rf_attempt(self):
+        cases, limits = acceptance.validate_plan(self.fixture.plan)
+        case = next(c for c in cases if c['id'] == 'H6')
+        for initialization_failures in (2, 4):
+            with self.subTest(initialization_failures=initialization_failures):
+                created = []
+                def create(folder, label, argv, expected, env):
+                    initial = len(created) < initialization_failures
+                    send = {k: True for k in ('attempted', 'localWriteCompleted',
+                                             'localOkObserved', 'deviceAcceptanceConfirmed')}
+                    final = {'operation': 'ping', 'cleanup': {'state': 'succeeded'},
+                             'result': {} if initial else {'send': send, 'reason': 'responseTimeout',
+                                                          'applicationRttUs': None, 'roundTripSucceeded': False}}
+                    if initial:
+                        final['failure'] = {'session': {'stage': 'initializing', 'commandOpcode': 22}}
+                    record = {'label': label, 'actualExitCode': 69, 'final': final, 'pid': 999000 + len(created)}
+                    run = Mock(label=label, record=record)
+                    run.wait.return_value = record
+                    run.process.poll.return_value = 69
+                    run.process.pid = record['pid']
+                    run.startup_observation_failure = False
+                    created.append(run)
+                    return run
+                output = self.folder / ('initialization-' + str(initialization_failures))
+                output.mkdir()
+                with patch.object(acceptance, 'Run', side_effect=create), contextlib.redirect_stdout(io.StringIO()):
+                    if initialization_failures == 2:
+                        self.assertEqual(acceptance.execute_cases(output, [case], {'H6': limits['H6']}, 1,
+                            {}, {'requested': False}, initialization_attempts=3), 0)
+                    else:
+                        with self.assertRaises(SystemExit):
+                            acceptance.execute_cases(output, [case], {'H6': limits['H6']}, 1,
+                                {}, {'requested': False}, initialization_attempts=3)
+                self.assertEqual(len(created), 3)
+                result = json.loads((output / 'results.json').read_text())
+                self.assertEqual(result['actualApplicationSendAttempts'], 1 if initialization_failures == 2 else 0)
+
     def drive_failure(self, mode):
         created = []
         class Process:
@@ -394,13 +498,13 @@ class DriverSettlementTest(unittest.TestCase):
         plan_path.write_text(json.dumps(self.fixture.plan))
         output = self.folder / 'H7-followup-results'
         original_read = Path.read_text
-        baseline = self.fixture.root / 'build/phase-1b9/20261110T193252Z/hardware/execution-plan.json'
+        baseline = self.folder / 'candidate-manifest.json'
         def read(path, *args, **kwargs):
             if path == baseline:
                 return json.dumps({'nativeHashes': self.hashes})
             return original_read(path, *args, **kwargs)
         with patch.object(Path, 'read_text', read), patch.object(acceptance, 'Run', FakeRun), \
-                patch.object(sys, 'argv', ['driver', '--plan', str(plan_path), '--output', str(output), '--only-case', 'H7', '--execute']), \
+                patch.object(sys, 'argv', ['driver', '--plan', str(plan_path), '--output', str(output), '--only-case', 'H7', '--candidate-manifest', str(baseline), '--execute']), \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
                 acceptance.main()
@@ -502,7 +606,7 @@ class DriverSettlementTest(unittest.TestCase):
         plan.write_text(json.dumps(self.fixture.plan))
         output = self.folder / 'leading-zero-results'
         original_read = Path.read_text
-        baseline = self.fixture.root / 'build/phase-1b9/20261110T193252Z/hardware/execution-plan.json'
+        baseline = self.folder / 'candidate-manifest.json'
         def read(path, *args, **kwargs):
             return json.dumps({'nativeHashes': self.hashes}) if path == baseline else original_read(path, *args, **kwargs)
         validate = acceptance.validate_plan
@@ -512,7 +616,7 @@ class DriverSettlementTest(unittest.TestCase):
                 cases = [case for case in cases if case['id'] in ('H2', 'H4')]
                 limits = {case['id']: limits[case['id']] for case in cases}
             return cases, limits
-        argv = ['driver', '--plan', str(plan), '--output', str(output), '--execute']
+        argv = ['driver', '--plan', str(plan), '--output', str(output), '--candidate-manifest', str(baseline), '--execute']
         if not continue_cases:
             argv.extend(['--only-case', 'H2'])
         with patch.object(Path, 'read_text', read), patch.object(acceptance, 'Run', FakeRun), \
@@ -587,14 +691,14 @@ class DriverSettlementTest(unittest.TestCase):
         result, output, _ = self.drive_completed_h2(failed_case=True)
         self.assertEqual(result['cases'][0]['status'], 'FAIL')
         self.assertEqual(result['actualApplicationSendAttempts'], 1)
-        self.assertFalse((output / 'STOPPED.json').exists())
+        self.assertTrue((output / 'STOPPED.json').exists())
 
-    def test_a_later_pass_does_not_erase_an_earlier_case_failure_exit(self):
+    def test_failed_case_stops_before_another_case_can_send(self):
         result, output, created = self.drive_completed_h2(continue_cases=True)
-        self.assertEqual([case['status'] for case in result['cases']], ['FAIL', 'PASS'])
-        self.assertEqual([run.case_id for run in created], ['H2', 'H2', 'H4', 'H4'])
-        self.assertEqual(result['actualApplicationSendAttempts'], 3)
-        self.assertFalse((output / 'STOPPED.json').exists())
+        self.assertEqual([case['status'] for case in result['cases']], ['FAIL'])
+        self.assertEqual([run.case_id for run in created], ['H2', 'H2'])
+        self.assertEqual(result['actualApplicationSendAttempts'], 1)
+        self.assertTrue((output / 'STOPPED.json').exists())
 
 
 if __name__ == '__main__':

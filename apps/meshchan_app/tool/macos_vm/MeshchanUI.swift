@@ -58,7 +58,7 @@ func click(_ e: AXUIElement) {
     for type in [CGEventType.leftMouseDown, .leftMouseUp] { CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap) }
     pump()
 }
-let keys: [String: CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,"7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"return":36,"l":37,"j":38,"k":40,"n":45,"m":46,"tab":48,"space":49,"delete":51,"escape":53,"left":123,"right":124,"down":125,"up":126]
+let keys: [String: CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,"7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"return":36,"l":37,"j":38,"k":40,"n":45,"m":46,"tab":48,"space":49,"delete":51,"escape":53,"left":123,"right":124,"down":125,"up":126,"/":44,".":47,"-":27,";":41]
 func key(_ name: String, _ flags: CGEventFlags = []) {
     foreground()
     guard let code = keys[name] else { refuse("Unsupported key") }
@@ -80,7 +80,7 @@ func key(_ name: String, _ flags: CGEventFlags = []) {
 let tree = walk(window)
 let fields = tree.filter { [kAXTextFieldRole,kAXTextAreaRole].contains(text($0,kAXRoleAttribute)) }
 func button(_ label: String) -> AXUIElement {
-    guard let e = tree.last(where: { [kAXButtonRole,kAXMenuItemRole].contains(text($0,kAXRoleAttribute)) && [text($0,kAXTitleAttribute),text($0,kAXDescriptionAttribute)].contains(label) }) else { refuse("Product button missing: " + label) }; return e
+    guard let e = tree.last(where: { [kAXButtonRole,kAXMenuItemRole,kAXCheckBoxRole].contains(text($0,kAXRoleAttribute)) && [text($0,kAXTitleAttribute),text($0,kAXDescriptionAttribute)].contains(label) }) else { refuse("Product button missing: " + label) }; return e
 }
 switch args[1] {
 case "activate": break
@@ -91,6 +91,31 @@ case "size":
     var s = CGSize(width: Double(args[2])!, height: Double(args[3])!); AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &s)!); pump()
 case "click": AXUIElementPerformAction(button(args[2]), kAXPressAction as CFString); pump()
 case "pointer": click(button(args[2]))
+case "pointer-in-window":
+    foreground()
+    guard args.count == 4, let dx = Double(args[2]), let dy = Double(args[3]) else { refuse("Window-relative pointer coordinates required") }
+    let bounds = geometry(window)
+    guard dx >= 0, dy >= 0, CGFloat(dx) < (bounds["width"] as! CGFloat), CGFloat(dy) < (bounds["height"] as! CGFloat) else { refuse("Pointer outside owned window") }
+    let point = CGPoint(x: (bounds["x"] as! CGFloat) + CGFloat(dx), y: (bounds["y"] as! CGFloat) + CGFloat(dy))
+    for type in [CGEventType.leftMouseDown, .leftMouseUp] { CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!.post(tap: .cghidEventTap) }
+    pump()
+case "text-geometry":
+    guard let element = tree.first(where: { text($0, kAXRoleAttribute) == kAXStaticTextRole && text($0, kAXValueAttribute) == args[2] }) else { refuse("Product text missing") }
+    var elementAtLevel = element
+    var frames: [[String: Any]] = []
+    for _ in 0..<4 {
+        frames.append(["role":text(elementAtLevel,kAXRoleAttribute),"frame":geometry(elementAtLevel)])
+        guard let parent = attr(elementAtLevel,kAXParentAttribute) else { break }
+        elementAtLevel = parent as! AXUIElement
+    }
+    emit(frames)
+case "pointer-text":
+    guard let element = tree.first(where: { text($0, kAXRoleAttribute) == kAXStaticTextRole && text($0, kAXValueAttribute) == args[2] }) else { refuse("Visible product text missing") }
+    foreground()
+    let frame = geometry(element)
+    let point = CGPoint(x: (frame["x"] as! CGFloat) + 24, y: (frame["y"] as! CGFloat) + (frame["height"] as! CGFloat)/2)
+    for type in [CGEventType.leftMouseDown, .leftMouseUp] { CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!.post(tap: .cghidEventTap) }
+    pump()
 case "nav":
     guard let e = tree.first(where: { text($0,kAXValueAttribute).hasPrefix(args[2] + "\nTab ") }) else { refuse("Navigation destination missing") }; click(e)
 case "field":
@@ -100,7 +125,21 @@ case "key":
     var flags: CGEventFlags = []
     if args.count > 3 { for f in args[3].split(separator: ",") { switch f { case "command": flags.insert(.maskCommand); case "control": flags.insert(.maskControl); case "option": flags.insert(.maskAlternate); case "shift": flags.insert(.maskShift); default: refuse("Unsupported modifier") } } }
     key(args[2], flags)
-case "type": foreground(true); for c in args[2] { key(String(c)) }
+case "type":
+    foreground(true)
+    for c in args[2] {
+        let value = String(c)
+        if value == ":" { key(";", .maskShift) }
+        else if value != value.lowercased() { key(value.lowercased(), .maskShift) }
+        else { key(value) }
+    }
+case "scroll":
+    foreground()
+    guard let lines = Int32(args[2]) else { refuse("Scroll requires integer lines") }
+    let g = geometry(window)
+    let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)!
+    event.location = CGPoint(x: (g["x"] as! CGFloat) + (g["width"] as! CGFloat) * 0.8, y: (g["y"] as! CGFloat) + (g["height"] as! CGFloat) * 0.6)
+    event.post(tap: .cghidEventTap); pump(0.5)
 case "focus":
     foreground(true)
     let e = attr(root,kAXFocusedUIElementAttribute) as! AXUIElement

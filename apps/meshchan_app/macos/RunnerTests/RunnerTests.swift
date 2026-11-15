@@ -4,6 +4,48 @@ import XCTest
 @testable import Meshchan
 
 class RunnerTests: XCTestCase {
+  func testSavePanelPermitsTheExistingApplicationTerminationDelegate() {
+    XCTAssertFalse(SummaryOutput.makePanel().preventsApplicationTerminationWhenModal)
+  }
+
+  func testSummaryExclusivePublicationPreservesExistingTargetsAndRace() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("meshchan-summary-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bytes = Data("{\"runs\":[]}".utf8)
+    for kind in ["file", "directory", "symlink", "dangling", "race"] {
+      let staging = root.appendingPathComponent("stage-\(kind)")
+      let target = root.appendingPathComponent("target-\(kind).json")
+      try bytes.write(to: staging)
+      if kind == "race" { XCTAssertFalse(SummaryOutput.targetExists(target)) }
+      if kind == "directory" {
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+      } else if kind == "symlink" || kind == "dangling" {
+        try FileManager.default.createSymbolicLink(at: target, withDestinationURL: kind == "symlink" ? staging : root.appendingPathComponent("missing"))
+      } else { try Data("original".utf8).write(to: target) }
+      XCTAssertTrue(SummaryOutput.targetExists(target))
+      XCTAssertEqual(SummaryOutput.publish(staging: staging, target: target), "targetExists")
+      XCTAssertEqual(try Data(contentsOf: staging), bytes)
+      if kind == "file" || kind == "race" { XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "original") }
+    }
+    let source = root.appendingPathComponent("complete")
+    let target = root.appendingPathComponent("new.json")
+    try bytes.write(to: source)
+    XCTAssertEqual(SummaryOutput.publish(staging: source, target: target), "published")
+    XCTAssertEqual(try Data(contentsOf: target), bytes)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+  }
+
+  func testSummarySaveValidationRequiresNewName() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("meshchan-panel-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let target = root.appendingPathComponent("existing.json")
+    let output = SummaryOutput()
+    XCTAssertNoThrow(try output.panel(self, validate: target))
+    try Data().write(to: target)
+    XCTAssertThrowsError(try output.panel(self, validate: target))
+  }
   func testCommandQIsConsumedBeforeInputMethodIncludingCapsLock() {
     for flags: NSEvent.ModifierFlags in [[.command], [.command, .capsLock]] {
       let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,

@@ -121,6 +121,27 @@ cancellation are awaited and closed; close is idempotent and awaits owned
 connection/subscription/client cleanup. There is no forced successful cleanup,
 production cleanup timeout change, or `exit()` workaround.
 
+### Explicit development TCP mode
+
+The source-only peer, idle probe, and channel audit also accept `tcpPort` in
+their private JSON configuration. Omit it for the existing WS mode; set it to
+the explicitly selected Companion port (for example, 5050) for a direct TCP byte
+pipe to `baseUrl.host`. There is no fallback between the two modes, port scan,
+reconnect, or new production CLI/app transport option. REST info preflight still
+uses the configured credential reference; credentials are not sent over the
+Companion TCP byte pipe.
+
+TCP uses the same public serial encoder/decoder and Meshchan Session/tasks.
+`localWriteCompleted` means local TCP sink flush in this mode, independently of
+Companion OK, device acceptance, and an exact remote PONG. Close observes pending
+connection completion, output close, socket destruction, and receive-subscription
+cancellation. A late connection after cancellation is owned and closed. These
+boundaries have loopback tests; only dated real-device evidence establishes RF.
+
+The [November 15 follow-up](validation/phase-1d8-hardware-2026-11-15.md) preserves
+the WS passive-window failure and the user's separate selection of direct TCP.
+It does not attribute that failure to RF or silently replace historical results.
+
 `localWriteCompleted` in **B peer** projections means only that the local WS
 submission interface completed. It is not a native USB write, TCP receipt,
 openHop processing confirmation, or RF transmission completion. A separately
@@ -167,6 +188,9 @@ listener/responder duration 60 s/task 90 s, maxEntries 128. The generator requir
 an actual idle timeout covering 90 s; shorter deployments need a separately
 reviewed plan, not a server change or automatic budget increase. B's window must
 cover A initialization plus response wait. Product defaults remain unchanged.
+An explicitly reviewed input can set `bCommandSeconds` to 15 while leaving A's
+5-second command budget unchanged; the default is 5. Both the generated B info
+configuration and task configurations capture that choice.
 
 | ID | Receiver first and operation | Passing evidence; expected exits A/B |
 | --- | --- | --- |
@@ -309,11 +333,16 @@ ready, duration, cleanup, and absence of post-init host commands. The actual
 95-second evidence covered B's 90-second task windows without changing defaults.
 
 `tool/run_openhop_acceptance.py --plan <absolute-plan> --output <fresh-directory>`
-validates the actual generated plan without device/network I/O. Add `--execute`
-only within the reviewed finite authorization. It never retransmits an application
-packet automatically. The user's later initialization-retry permission allows
-at most three attempts only when initialization failed before a send/consumption
-and actual cleanup succeeded. `--only-case H2` or `H7` selects a separately
+validates the actual generated plan without device/network I/O. Execution also
+requires `--candidate-manifest <absolute-file>`: a reviewed JSON object containing
+`nativeHashes`, mapping every file in the candidate bundle to its SHA-256. The
+runner verifies current bytes and the complete file set; it no longer takes its
+baseline from the dated 1B.9 execution directory. Add `--execute` only within the
+reviewed finite authorization. It stops after a failed case and never retransmits
+an application packet automatically. Initialization defaults to one invocation;
+explicit `--initialization-attempts 3` is available only within current permission
+for at most three attempts, before any send/consumption and after actual cleanup.
+It does not inherit authorization from historical trials. `--only-case H2` or `H7` selects a separately
 reviewed follow-up. Increased sending ceilings or command budgets require a
 concrete additional authorized plan; pending plans are not evidence.
 

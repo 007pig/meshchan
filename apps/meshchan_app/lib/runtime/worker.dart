@@ -82,6 +82,11 @@ final class WorkerDispatcher {
   OwnerFact _owner = OwnerFact.none;
   RuntimeFault? _error;
   MaintenanceSnapshot? _maintenance;
+  MaintenanceActionSnapshot? _maintenanceAction;
+  int _lastMaintenanceId = 0, _maintenanceRevision = 1;
+  HistoryMaintenanceReport? _seenFailure;
+  int _seenFailureCount = 0;
+  final _maintenanceWork = <Future<void>>{};
   OperationSnapshot? _operation;
   bool _stop = false, _stopApplied = false, _paused = false, _closing = false;
   bool _releaseReported = false;
@@ -109,6 +114,7 @@ final class WorkerDispatcher {
     admissionPaused: _paused,
     error: _error,
     maintenance: _maintenance,
+    maintenanceAction: _maintenanceAction,
     operation: _operation,
     deviceCheck: _checkSnapshot,
     lastDeviceInfo: _lastDeviceInfo,
@@ -190,6 +196,81 @@ final class WorkerDispatcher {
     _lastId = id;
     final request = message.request;
     switch (request) {
+      case QueryHistory():
+        _enqueue(
+          id,
+          () async => HistoryPageValue(
+            await _history!.query(
+              filter: request.selection.filter,
+              size: PageSize(request.selection.size),
+              after: request.selection.after,
+            ),
+          ),
+        );
+      case ReadHistory():
+        _enqueue(
+          id,
+          () async =>
+              HistoryRunValue(await _history!.read(LocalId(request.id))),
+        );
+      case DeleteHistory():
+        _enqueue(id, () async {
+          await _history!.delete(LocalId(request.id));
+          _captureMaintenance();
+          _observeMaintenance();
+          _emit();
+          return const Accepted();
+        });
+      case ExportHistoryPage():
+        _enqueue(
+          id,
+          () async => HistoryExportValue(
+            await _history!.exportSummary(
+              filter: request.selection.filter,
+              size: PageSize(request.selection.size),
+              after: request.selection.after,
+            ),
+          ),
+        );
+      case ReadMaintenanceStatus():
+        _enqueue(id, () async {
+          _captureMaintenance();
+          _emit();
+          return MaintenanceValue(_maintenance!, _maintenanceAction);
+        });
+      case AcknowledgeMaintenance():
+        _enqueue(id, () async {
+          // No await between current-fact capture, revision check and ack.
+          _captureMaintenance();
+          if (request.generation != bootstrap.generation ||
+              request.revision != _maintenanceRevision ||
+              request.count != _seenFailureCount) {
+            _emit();
+            throw const RuntimeFault(host: CoordinationFault.staleRequest);
+          }
+          _history!.acknowledgeMaintenanceFailures();
+          _captureMaintenance();
+          _emit();
+          return MaintenanceValue(_maintenance!, _maintenanceAction);
+        });
+      case StartMaintenance():
+        _enqueue(id, () async {
+          if (request.id <= _lastMaintenanceId ||
+              _maintenanceAction?.done == false) {
+            throw const RuntimeFault(host: CoordinationFault.staleRequest);
+          }
+          _lastMaintenanceId = request.id;
+          _maintenanceAction = MaintenanceActionSnapshot(request.id);
+          // Install the whole observation before returning the fast ACK. The
+          // ordinary DB queue does not wait for the maintenance execution.
+          final completion = Completer<void>();
+          _trackMaintenance(completion.future);
+          unawaited(
+            _runMaintenance(request.id).whenComplete(completion.complete),
+          );
+          _emit();
+          return const Accepted();
+        });
       case StartRecordedDiagnostic():
         try {
           if (request.id <= _lastAttemptId ||
@@ -674,7 +755,7 @@ final class WorkerDispatcher {
       _offlineGateHealthy;
 
   void _observeMaintenance() {
-    unawaited(
+    _trackMaintenance(
       _history!.waitForMaintenance().then(
         (_) {
           _captureMaintenance();
@@ -686,6 +767,30 @@ final class WorkerDispatcher {
         },
       ),
     );
+  }
+
+  void _trackMaintenance(Future<void> work) {
+    _maintenanceWork.add(work);
+    unawaited(work.then<void>((_) => _maintenanceWork.remove(work)));
+  }
+
+  Future<void> _runMaintenance(int id) async {
+    try {
+      final report = await _history!.maintain();
+      _maintenanceAction = MaintenanceActionSnapshot(
+        id,
+        done: true,
+        report: MaintenanceReportSnapshot(report),
+      );
+    } catch (e) {
+      _maintenanceAction = MaintenanceActionSnapshot(
+        id,
+        done: true,
+        error: RuntimeFault.from(e),
+      );
+    }
+    _captureMaintenance();
+    _emit();
   }
 
   void _enqueue(
@@ -906,10 +1011,18 @@ final class WorkerDispatcher {
   void _captureMaintenance() {
     final h = _history;
     if (h == null) return;
+    final failure = h.unacknowledgedFailure;
+    final count = h.unacknowledgedFailureCount;
+    if (!identical(failure, _seenFailure) || count != _seenFailureCount) {
+      _maintenanceRevision++;
+      _seenFailure = failure;
+      _seenFailureCount = count;
+    }
     _maintenance = MaintenanceSnapshot(
       h.latestMaintenance?.state,
       h.unacknowledgedFailure?.error?.code,
       h.unacknowledgedFailureCount,
+      revision: _maintenanceRevision,
       latestReport: h.latestMaintenance == null
           ? null
           : MaintenanceReportSnapshot(h.latestMaintenance!),
@@ -925,6 +1038,9 @@ final class WorkerDispatcher {
     _stopApplied = true;
     await _databaseQueue;
     await _deviceWork;
+    while (_maintenanceWork.isNotEmpty) {
+      await Future.wait(_maintenanceWork.toList());
+    }
     if (gate.state != DeviceGateState.free || _owner == OwnerFact.unknown) {
       _phase = RuntimePhase.fault;
       _error ??= const RuntimeFault(

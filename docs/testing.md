@@ -1334,3 +1334,31 @@ in PING content; each commit still requires separate original-image/focus review
 VM runs do not enumerate or open hardware. Real USB/RF diagnostics require current
 explicit host port and wireless scope authorization; historical check permission
 is insufficient.
+
+## App history/export bridge (1D.8)
+
+Run app tests serially, before native asset builds in the same workspace:
+
+```bash
+(cd apps/meshchan_app && flutter test --no-pub --concurrency=1)
+python3 apps/meshchan_app/tool/check_history_process.py --dart "$(command -v dart)"
+```
+
+`history_test.dart`, `history_worker_test.dart` and `export_test.dart` cover
+strict UTC, applied/captured selections, stale pages/details, failed-selection
+continuation/export guards with explicit refresh recovery, bound deletion,
+mouse composition, complete persisted presentation, latest/sticky revisions,
+manual maintenance fast ACK/control/drain, exact JSON bytes, pre-writer cancel,
+write/publish/cleanup outcomes and first/reentrant quit barriers. Controlled
+public fakes model long work and failures; they do not prove actual OS writes.
+The process gate uses real public core/worker/SQLite and fake transport, independently
+reopens committed delete/retention results, and interrupts only owned children
+at prepared/logical-saved barriers to verify recovery and stable subsequent reopen.
+These abnormal exits do not prove normal cleanup. No SQL/private storage hooks
+or product fixture launch options are added.
+
+RunnerTests directly exercise real exclusive publication for new targets,
+existing files/directories/symlinks/dangling links and a target created after the
+UX check. Native tests use the disabled-owner host and external owned directories.
+Actual Save panel/Pinyin verification is separate from Widget/native primitives;
+see the Step 8 validation record for executed coverage and artifact cutoffs.

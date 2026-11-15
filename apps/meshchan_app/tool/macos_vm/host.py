@@ -73,7 +73,7 @@ class Product:
             raise ValueError('Guest command failed: ' + error.stderr.strip()) from None
         return result.stdout
 
-    def launch(self, mode, app):
+    def launch(self, mode, app, fixture_source=None):
         if mode in self.state['products']:
             raise ValueError('Mode already launched; use a new run for another fixture')
         product = self.vm.root + '/products/' + self.state['run'] + '-' + mode
@@ -82,6 +82,11 @@ class Product:
         binary_hash = hashlib.sha256((app / 'Contents/MacOS/Meshchan').read_bytes()).hexdigest()
         self.vm.remote('test ! -e ' + q(product), timeout=10)
         self.upload([(app,'Meshchan.app')], product)
+        if fixture_source is not None:
+            fixture_source = Path(fixture_source).resolve()
+            if not fixture_source.is_dir():
+                raise ValueError('A closed owned fixture directory is required')
+            self.upload([(fixture_source, 'fixture')], product)
         # The full app, cwd, owner directory, output and drivers are outside Documents.
         script = f'''mkdir -p {q(product + '/fixture')} {q(product + '/cwd')}
 cd {q(product + '/cwd')}
@@ -142,7 +147,7 @@ def main():
     p.add_argument('--evidence', required=True)
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('prepare')
-    launch = sub.add_parser('launch'); launch.add_argument('mode', choices=MODES); launch.add_argument('app')
+    launch = sub.add_parser('launch'); launch.add_argument('mode', choices=MODES); launch.add_argument('app'); launch.add_argument('--fixture-source', type=Path)
     action = sub.add_parser('action'); action.add_argument('mode', choices=MODES); action.add_argument('args', nargs='+')
     for command in ['collect','settled']:
         mode = sub.add_parser(command); mode.add_argument('mode',choices=MODES)
@@ -150,7 +155,7 @@ def main():
     args = p.parse_args()
     product = Product(args.config,args.evidence)
     if args.command == 'prepare': product.prepare()
-    elif args.command == 'launch': product.launch(args.mode,args.app)
+    elif args.command == 'launch': product.launch(args.mode,args.app,args.fixture_source)
     elif args.command == 'action': print(product.act(args.mode,args.args),end='')
     elif args.command == 'collect': product.collect(args.mode)
     elif args.command == 'settled': product.settled(args.mode)

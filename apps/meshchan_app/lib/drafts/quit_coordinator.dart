@@ -7,14 +7,21 @@ import '../profiles/editor.dart';
 import '../profiles/preview.dart';
 import '../device/model.dart';
 import '../diagnostics/model.dart';
+import '../history/model.dart';
+import '../export/coordinator.dart';
 
 /// Both native and Flutter exit requests share this application-owned decision.
 /// Cancel is never cached. Shutdown retains the runtime's late-release semantics.
 final class DraftQuitCoordinator {
-  DraftQuitCoordinator(this.runtime, {this.afterShutdownIntent})
-    : editor = DraftEditor(runtime),
-      preview = ParameterPreview(runtime),
-      device = DeviceModel(runtime) {
+  DraftQuitCoordinator(
+    this.runtime, {
+    this.afterShutdownIntent,
+    ExportCoordinator? output,
+  }) : editor = DraftEditor(runtime),
+       preview = ParameterPreview(runtime),
+       device = DeviceModel(runtime),
+       history = HistoryModel(runtime),
+       output = output ?? ExportCoordinator(runtime) {
     diagnostics = DiagnosticsModel(runtime, device);
     profiles = ProfilesEditor(
       runtime,
@@ -28,11 +35,17 @@ final class DraftQuitCoordinator {
   final DraftEditor editor;
   final ParameterPreview preview;
   final DeviceModel device;
+  final HistoryModel history;
+  final ExportCoordinator output;
   late final DiagnosticsModel diagnostics;
   late final ProfilesEditor profiles;
   bool auxiliaryActive = false;
   Future<bool> leaveCurrent(LeavePrompt show) async {
-    if (device.composing || diagnostics.composing || preview.composing) {
+    if (history.composing ||
+        history.confirming ||
+        device.composing ||
+        diagnostics.composing ||
+        preview.composing) {
       return false;
     }
     return auxiliaryActive ? profiles.leave(show) : editor.leave(show);
@@ -44,6 +57,8 @@ final class DraftQuitCoordinator {
     preview.dispose();
     diagnostics.dispose();
     device.dispose();
+    history.dispose();
+    output.dispose();
   }
 
   final void Function()? afterShutdownIntent;
@@ -54,8 +69,13 @@ final class DraftQuitCoordinator {
   Future<bool> requestQuit() =>
       _attempt ??= _quit().whenComplete(() => _attempt = null);
   Future<bool> _quit() async {
-    if (_closing) return (await runtime.shutdown()).canExit;
-    if (profiles.deciding ||
+    if (_closing) {
+      final result = await runtime.shutdown();
+      await output.drain();
+      return result.canExit && output.settled;
+    }
+    if (history.confirming ||
+        profiles.deciding ||
         profiles.deleting ||
         profiles.confirming ||
         profiles.restoring ||
@@ -64,18 +84,26 @@ final class DraftQuitCoordinator {
         editor.confirming) {
       return false;
     }
-    if (device.composing ||
+    if (history.composing ||
+        device.composing ||
         diagnostics.composing ||
         profiles.deferDepartureForComposition() ||
         preview.composing) {
       return false;
     }
     if (editor.deferDepartureForComposition()) return false;
+    // Composition/preflight veto has no export cancellation side effects.
+    history.setBlocked(true);
+    output.paused = true;
+    output.cancel();
     editor.setQuitting(true);
     profiles.setQuitting(true);
     DraftDecision? decision;
     var allowed = false;
     try {
+      // Close a pre-writer panel before any dirty-document modal. Accepted
+      // summary/pre-IO remains owned until it actually settles.
+      if (output.job?.writerAdmitted != true) await output.drain();
       // Early startup has no document/context to wait for and owns no edits.
       if (runtime.snapshot.phase == RuntimePhase.ready) {
         decision = auxiliaryActive
@@ -101,9 +129,12 @@ final class DraftQuitCoordinator {
         }
       }
       _closing = true;
+      output.stop();
       final closing = runtime.shutdown(); // Save irreversible intent first.
       afterShutdownIntent?.call();
-      allowed = (await closing).canExit;
+      final result = await closing;
+      await output.drain();
+      allowed = result.canExit && output.settled;
       return allowed;
     } catch (_) {
       return false;
@@ -117,6 +148,8 @@ final class DraftQuitCoordinator {
       }
       editor.setQuitting(_closing);
       profiles.setQuitting(_closing);
+      history.setBlocked(_closing);
+      if (!_closing) output.paused = false;
       if (!_closing &&
           !allowed &&
           runtime.snapshot.phase == RuntimePhase.ready &&

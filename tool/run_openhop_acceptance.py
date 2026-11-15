@@ -440,11 +440,35 @@ def attempt_accounting(records, case_id, limits):
             'applicationSendAttemptsKnown': complete}
 
 
+def verify_candidate(candidate, manifest_path):
+    """Verify every native file, with no path escape or omitted bundle assets."""
+    hashes = json.loads(manifest_path.read_text())['nativeHashes']
+    if not isinstance(hashes, dict) or 'bin/meshctl' not in hashes:
+        raise ValueError('Missing executable hash.')
+    actual = {}
+    for name, digest in hashes.items():
+        path = Path(name)
+        if (path.is_absolute() or '..' in path.parts or not path.parts
+                or path.parts[0] not in ('bin', 'lib')
+                or not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest)
+                or (candidate/path).is_symlink()):
+            raise ValueError('Invalid native manifest entry.')
+        actual[name] = hashlib.sha256((candidate/path).read_bytes()).hexdigest()
+    files = {str(p.relative_to(candidate)) for p in candidate.rglob('*') if p.is_file()}
+    if set(hashes) != files or actual != hashes:
+        raise ValueError('Candidate bytes or file set changed.')
+    return actual
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--candidate-manifest', type=Path,
+                        help='Required for execution: reviewed nativeHashes for this candidate.')
+    parser.add_argument('--initialization-attempts', type=int, choices=(1, 2, 3), default=1,
+                        help='Explicitly authorized initialization-only limit; never retry RF or consuming reads.')
     parser.add_argument('--only-case', choices=['H2', 'H7'])
     args = parser.parse_args()
     try:
@@ -458,19 +482,21 @@ def main():
                           'cases': [c['id'] for c in cases], 'maximumRfAttempts': allocation,
                           'applicationSendLimits': limits}))
         return
-    args.output.mkdir(parents=True, exist_ok=False)
+    if args.candidate_manifest is None:
+        parser.error('Execution requires an explicit current candidate manifest.')
     env = dict(os.environ, PATH='/opt/homebrew/share/flutter/bin:/usr/bin:' + os.environ['PATH'])
     root = Path(__file__).resolve().parents[1]
-    baseline = json.loads((root/'build/phase-1b9/20261110T193252Z/hardware/execution-plan.json').read_text())
     executable = Path(cases[0]['aArgv'][0])
     candidate = executable.parent.parent
-    actual = {name: hashlib.sha256((candidate/name).read_bytes()).hexdigest()
-              for name in baseline['nativeHashes']}
-    if actual != baseline['nativeHashes']:
-        parser.error('Candidate native hashes changed; do not run against untested bytes.')
+    try:
+        actual = verify_candidate(candidate, args.candidate_manifest)
+    except (ValueError, KeyError, TypeError, OSError):
+        parser.error('Candidate manifest is invalid or native bytes changed.')
+    args.output.mkdir(parents=True, exist_ok=False)
     manifest = {'createdUtc': utc(), 'nativeHashes': actual, 'plan': str(args.plan),
-        'authorization': 'User requested continuation of real matrix and confirmed separate local modem. Initialization-only retries allowed under prior multiple-attempt instruction.',
-        'maxInitializationInvocationsPerSide': 3, 'retryAfterAnyRfAttempt': False,
+        'candidateManifest': str(args.candidate_manifest),
+        'authorization': 'Execution explicitly requested for this finite matrix; initialization-only limit selected by the operator.',
+        'maxInitializationInvocationsPerSide': args.initialization_attempts, 'retryAfterAnyRfAttempt': False,
         'aReceiverSchedulingGuardSeconds': 20,
         'aReadinessEvidence': 'No A ready event exists; guard is scheduling only. Actual receive/PONG plus final reason/stage establish the result.',
         'rfAttemptCeiling': allocation, 'validatedApplicationSendLimits': limits, 'cases': cases,
@@ -482,14 +508,15 @@ def main():
     # New peers are refused once requested; already-owned finite peers retain
     # their original budgets and actual cleanup observations.
     with deferred_sigint() as interruption:
-        code = execute_cases(args.output, cases, limits, allocation, env, interruption)
+        code = execute_cases(args.output, cases, limits, allocation, env, interruption,
+                             initialization_attempts=args.initialization_attempts)
         if interruption['requested']:
             code = 130
     if code:
         raise SystemExit(code)
 
 
-def execute_cases(output, cases, limits, allocation, env, interruption):
+def execute_cases(output, cases, limits, allocation, env, interruption, *, initialization_attempts=1):
     results = []
     failed = False
     all_runs = []
@@ -507,15 +534,15 @@ def execute_cases(output, cases, limits, allocation, env, interruption):
                 raise PendingCleanup('Process metadata not confirmed for ' + run.label)
             return run
         def sender(side, peer=None):
-            for attempt in range(1,4):
+            for attempt in range(1, initialization_attempts + 1):
                 if peer is not None and peer.process.poll() is not None:
                     return None
-                run = start(side,attempt);record = run.wait()
-                if not initialization_failure(record):
+                run = start(side,attempt)
+                if not initialization_failure(run.wait()):
                     return run
             return run
         def a_receiver():
-            for attempt in range(1,4):
+            for attempt in range(1, initialization_attempts + 1):
                 run = start('A',attempt)
                 if run.guarded_window():
                     return run
@@ -528,7 +555,7 @@ def execute_cases(output, cases, limits, allocation, env, interruption):
         stop_exit = 69
         try:
             if case['id'] in ('H1','H3','H5'):
-                for attempt in range(1,4):
+                for attempt in range(1, initialization_attempts + 1):
                     b = start('B',attempt)
                     name = 'peer_reception_active' if case['id']=='H1' else 'peer_session_ready'
                     if b.wait_event(name):
@@ -606,7 +633,7 @@ def execute_cases(output, cases, limits, allocation, env, interruption):
             'actualApplicationSendAttempts':known if count_known else None,
             'knownApplicationSendAttempts':known,'applicationSendAttemptUpperBound':upper,
             'maximumApplicationSendAttempts':allocation},indent=2)+'\n')
-        stopping = bool(error_kind or evaluation_failure or cleanup_issues or unresolved or budget_exceeded or upper > allocation)
+        stopping = bool(not passed or error_kind or evaluation_failure or cleanup_issues or unresolved or budget_exceeded or upper > allocation)
         if stopping:
             (output/'STOPPED.json').write_text(json.dumps({'caseId':case['id'],
                 'status':entry['status'],'orchestrationFailure':error_kind,

@@ -484,3 +484,41 @@ The current [1D.7 validation record](validation/phase-1d7-recorded-diagnostics.m
 separates functional IME/lifecycle observations from Release VM text raster
 artifacts, and separates all GUI work from public fake transport and host RF
 acceptance. These scenarios never refresh or open a real port.
+
+## History and native Save panel scenarios (1D.8)
+
+`host.py launch MODE APP --fixture-source CLOSED_OWNED_DIRECTORY` copies a
+public-core-generated fixture before the product acquires its owner. The source
+must be closed; never copy/mutate an actively owned database as a seeding method.
+Omit the argument for the usual fresh fixture. This is a harness option only.
+`history_scenario.py` provides `initial`, `preedit filter|filename`,
+`defer run|apply|menu|quit`, and separately approved `commit TARGET --visual-confirmed`
+stages using the same `--config`, `--evidence`, and mode as the product host.
+Each preedit captures original screenshot/focus JSON and stops for review; review
+each one individually before natural Space commit. A filename stage requires the
+real Save panel's filename editor already focused in the identified product.
+
+The guest driver supports ordinary punctuation/uppercase key events for strict
+UTC input and owned directory navigation, plus bounded `scroll LINES`. It still
+refuses non-VirtualMac hosts and wrong product PID/argv/focus. It never injects
+Chinese through AX values, paste or document edits. Exercise new-file success,
+cancel, existing-target rejection and panel-open Quit against owned paths.
+Read actual exported files independently of database ownership; schema/count/
+ordered nullable facts and timestamp checks are separate from screenshots.
+Compare exact bytes to the same call's JSON only in automated injected tests
+unless that exact return is available in the GUI test. Record actual execution
+and final product cutoff in the Step 8 validation record.
+
+For override collapse regressions, the guest helper also locates checkbox
+controls and provides `text-geometry LABEL`, `pointer-text LABEL` (the leading
+text area), and `pointer-in-window X Y` (bounded to the identified NSWindow).
+Use `geometry` to verify the **window** origin, including its title bar, and
+review the original screenshot before a window-relative pointer action. A
+static-text accessibility frame may cover empty space or retain a prior layout;
+do not treat it as a precise label hit box without review. These are guest-only
+events under the existing PID/argv/focus/identity guards, never host input.
+Enable the operation's request-timeout override, focus its real editor, compose
+Pinyin and capture original screenshot/focus JSON. Review each operation's gate
+separately. Mouse collapse must leave that editor and composition intact; after
+natural commit and source restoration, ordinary collapse may remove it. Preserve
+harness failures and verify normal owner/worker release before independent reopen.

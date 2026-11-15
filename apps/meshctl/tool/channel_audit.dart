@@ -7,7 +7,6 @@ import 'package:meshctl/src/cli_output.dart';
 import 'package:meshctl/src/process_io.dart';
 
 import 'support/channel_audit.dart';
-import 'support/openhop_frame_transport.dart';
 import 'support/openhop_peer_runner.dart';
 
 /// Explicit local configuration; validation is complete before either factory.
@@ -88,12 +87,7 @@ Future<void> main(List<String> arguments) async {
       jsonDecode(file.readAsStringSync()) as Map<String, dynamic>,
     );
     final jwt = readOpenHopSecret(config.peer.jwtReference)!;
-    final b = OpenHopFrameTransport(
-      baseUrl: config.peer.baseUrl,
-      companionName: config.peer.companionName,
-      jwt: jwt,
-      connectTimeout: config.peer.requestTimeout,
-    );
+    final b = config.peer.createTransport(jwt);
     final runner = ChannelAuditRunner(
       createA: () => SerialTransport(portPath: config.aPort),
       createB: () => b,

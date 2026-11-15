@@ -15,6 +15,15 @@
   Record the actual interpreter path and version in new validation records;
   preserve historical records with their original toolchain facts.
 
+## Host macOS GUI testing
+
+- For GUI tests on this Mac that do not test Chinese input methods, use
+  **Computer Use** for UI interactions. Do not substitute AppleScript, System
+  Events, CGEvent, or accessibility-driver scripts for those interactions.
+- Builds, owned-fixture preparation, CLI tests, and independent process/file
+  verification may use their normal command-line tools. Chinese input-method
+  tests follow the applicable input-method skill and guide.
+
 ## macOS VM GUI automation
 
 - Before running real GUI, host-input isolation, or Chinese input-method tests

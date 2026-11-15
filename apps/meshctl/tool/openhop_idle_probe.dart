@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:meshctl/src/process_io.dart';
 
-import 'support/openhop_frame_transport.dart';
 import 'support/openhop_idle_probe.dart';
 import 'support/openhop_peer_runner.dart';
 
@@ -36,12 +35,7 @@ Future<void> main(List<String> arguments) async {
     if (config.jwtReference == null) throw const FormatException();
     final jwt = readOpenHopSecret(config.jwtReference)!;
     final result = await runOpenHopIdleProbe(
-      transport: OpenHopFrameTransport(
-        baseUrl: config.baseUrl,
-        companionName: config.companionName,
-        jwt: jwt,
-        connectTimeout: config.requestTimeout,
-      ),
+      transport: config.createTransport(jwt),
       duration: Duration(seconds: seconds),
       commandTimeout: config.requestTimeout,
       initializationTimeout: config.initializationTimeout,

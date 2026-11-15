@@ -40,7 +40,7 @@ let root = AXUIElementCreateApplication(pid)
 AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
 AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
 pump()
-if args[1] == "activate" { app.activate(options: [.activateAllWindows]); pump(0.5) }
+if ["activate", "restore-window"].contains(args[1]) { app.activate(options: [.activateAllWindows]); pump(0.5) }
 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { refuse("Fixture lost foreground; no activation or input attempted") }
 let windows = attr(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
 guard let window = windows.first(where: { text($0, kAXTitleAttribute) == "Meshchan" }) else { refuse("Fixture has no Meshchan window") }
@@ -58,7 +58,7 @@ func click(_ e: AXUIElement) {
     for type in [CGEventType.leftMouseDown, .leftMouseUp] { CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap) }
     pump()
 }
-let keys: [String: CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,"7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"return":36,"l":37,"j":38,"k":40,"n":45,"m":46,"tab":48,"space":49,"delete":51,"escape":53,"left":123,"right":124,"down":125,"up":126,"/":44,".":47,"-":27,";":41]
+let keys: [String: CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,"7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"return":36,"l":37,"j":38,"k":40,"n":45,"m":46,"tab":48,"space":49,"delete":51,"escape":53,"left":123,"right":124,"down":125,"up":126,"/":44,".":47,"-":27,",":43,";":41]
 func key(_ name: String, _ flags: CGEventFlags = []) {
     foreground()
     guard let code = keys[name] else { refuse("Unsupported key") }
@@ -84,11 +84,32 @@ func button(_ label: String) -> AXUIElement {
 }
 switch args[1] {
 case "activate": break
+case "restore-window":
+    AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+    pump(0.5)
 case "snapshot":
     emit(tree.map { ["role":text($0,kAXRoleAttribute),"title":text($0,kAXTitleAttribute),"description":text($0,kAXDescriptionAttribute),"value":text($0,kAXValueAttribute)] })
 case "geometry": emit(["window":geometry(window),"fields":fields.map { geometry($0) }])
 case "size":
     var s = CGSize(width: Double(args[2])!, height: Double(args[3])!); AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &s)!); pump()
+case "menu":
+    guard args.count == 4 else { refuse("Menu and item required") }
+    guard let bar = attr(root, kAXMenuBarAttribute) else { refuse("No menu bar") }
+    let menuBar = bar as! AXUIElement
+    guard let top = walk(menuBar).first(where: { text($0,kAXTitleAttribute) == args[2] }) else { refuse("Menu missing") }
+    AXUIElementPerformAction(top, kAXPressAction as CFString); pump()
+    guard let item = walk(menuBar).first(where: { text($0,kAXTitleAttribute) == args[3] }) else { refuse("Menu item missing") }
+    emit(["title":text(item,kAXTitleAttribute), "enabled":attr(item,kAXEnabledAttribute) as? Bool ?? false])
+    AXUIElementPerformAction(item, kAXPressAction as CFString); pump()
+    // Dismiss a disabled item's menu without committing text.
+    if attr(item,kAXEnabledAttribute) as? Bool != true {
+      for menu in walk(menuBar).reversed() where text(menu,kAXRoleAttribute) == kAXMenuRole {
+        AXUIElementPerformAction(menu, kAXCancelAction as CFString)
+      }
+    }
+case "close-window":
+    guard let close = attr(window, kAXCloseButtonAttribute) else { refuse("No Close button") }
+    AXUIElementPerformAction(close as! AXUIElement, kAXPressAction as CFString); pump()
 case "click": AXUIElementPerformAction(button(args[2]), kAXPressAction as CFString); pump()
 case "pointer": click(button(args[2]))
 case "pointer-in-window":
@@ -133,6 +154,30 @@ case "type":
         else if value != value.lowercased() { key(value.lowercased(), .maskShift) }
         else { key(value) }
     }
+case "paste-owned":
+    foreground(true)
+    guard args.count == 3 else { refuse("Owned text required") }
+    let board = NSPasteboard.general
+    let previous: [[(NSPasteboard.PasteboardType, Data)]] = (board.pasteboardItems ?? []).map { item in
+      item.types.map { type in
+        guard let data = item.data(forType: type) else { refuse("Cannot preserve clipboard type") }
+        return (type, data)
+      }
+    }
+    board.clearContents()
+    board.setString(args[2], forType: .string)
+    let ownedChange = board.changeCount
+    key("v", .maskCommand)
+    if board.changeCount == ownedChange {
+      board.clearContents()
+      let items = previous.map { values -> NSPasteboardItem in
+        let item = NSPasteboardItem()
+        for (type, data) in values { item.setData(data, forType: type) }
+        return item
+      }
+      if !items.isEmpty { board.writeObjects(items) }
+    }
+    emit(["ownedPaste": true])
 case "scroll":
     foreground()
     guard let lines = Int32(args[2]) else { refuse("Scroll requires integer lines") }

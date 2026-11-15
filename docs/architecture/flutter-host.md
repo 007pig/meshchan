@@ -1115,3 +1115,67 @@ AppKit's default otherwise prevents application termination before consulting th
 application delegate. This per-panel setting lets ordinary system Quit reach the
 existing termination bridge, where Dart cancels/drains the owned output job and
 all runtime work. No panel-specific key monitor or second quit path is installed.
+
+### 1D.9 desktop command integration
+
+The XIB remains the only native menu definition. File Save and application
+Settings dispatch through the existing host channel's single Dart handler.
+File Close Window uses AppKit `performClose:` on the current responder; only the
+main window's existing delegate requests termination. Standard Edit, Hide and
+Window responders keep their platform ownership. Unsupported template Find,
+spelling, substitution and speech submenus are removed. No PlatformMenuBar or
+second command/storage owner is installed.
+
+`DesktopCommands` is an injectable main-window boundary. The shell resolves the
+current destination and the shared `ProfilesNavigation` resolves the auxiliary
+subpage. Save calls the existing Draft/Profile/Settings save method; Preview,
+Device, Diagnostics and History have no Save action. Settings runs the current
+leave decision before actually opening the existing Settings form. When that
+load awaits storage, the source editor remains editable; the shell rechecks
+departure after loading and before switching destinations. A replacement Draft
+generation/ID or pending document read cancels that stale navigation, and new
+edits/composition receive the same live departure decision. Navigation is
+serialized, including an in-progress auxiliary transition. Live composition,
+Flutter modals, native sheets, ordinary runtime admission and model state are
+rechecked by callbacks; menu enablement is advisory. Native validation also
+requires the main window to be key with no modal/sheet. Job-numbered native
+sheet notifications cannot clear a newer sheet's block.
+
+The main window narrowly consumes ordinary Command+S, Command+comma and
+Command+W before Flutter IME interpretation, allowing Caps Lock and preserving
+other modifiers/key-up. The existing Command+Q path remains unchanged. Save and
+Settings still use the same Dart guards; Close still invokes AppKit Close.
+Recognized shortcut characters take precedence over physical key codes. Only
+the live Simplified Pinyin source (`com.apple.inputmethod.SCIM.ITABC`) permits
+the ANSI-comma fallback when characters are unavailable/localized; Dvorak's
+Command+W on that same physical key remains Close.
+Native filename editing retains the sheet's responder semantics.
+
+Draft confirmation now checks live composition before opening either Delete
+or Inspect/Reload. A stable Flex changes axis at 680 available content points
+without replacing the form's EditableText state; intentional document generation
+changes still reset its undo history. Dirty-dialog Escape/dismissal continues
+editing. The supported minimum and initial content size are both 800×600 logical
+points. The shell bounds and scrolls its status region so retained cleanup/error
+facts cannot consume the whole page. Existing page/list/form scrolling remains
+responsible for reaching long content and actions.
+
+Quit establishes and awaits the existing BeginDraftDecision barrier before its
+first pre-writer output-drain await. The real host closes ordinary admission
+synchronously before the ACK; the worker control branch pauses new work while
+retaining previously accepted queue entries. Dirty prompting remains after the
+panel/pre-writer drain. Continue uses EndDraftDecision's existing healthy-owner
+checks, and first/reentrant final Quit still await runtime and host output.
+See the [1D.9 validation record](../validation/phase-1d9-desktop-behavior.md) for
+source/product cutoffs, actual desktop results and remaining evidence limits.
+
+Actual adjacent Close/Command+Q testing additionally exposed AppKit reentrancy:
+calling `NSApplication.terminate` again while a deferred dirty decision is pending
+can terminate before Dart's veto/release receipt. Application menu Quit,
+Command+Q and main-window Close now first use `RuntimeTermination.requestUserQuit`.
+It coalesces while the original AppKit reply or Dart forwarding is pending, then
+allows a new request after veto. The first resource-bearing request still calls
+AppKit terminate and receives the original `applicationShouldTerminate` reply;
+resource-free startup retains its original barrier. External system termination
+requests keep the existing delegate/reply protocol. This adds no native resource
+cleanup and does not replace the application coordinator.

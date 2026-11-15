@@ -113,11 +113,17 @@ echo $!'''
         return self.job('export MESHCHAN_VM_PRODUCT_ROOT=' + q(root) + '\nexport MESHCHAN_GUI_FIXTURE=' + q(root + '/fixture') + '\n' + shlex.join(argv))
 
     def collect(self, mode):
-        root = self.state['products'][mode]['root']
+        product = self.state['products'][mode]
+        root = product['root']
+        # Screenshots/logs can be collected while live; a database is never a
+        # live-owner snapshot. Closed fixtures are collected only after OS exit.
+        pid = int(product['pid'])
+        process = self.vm.remote('if /bin/ps -p ' + str(pid) + ' -o pid= >/dev/null; then echo live; else echo closed; fi', capture_output=True, text=True, timeout=10)
+        exclude_fixture = process.stdout.strip() != 'closed' or bool(getattr(process, 'stderr', '').strip())
         target = self.out / mode
         target.mkdir(exist_ok=True)
         with tempfile.TemporaryFile() as stream:
-            self.vm.remote('/usr/bin/tar -cf - -C ' + q(root) + ' --exclude=Meshchan.app .', stdout=stream, timeout=60)
+            self.vm.remote('/usr/bin/tar -cf - -C ' + q(root) + ' --exclude=Meshchan.app' + (' --exclude=fixture' if exclude_fixture else '') + ' .', stdout=stream, timeout=60)
             stream.seek(0)
             with tarfile.open(fileobj=stream) as archive:
                 archive.extractall(target, filter='data')

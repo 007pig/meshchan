@@ -522,3 +522,28 @@ Pinyin and capture original screenshot/focus JSON. Review each operation's gate
 separately. Mouse collapse must leave that editor and composition intact; after
 natural commit and source restoration, ordinary collapse may remove it. Preserve
 harness failures and verify normal owner/worker release before independent reopen.
+
+### Desktop menu helper additions (1D.9)
+
+The guest-only MeshchanUI helper accepts `menu TOP_LEVEL ITEM` and
+`close-window`, plus the comma virtual key. Menu actions operate the real
+AppKit accessibility menu; disabled items are reported and dismissed. Close
+presses the identified owned main window's Close button. These remain guest
+executor actions with the same exact PID/argv/fixture/focus checks. They grant
+no host GUI automation or hardware access. Capture each preedit image and focus
+record separately before testing a business gate; menu clicks and shortcut
+paths have distinct evidence. Do not query a product's UI after normal exit.
+
+Product collection now checks the OS PID before archiving a fixture. Live runs
+collect screenshots/logs with `--exclude=fixture`; only an explicitly absent PID
+permits the closed directory into the archive. An unknown process reply also
+excludes the fixture. `tool/macos_vm_collection_test.py` checks all three cases.
+Earlier live copies from the 1D.9 run are retained as quarantined evidence and
+must not be used as persistence/reopen receipts.
+
+The guest helper's `paste-owned TEXT` snapshots clipboard formats in memory,
+pastes only the supplied owned text, and restores the previous formats only if
+its change count is still the test's. It does not log or persist prior clipboard
+content. `restore-window` activates and unminimizes only the already identified
+owned PID/window. These actions remain guest-only; they do not authorize host
+GUI scripting or querying a closed application.

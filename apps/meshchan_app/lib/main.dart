@@ -7,6 +7,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import 'app.dart';
+import 'desktop/commands.dart';
+import 'desktop/host_dispatch.dart';
 import 'drafts/quit_coordinator.dart';
 import 'host_bootstrap.dart';
 import 'platform_probe.dart';
@@ -21,11 +23,11 @@ final _probeCompletion = Completer<bool>();
 void _installQuit(
   Future<bool> Function() canQuit, {
   void Function()? onFailure,
+  DesktopCommands? commands,
 }) {
-  _hostChannel.setMethodCallHandler((call) async {
-    if (call.method == 'requestQuit') return canQuit();
-    throw MissingPluginException();
-  });
+  _hostChannel.setMethodCallHandler(
+    HostPlatformDispatch(canQuit, commands: commands).handle,
+  );
   unawaited(
     _hostChannel
         .invokeMethod<void>('runtimeReady')
@@ -137,38 +139,54 @@ void main(List<String> arguments) {
         }
       },
     );
+    final desktopCommands = DesktopCommands();
+    desktopCommands.addListener(() {
+      unawaited(
+        _hostChannel
+            .invokeMethod<void>('updateDesktopCommands', {
+              'save': desktopCommands.canSave,
+              'settings': desktopCommands.canOpenSettings,
+              'cancelDialog': desktopCommands.canCancelDialog,
+            })
+            .catchError((Object _) {}),
+      );
+    });
     // Flush an AppKit quit received before Dart's handler was installed.
     var reportedShutdown = false;
-    _installQuit(() async {
-      final quitPhase = runtime.snapshot.phase;
-      final canExit = await quitCoordinator.requestQuit();
-      if (!canExit) return false;
-      final result = await runtime.shutdown();
-      if (!reportedShutdown) {
-        reportedShutdown = true;
-        try {
-          stdout.writeln(
-            jsonEncode({
-              'runtime': 'meshchan.shutdown.1d3',
-              'quitPhase': quitPhase.name,
-              'resourcesReleased': result.resourcesReleased,
-              'workerExited': result.workerExited,
-              'workerWasSpawned': result.workerWasSpawned,
-              'owner': runtime.snapshot.owner.name,
-              'error': runtime.snapshot.error?.code,
-              'maintenanceFailureCount':
-                  runtime.snapshot.maintenance?.failureCount,
-              'pendingRequests': runtime.pendingCount,
-              'receivePorts': runtime.openPortCount,
-            }),
-          );
-          await stdout.flush();
-        } catch (_) {
-          // Logging cannot change the already confirmed resource conclusion.
+    _installQuit(
+      () async {
+        final quitPhase = runtime.snapshot.phase;
+        final canExit = await quitCoordinator.requestQuit();
+        if (!canExit) return false;
+        final result = await runtime.shutdown();
+        if (!reportedShutdown) {
+          reportedShutdown = true;
+          try {
+            stdout.writeln(
+              jsonEncode({
+                'runtime': 'meshchan.shutdown.1d3',
+                'quitPhase': quitPhase.name,
+                'resourcesReleased': result.resourcesReleased,
+                'workerExited': result.workerExited,
+                'workerWasSpawned': result.workerWasSpawned,
+                'owner': runtime.snapshot.owner.name,
+                'error': runtime.snapshot.error?.code,
+                'maintenanceFailureCount':
+                    runtime.snapshot.maintenance?.failureCount,
+                'pendingRequests': runtime.pendingCount,
+                'receivePorts': runtime.openPortCount,
+              }),
+            );
+            await stdout.flush();
+          } catch (_) {
+            // Logging cannot change the already confirmed resource conclusion.
+          }
         }
-      }
-      return result.canExit;
-    }, onFailure: runtime.reportHostFailure);
+        return result.canExit;
+      },
+      onFailure: runtime.reportHostFailure,
+      commands: desktopCommands,
+    );
     if (config.verification == 'quit-starting') {
       // Bounded native acceptance of quit before bootstrap has settled. The
       // ordinary owner/coordinator is used, without a delay or fake resource.
@@ -178,6 +196,7 @@ void main(List<String> arguments) {
           probe: _probe,
           runtime: runtime,
           quitCoordinator: quitCoordinator,
+          desktopCommands: desktopCommands,
         ),
       );
       _requestNativeQuit(runtime);
@@ -191,6 +210,7 @@ void main(List<String> arguments) {
           probe: _probe,
           runtime: runtime,
           quitCoordinator: quitCoordinator,
+          desktopCommands: desktopCommands,
         ),
       );
       unawaited(runtime.start().then<void>((_) => _requestNativeQuit(runtime)));
@@ -221,6 +241,7 @@ void main(List<String> arguments) {
                 probe: _probe,
                 runtime: runtime,
                 quitCoordinator: quitCoordinator,
+                desktopCommands: desktopCommands,
               ),
             );
           },
@@ -232,6 +253,7 @@ void main(List<String> arguments) {
           probe: _probe,
           runtime: runtime,
           quitCoordinator: quitCoordinator,
+          desktopCommands: desktopCommands,
         ),
       );
     }

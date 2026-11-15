@@ -76,7 +76,7 @@ final class DraftEditor extends ChangeNotifier {
   }
 
   bool beginConfirmation() {
-    if (!canOperate || pending) return false;
+    if (!canOperate || pending || deferDepartureForComposition()) return false;
     confirming = true;
     _notify();
     return true;

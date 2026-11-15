@@ -523,3 +523,23 @@ while observing accepted generation/pre-IO; after admission Quit waits for
 write, publication and cleanup. Runtime release and worker exit alone cannot
 permit exit while host output is pending. Continue editing never restarts a
 canceled export. No device enumeration, preset resolution or transport is needed.
+
+## Desktop commands and window size (1D.9)
+
+File → Save / Command+S saves the current Draft, Profile or Settings form using
+its existing revision/session checks. Device, Diagnostics, History and Offline
+preview have no Save action. Meshchan → Settings… / Command+comma runs the
+current unsaved-edit decision and opens Settings. A modal dialog, native Save
+sheet, live text composition or closed runtime admission prevents background
+commands. Finish composition naturally before retrying a business action.
+
+File → Close Window / Command+W follows the current AppKit window. Closing the
+main window, Quit and Command+Q use the same application quit coordinator;
+Continue editing cancels a dirty decision. Escape also continues editing. Edit
+commands retain the current text responder and its undo history. Hide, minimize,
+zoom, full screen and resize do not stop work or replace the storage owner.
+The initial and minimum supported content size is 800×600 logical points; larger
+windows preserve the same editing session across the Draft layout breakpoint.
+
+Acceptance evidence and remaining platform cases are tracked in
+[the desktop validation record](../../docs/validation/phase-1d9-desktop-behavior.md).

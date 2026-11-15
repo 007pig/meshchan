@@ -4052,3 +4052,19 @@ process fixture is test-only and uses public recorder APIs; normal product
 startup still has no fake/seed switch. The platform boundary uses installed
 macOS SDK `renamex_np`/`RENAME_EXCL` and `NSSavePanelDelegate.panel(_:validate:)`.
 Keep builds/tests/native asset generation sequential in one checkout.
+
+### Desktop integration validation (1D.9)
+
+The app retains its XIB/AppKit menu owner and existing host channel. Desktop
+commands are injectable through `DesktopCommands`; auxiliary subpage navigation
+is shared by the view and Settings menu. Native equivalent matching is narrow:
+ordinary Command+S/comma/W (Caps Lock allowed), the existing Command+Q policy,
+and unmodified Escape only for an existing Flutter decision dialog. The Escape
+callback rechecks its route and active decision; native sheets keep AppKit input.
+No global key monitor or business Escape-to-Stop mapping exists.
+
+Use fresh owned external derived products if an incremental native build's deep
+signature verification fails. Preserve the failed build/signature log; do not
+manually alter SDK, renderer, privacy state or signing policy to manufacture a
+pass. See [desktop validation](validation/phase-1d9-desktop-behavior.md) for exact
+source/product cutoffs, owned fixtures and remaining evidence limits.

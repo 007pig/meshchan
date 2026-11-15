@@ -1,4 +1,5 @@
 import Cocoa
+import Carbon
 import FlutterMacOS
 import UniformTypeIdentifiers
 import Darwin
@@ -6,6 +7,50 @@ import Darwin
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var platformChannel: FlutterMethodChannel?
   private let summaryOutput = SummaryOutput()
+  var desktopSaveEnabled = false
+  var desktopSettingsEnabled = false
+  var desktopCancelDialogEnabled = false
+
+  var desktopContextAvailable: Bool {
+    return NSApp.keyWindow === self && NSApp.modalWindow == nil && attachedSheet == nil && !summaryOutput.sheetActive
+  }
+
+  override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    if item.action == #selector(saveDocument(_:)) { return desktopContextAvailable && desktopSaveEnabled }
+    if item.action == #selector(openSettings(_:)) { return desktopContextAvailable && desktopSettingsEnabled }
+    return super.validateMenuItem(item)
+  }
+
+  @objc func saveDocument(_ sender: Any?) { sendDesktopCommand("save") }
+  @objc func openSettings(_ sender: Any?) { sendDesktopCommand("settings") }
+
+  private func sendDesktopCommand(_ command: String) {
+    guard desktopContextAvailable else { return }
+    // Enablement can be stale. Dart rechecks its current route/session/live input.
+    platformChannel?.invokeMethod("desktopCommand", arguments: command) { _ in }
+  }
+
+  static func currentInputSourceID() -> String? {
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+      let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { return nil }
+    return Unmanaged<CFString>.fromOpaque(property).takeUnretainedValue() as String
+  }
+
+  static func desktopEquivalent(_ event: NSEvent, inputSourceID: String? = nil) -> String? {
+    let modifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])
+    guard event.type == .keyDown && modifiers == [.command] else { return nil }
+    switch event.charactersIgnoringModifiers?.lowercased() {
+    case "s": return "save"
+    case ",", "，": return "settings"
+    case "w": return "close"
+    default:
+      // Pinyin can omit/localize comma's characters. Do not apply its physical
+      // fallback to other layouts (Dvorak maps ANSI key 43 to w), and always
+      // preserve recognized character-based shortcuts above.
+      return event.keyCode == 43 && inputSourceID == "com.apple.inputmethod.SCIM.ITABC"
+        ? "settings" : nil
+    }
+  }
 
   static func isQuitEquivalent(_ event: NSEvent) -> Bool {
     let shortcutModifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])
@@ -13,11 +58,28 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       && event.charactersIgnoringModifiers?.lowercased() == "q"
   }
 
+  static func isDialogCancelEquivalent(_ event: NSEvent) -> Bool {
+    return event.type == .keyDown && event.keyCode == 53 &&
+      event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty
+  }
+
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if desktopContextAvailable && desktopCancelDialogEnabled && Self.isDialogCancelEquivalent(event) {
+      // macOS text-input cancelOperation can consume Escape before Flutter's
+      // dialog shortcuts. Only an existing Flutter decision may consume it.
+      sendDesktopCommand("cancelDialog")
+      return true
+    }
     if Self.isQuitEquivalent(event) {
       // Consume before Flutter's input method can interpret a vetoed quit as q.
       // Keep the original AppKit request and the sole Dart quit coordinator.
-      NSApplication.shared.terminate(nil)
+      (NSApplication.shared.delegate as? AppDelegate)?.requestApplicationQuit()
+      return true
+    }
+    if desktopContextAvailable, let command = Self.desktopEquivalent(event, inputSourceID: Self.currentInputSourceID()) {
+      // Narrow main-window equivalents precede Flutter IME interpretation even
+      // when the live Dart callback vetoes. Native sheets keep their responder.
+      if command == "close" { performClose(nil) } else { sendDesktopCommand(command) }
       return true
     }
     return super.performKeyEquivalent(with: event)
@@ -44,6 +106,7 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
+    self.contentMinSize = NSSize(width: 800, height: 600)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
@@ -51,7 +114,18 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       name: "org.meshchan.host/platform",
       binaryMessenger: flutterViewController.engine.binaryMessenger)
     (NSApplication.shared.delegate as? AppDelegate)?.runtimeChannel = platformChannel
+    summaryOutput.sheetChanged = { [weak self] job, active in
+      self?.platformChannel?.invokeMethod("nativeSheetChanged", arguments: ["job": job, "active": active])
+    }
     platformChannel?.setMethodCallHandler { call, result in
+      if call.method == "updateDesktopCommands" {
+        let args = call.arguments as? [String: Any]
+        self.desktopSaveEnabled = args?["save"] as? Bool == true
+        self.desktopSettingsEnabled = args?["settings"] as? Bool == true
+        self.desktopCancelDialogEnabled = args?["cancelDialog"] as? Bool == true
+        result(nil)
+        return
+      }
       if self.summaryOutput.handle(call, result: result, window: self) { return }
       if call.method == "runtimeReady" {
         (NSApplication.shared.delegate as? AppDelegate)?.runtimeDidBecomeReady()
@@ -91,13 +165,15 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
   }
 
   func windowShouldClose(_ sender: NSWindow) -> Bool {
-    NSApplication.shared.terminate(nil)
+    (NSApplication.shared.delegate as? AppDelegate)?.requestApplicationQuit()
     return false
   }
 }
 
 /// Small platform boundary; JSON, staging IO and the lifecycle remain in Dart.
 final class SummaryOutput: NSObject, NSOpenSavePanelDelegate {
+  var sheetChanged: ((Int, Bool) -> Void)?
+  var sheetActive: Bool { panel != nil }
   private var panel: NSSavePanel?
   private var panelJob: Int?
   private var lastJob = 0
@@ -156,6 +232,7 @@ final class SummaryOutput: NSObject, NSOpenSavePanelDelegate {
       let save = Self.makePanel()
       panel = save
       panelJob = job
+      sheetChanged?(job, true)
       save.delegate = self
       save.allowedContentTypes = [.json]
       save.allowsOtherFileTypes = false
@@ -169,6 +246,7 @@ final class SummaryOutput: NSObject, NSOpenSavePanelDelegate {
         if current {
           self.panel = nil
           self.panelJob = nil
+          self.sheetChanged?(job, false)
         }
         result(selected?.path)
       }

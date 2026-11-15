@@ -1,5 +1,35 @@
 # Developer Guide
 
+## Current Flutter SDK
+
+The project uses **Flutter 3.50.0 stable and its bundled Dart 3.14.0**.
+Both CI jobs pin Flutter 3.50.0. The macOS host requires Flutter >=3.50.0
+and uses the standalone `material_ui` package; pure Dart workspace packages
+retain their `sdk: ^3.13.0` constraints and the single root lockfile.
+
+On this Mac, keep the existing Homebrew-managed SDK at
+`/opt/homebrew/share/flutter`. Update it through Homebrew, first checking that
+the cask provides the intended version:
+
+```bash
+brew update
+brew info --cask --json=v2 flutter | jq '.casks[0] | {version, installed}'
+# For this baseline, proceed only when version is 3.50.0.
+brew upgrade --cask --greedy flutter
+flutter --version --machine
+dart --version
+```
+
+Both ordinary Homebrew upgrades and `flutter upgrade` select their respective
+current release rather than pinning 3.50.0. Recheck the target before a later
+upgrade. Use Homebrew consistently for this installation so its receipt and
+command links track the installed SDK. Do not install a separate Dart SDK or
+another Flutter manager. PATH adjustments remain command/session local.
+
+See the [3.50.0 upgrade validation](validation/flutter-3.50.0-upgrade.md) for
+the exact toolchain, dependency changes and automated acceptance. Older dated
+SDK and validation sections below retain their historical versions.
+
 ## macOS VM GUI testing
 
 Use the [UTM macOS VM guide](macos-vm-gui-testing.md) and the repository's
@@ -242,7 +272,7 @@ flutter pub get --enforce-lockfile
 dart pub workspace list
 (cd packages/meshchan_core && dart run build_runner build)
 git diff --exit-code -- packages/meshchan_core/test/support/dependency_probe_database.g.dart
-dart format --output=none --set-exit-if-changed .
+git ls-files -z -- '*.dart' | xargs -0 dart format --output=none --set-exit-if-changed
 flutter analyze --no-pub --fatal-infos
 python3 -m unittest discover -s tool -p '*_test.py'
 (cd packages/meshchan_core && dart test)
@@ -253,9 +283,14 @@ python3 -m unittest discover -s tool -p '*_test.py'
 
 For a clone with an unchanged lockfile, start with `flutter pub get --enforce-lockfile`. After intentional dependency changes, let pub resolve and update the root lockfile, review the diff, then enforce it. Do not perform unrelated workspace upgrades. Format only files involved in a change when fixing formatting.
 
-The installed Flutter-bundled Dart also passed `dart pub get --enforce-lockfile`
-on this mixed workspace; a standalone Dart installation is not the supported
-resolver for the Flutter member. Flutter 3.47.9 pins `test_api` 0.7.12, requiring
+The format gate checks all tracked Dart sources, including generated code.
+Ignored `build/` candidates and historical evidence are not current source
+inputs and must not be reformatted by this check.
+
+The initial Flutter 3.47.9 host migration also passed
+`dart pub get --enforce-lockfile` on this mixed workspace; a standalone Dart
+installation is not the supported resolver for the Flutter member.
+That SDK pinned `test_api` 0.7.12, requiring
 `test` 1.31.1 instead of 1.33.0. Its analyzer limit requires analyzer 13.3.0 and
 `build_runner` 2.16.1 instead of 2.17.1. Only development constraints changed;
 production dependencies and native hooks remain unchanged. See the platform

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart' hide Page;
+import 'package:material_ui/material_ui.dart' hide Page;
 import 'package:meshchan_core/meshchan_core.dart';
 
 import '../runtime/controller.dart';

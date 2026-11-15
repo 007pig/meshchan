@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:ui' show PointerDeviceKind;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meshchan_app/diagnostics/model.dart';
 import 'package:meshchan_app/diagnostics/view.dart';

@@ -22,7 +22,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
-          flutter-version: '3.47.9'
+          flutter-version: '3.50.0'
 
       - name: Print SDK versions
         run: |
@@ -47,7 +47,7 @@ jobs:
           git diff --exit-code -- packages/meshchan_core/lib/src/storage/database.g.dart packages/meshchan_core/test/support/dependency_probe_database.g.dart packages/meshchan_core/drift_schemas packages/meshchan_core/test/storage/generated
 
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed .
+        run: git ls-files -z -- '*.dart' | xargs -0 dart format --output=none --set-exit-if-changed
 
       - name: Analyze workspace
         run: flutter analyze --no-pub --fatal-infos
@@ -125,7 +125,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
-          flutter-version: '3.47.9'
+          flutter-version: '3.50.0'
       - name: Record actual runner architecture and toolchain
         run: |
           uname -m

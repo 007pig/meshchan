@@ -101,9 +101,6 @@ final class DraftQuitCoordinator {
     DraftDecision? decision;
     var allowed = false;
     try {
-      // Close a pre-writer panel before any dirty-document modal. Accepted
-      // summary/pre-IO remains owned until it actually settles.
-      if (output.job?.writerAdmitted != true) await output.drain();
       // Early startup has no document/context to wait for and owns no edits.
       if (runtime.snapshot.phase == RuntimePhase.ready) {
         decision = auxiliaryActive
@@ -119,6 +116,9 @@ final class DraftQuitCoordinator {
                 targetId: editor.baseline?.id,
               );
       }
+      // Close a pre-writer panel before any dirty-document modal. Accepted
+      // summary/pre-IO remains owned until it actually settles.
+      if (output.job?.writerAdmitted != true) await output.drain();
       if (auxiliaryActive ? profiles.needsDecision : editor.needsDecision) {
         final show = prompt;
         if (show == null ||

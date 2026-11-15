@@ -25,14 +25,12 @@ class AppDelegate: FlutterAppDelegate {
     return termination.authorizeResourceBootstrap()
   }
 
+  @IBAction func requestUserQuit(_ sender: Any?) {
+    requestApplicationQuit()
+  }
+
   func requestApplicationQuit() {
-    if termination.resourcesMayExist {
-      NSApplication.shared.terminate(nil)
-    } else {
-      // An explicit startup quit can reach Dart without entering AppKit's
-      // modal termination loop before the engine has rendered its first frame.
-      termination.requestStartupQuit()
-    }
+    termination.requestUserQuit()
   }
 
   override func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -86,6 +84,17 @@ final class RuntimeTermination {
     guard handlerReady && !quitRequested && !terminationAllowed else { return false }
     resourcesMayExist = true
     return true
+  }
+
+  func requestUserQuit() {
+    // Reentering NSApplication.terminate while its deferred modal exchange is
+    // pending can bypass the Dart veto. Keep the original AppKit request/reply.
+    guard !terminationAllowed && pendingReply == nil && !forwarding else { return }
+    if resourcesMayExist {
+      terminate()
+    } else {
+      requestStartupQuit()
+    }
   }
 
   func requestStartupQuit() {

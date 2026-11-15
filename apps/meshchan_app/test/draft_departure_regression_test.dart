@@ -124,6 +124,117 @@ void main() {
       expect(editable.focusNode.hasFocus, true);
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
+    for (final action in ['Delete', 'Inspect stored revision 7 / Reload']) {
+      for (final built in [false, true]) {
+        testWidgets('$name live composition blocks $action (built=$built)', (
+          tester,
+        ) async {
+          final r = DraftRuntime();
+          r.records['a'] = draft('a', title: 'Saved', body: 'Stored');
+          final (_, q) = await launch(tester, runtime: r);
+          await tester.tap(find.byKey(const ValueKey('a')));
+          await tester.pumpAndSettle();
+          if (action != 'Delete') {
+            q.editor.storedVersion = draft(
+              'a',
+              revision: 7,
+              body: 'New stored',
+            );
+            q.editor.notifyListeners();
+            await tester.pump();
+          }
+          await tester.ensureVisible(field(name));
+          await tester.tap(field(name));
+          const value = TextEditingValue(
+            text: 'zhong',
+            selection: TextSelection.collapsed(offset: 5),
+            composing: TextRange(start: 0, end: 5),
+          );
+          tester.testTextInput.updateEditingValue(value);
+          if (built) await tester.pump();
+          await tester.tap(
+            find.widgetWithText(TextButton, action),
+            kind: PointerDeviceKind.mouse,
+          );
+          await tester.pumpAndSettle();
+          expect(find.byType(AlertDialog), findsNothing);
+          expect(q.editor.confirming, false);
+          expect(q.editor.baseline!.revision, 1);
+          expect(r.deletes, isEmpty);
+          expect(
+            name == 'title' ? q.editor.title.value : q.editor.body.value,
+            value,
+          );
+          final input = tester.widget<EditableText>(
+            find.descendant(
+              of: field(name),
+              matching: find.byType(EditableText),
+            ),
+          );
+          expect(input.focusNode.hasFocus, true);
+          expect(input.readOnly, false);
+          tester.testTextInput.updateEditingValue(
+            value.copyWith(composing: TextRange.empty),
+          );
+          await tester.tap(
+            find.widgetWithText(TextButton, action),
+            kind: PointerDeviceKind.mouse,
+          );
+          await tester.pumpAndSettle();
+          expect(find.byType(AlertDialog), findsOneWidget);
+          await tester.tap(
+            find.widgetWithText(
+              FilledButton,
+              action == 'Delete' ? 'Delete' : 'Reload',
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            action == 'Delete' ? r.deletes.length : q.editor.baseline!.revision,
+            action == 'Delete' ? 1 : 7,
+          );
+        }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+      }
+    }
+    testWidgets('$name input state survives layout breakpoint', (tester) async {
+      final (_, q) = await launch(tester);
+      await tester.tap(find.text('New'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(field(name));
+      await tester.tap(field(name));
+      final before = tester.state<EditableTextState>(
+        find.descendant(of: field(name), matching: find.byType(EditableText)),
+      );
+      const value = TextEditingValue(
+        text: 'zhong',
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange(start: 0, end: 5),
+      );
+      tester.testTextInput.updateEditingValue(value);
+      for (final width in [800.0, 1280.0, 800.0, 1100.0]) {
+        tester.view.physicalSize = Size(width, 800);
+        await tester.pump();
+        expect(
+          tester.state<EditableTextState>(
+            find.descendant(
+              of: field(name),
+              matching: find.byType(EditableText),
+            ),
+          ),
+          same(before),
+        );
+        expect(before.widget.focusNode.hasFocus, true);
+        expect(
+          name == 'title' ? q.editor.title.value : q.editor.body.value,
+          value,
+        );
+      }
+      tester.testTextInput.updateEditingValue(
+        value.copyWith(composing: TextRange.empty),
+      );
+      await tester.pump(const Duration(seconds: 1));
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
     testWidgets(
       '$name Undo cannot cross draft sessions; ordinary save keeps history',
       (tester) async {

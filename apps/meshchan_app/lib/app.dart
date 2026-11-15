@@ -5,6 +5,11 @@ import 'dart:ui' show AppExitResponse;
 import 'package:material_ui/material_ui.dart';
 
 import 'probe_request.dart';
+import 'desktop/commands.dart';
+import 'profiles/navigation.dart';
+
+import 'package:flutter/services.dart';
+
 import 'drafts/editor.dart';
 import 'device/view.dart';
 import 'history/diagnostics_panel.dart';
@@ -27,7 +32,9 @@ class MeshchanApp extends StatelessWidget {
     required this.probe,
     this.runtime,
     this.quitCoordinator,
+    this.desktopCommands,
   });
+  final DesktopCommands? desktopCommands;
   final ProbeRequest? request;
   final PlatformProbe probe;
   final AppRuntime? runtime;
@@ -42,13 +49,22 @@ class MeshchanApp extends StatelessWidget {
       useMaterial3: true,
     ),
     home: request == null
-        ? _Navigation(runtime: runtime, quitCoordinator: quitCoordinator)
+        ? _Navigation(
+            runtime: runtime,
+            quitCoordinator: quitCoordinator,
+            commands: desktopCommands,
+          )
         : _ProbeView(request: request!, probe: probe),
   );
 }
 
 class _Navigation extends StatefulWidget {
-  const _Navigation({required this.runtime, this.quitCoordinator});
+  const _Navigation({
+    required this.runtime,
+    this.quitCoordinator,
+    this.commands,
+  });
+  final DesktopCommands? commands;
   final AppRuntime? runtime;
   final DraftQuitCoordinator? quitCoordinator;
   @override
@@ -57,6 +73,101 @@ class _Navigation extends StatefulWidget {
 
 class _NavigationState extends State<_Navigation> {
   var selected = 0;
+  bool navigating = false;
+  late final DesktopCommands commands;
+  ProfilesNavigation? auxiliary;
+  Listenable? commandSources;
+  bool get current =>
+      mounted &&
+      ModalRoute.of(context)?.isCurrent == true &&
+      !commands.sheetActive;
+  bool get canNavigate =>
+      current &&
+      !navigating &&
+      auxiliary?.busy != true &&
+      quit?.editor.quitting == false &&
+      quit?.editor.deciding == false &&
+      quit?.editor.confirming == false &&
+      quit?.profiles.confirming == false &&
+      quit?.profiles.deciding == false &&
+      quit?.history.confirming == false &&
+      quit != null;
+  bool get canSave =>
+      current &&
+      !navigating &&
+      auxiliary?.busy != true &&
+      widget.runtime?.ordinaryAdmissionOpen == true &&
+      (selected == 0
+          ? quit?.editor.canSave == true && !quit!.editor.composing
+          : selected == 3 &&
+                auxiliary?.page != 2 &&
+                quit!.profiles.hasDocument &&
+                quit!.profiles.canOperate &&
+                !quit!.profiles.composing);
+  Future<bool> save() async {
+    if (!current ||
+        navigating ||
+        auxiliary?.busy == true ||
+        widget.runtime?.ordinaryAdmissionOpen != true) {
+      return false;
+    }
+    if (selected == 0 && quit!.editor.canSave) return quit!.editor.save();
+    if (selected == 3 &&
+        auxiliary?.page != 2 &&
+        quit!.profiles.hasDocument &&
+        quit!.profiles.canOperate) {
+      return quit!.profiles.save();
+    }
+    return false;
+  }
+
+  Future<bool> dispatch(String command) async {
+    if (command == 'save') return save();
+    if (command == 'cancelDialog') {
+      if (!mounted ||
+          commands.sheetActive ||
+          ModalRoute.of(context)?.isCurrent != false ||
+          !commands.canCancelDialog) {
+        return false;
+      }
+      Navigator.of(context)
+          .pop(); // Null means Continue/Cancel in existing dialogs.
+      return true;
+    }
+    if (command != 'settings' || !canNavigate) return false;
+    navigating = true;
+    commands.refresh();
+    try {
+      final source = selected;
+      if (source != 3 && !await quit!.leaveCurrent(prompt)) return false;
+      if (!mounted || !current || quit!.editor.quitting) return false;
+      final document = quit!.editor.documentGeneration;
+      final draftId = quit!.editor.selectedId;
+      if (!await auxiliary!.open(1, prompt)) return false;
+      if (!mounted || !current || quit!.editor.quitting) return false;
+      if (source != 3) {
+        // The source page stays editable while Settings loads. A replacement
+        // document cancels this navigation; new edits/composition require a new
+        // live departure decision before the visible editor can be unmounted.
+        if (selected != source ||
+            (source == 0 &&
+                (quit!.editor.documentGeneration != document ||
+                    quit!.editor.selectedId != draftId ||
+                    quit!.editor.reading))) {
+          return false;
+        }
+        if (!await quit!.leaveCurrent(prompt)) return false;
+        if (!mounted || !current || quit!.editor.quitting) return false;
+      }
+      quit!.auxiliaryActive = true;
+      setState(() => selected = 3);
+      return true;
+    } finally {
+      navigating = false;
+      commands.refresh();
+    }
+  }
+
   StreamSubscription<RuntimeSnapshot>? states;
   RuntimeSnapshot? state;
   AppLifecycleListener? lifecycle;
@@ -70,13 +181,43 @@ class _NavigationState extends State<_Navigation> {
   @override
   void initState() {
     super.initState();
+    commands = widget.commands ?? DesktopCommands();
+    commands.dispatch = dispatch;
+    commands.saveEnabled = () => canSave;
+    commands.cancelDialogEnabled = () =>
+        quit != null &&
+        (quit!.editor.deciding ||
+            quit!.editor.confirming ||
+            quit!.profiles.deciding ||
+            quit!.profiles.confirming ||
+            quit!.history.confirming);
+    commands.settingsEnabled = () =>
+        canNavigate &&
+        !quit!.editor.composing &&
+        !quit!.profiles.composing &&
+        !quit!.preview.composing &&
+        !quit!.device.composing &&
+        !quit!.diagnostics.composing &&
+        !quit!.history.composing;
     final runtime = widget.runtime;
     if (runtime == null) return;
     quit = widget.quitCoordinator ?? DraftQuitCoordinator(runtime);
     quit!.prompt = prompt;
+    auxiliary = ProfilesNavigation(quit!.profiles, quit!.preview);
+    commandSources = Listenable.merge([
+      quit!.editor,
+      quit!.profiles,
+      quit!.preview,
+      quit!.history,
+      quit!.device,
+      quit!.diagnostics,
+      auxiliary,
+    ]);
+    commandSources!.addListener(commands.refresh);
     state = runtime.snapshot;
     states = runtime.changes.listen((v) {
       if (mounted) setState(() => state = v);
+      commands.refresh();
     });
     lifecycle = AppLifecycleListener(
       onExitRequested: () async => await quit!.requestQuit()
@@ -94,19 +235,32 @@ class _NavigationState extends State<_Navigation> {
   }
 
   Future<void> navigate(int value) async {
-    final editor = quit?.editor;
-    if (selected == value ||
-        editor?.deciding == true ||
-        editor?.quitting == true) {
-      return;
+    if (selected == value || !canNavigate) return;
+    navigating = true;
+    commands.refresh();
+    try {
+      if (!await quit!.leaveCurrent(prompt) ||
+          !mounted ||
+          !current ||
+          quit!.editor.quitting) {
+        return;
+      }
+      quit!.auxiliaryActive = value == 3;
+      setState(() => selected = value);
+    } finally {
+      navigating = false;
+      commands.refresh();
     }
-    if (editor != null && !await quit!.leaveCurrent(prompt)) return;
-    if (quit != null) quit!.auxiliaryActive = value == 3;
-    if (mounted) setState(() => selected = value);
   }
 
   @override
   void dispose() {
+    commandSources?.removeListener(commands.refresh);
+    commands.dispatch = null;
+    commands.saveEnabled = commands.settingsEnabled =
+        commands.cancelDialogEnabled = null;
+    auxiliary?.dispose();
+    if (widget.commands == null) commands.dispose();
     unawaited(states?.cancel());
     lifecycle?.dispose();
     quit?.prompt = null;
@@ -116,102 +270,157 @@ class _NavigationState extends State<_Navigation> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: Row(
-      children: [
-        NavigationRail(
-          labelType: NavigationRailLabelType.all,
-          leading: Padding(
-            padding: const EdgeInsets.all(16),
-            child: TextButton(
-              onPressed: () => navigate(3),
-              child: const Text('Profiles and settings'),
-            ),
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) commands.refresh();
+    });
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.keyS, meta: true): _SaveIntent(),
+        SingleActivator(LogicalKeyboardKey.comma, meta: true):
+            _SettingsIntent(),
+      },
+      child: Actions(
+        actions: {
+          _SaveIntent: CallbackAction<_SaveIntent>(
+            onInvoke: (_) {
+              unawaited(commands.invoke('save'));
+              return null;
+            },
           ),
-          selectedIndex: selected == 3 ? null : selected,
-          onDestinationSelected: navigate,
-          destinations: const [
-            NavigationRailDestination(
-              icon: Icon(Icons.edit_note),
-              label: Text('Drafts'),
-            ),
-            NavigationRailDestination(
-              icon: Icon(Icons.usb),
-              label: Text('Device'),
-            ),
-            NavigationRailDestination(
-              icon: Icon(Icons.monitor_heart_outlined),
-              label: Text('Diagnostics'),
-            ),
-          ],
-        ),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  const [
-                    'Drafts',
-                    'Device',
-                    'Diagnostics',
-                    'Profiles and settings',
-                  ][selected],
-                  style: Theme.of(context).textTheme.headlineMedium,
+          _SettingsIntent: CallbackAction<_SettingsIntent>(
+            onInvoke: (_) {
+              unawaited(commands.invoke('settings'));
+              return null;
+            },
+          ),
+        },
+        child: Scaffold(
+          body: Row(
+            children: [
+              NavigationRail(
+                labelType: NavigationRailLabelType.all,
+                leading: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: TextButton(
+                    onPressed: () => navigate(3),
+                    child: const Text('Profiles and settings'),
+                  ),
                 ),
-                Text(_status(state)),
-                if (state != null) Text('Owner: ${state!.owner.name}'),
-                if (state?.deviceCheck case final check?)
-                  Text(
-                    'Device check ${check.id}: ${check.state.name} · session cleanup ${check.sessionCleanup.name} · host cleanup ${check.observerCleanup.name}',
+                selectedIndex: selected == 3 ? null : selected,
+                onDestinationSelected: navigate,
+                destinations: const [
+                  NavigationRailDestination(
+                    icon: Icon(Icons.edit_note),
+                    label: Text('Drafts'),
                   ),
-                if (state?.error case final error?)
-                  Text(
-                    '${state!.phase == RuntimePhase.fault ? 'Runtime fault' : 'Last request error'}: ${error.code}',
+                  NavigationRailDestination(
+                    icon: Icon(Icons.usb),
+                    label: Text('Device'),
                   ),
-                if ((state?.maintenance?.failureCount ?? 0) > 0)
-                  const Text(
-                    'Maintenance warning: an unacknowledged failure is retained.',
+                  NavigationRailDestination(
+                    icon: Icon(Icons.monitor_heart_outlined),
+                    label: Text('Diagnostics'),
                   ),
-                const SizedBox(height: 12),
-                if (selected == 0 && quit != null)
-                  Expanded(
-                    child: DraftsView(editor: quit!.editor, prompt: prompt),
-                  )
-                else if (selected == 3 && quit != null)
-                  Expanded(
-                    child: ProfilesView(
-                      editor: quit!.profiles,
-                      preview: quit!.preview,
-                      prompt: prompt,
-                    ),
-                  )
-                else if (selected == 2 && quit != null)
-                  Expanded(
-                    child: DiagnosticsPanel(
-                      coordinator: quit!,
-                      chooseDevice: () => navigate(1),
-                    ),
-                  )
-                else if (selected == 1 && quit != null)
-                  Expanded(child: DeviceView(model: quit!.device))
-                else
-                  Text(
-                    selected == 1
-                        ? 'Device access is not connected yet. No ports have been listed or opened.'
-                        : selected == 2
-                        ? 'Diagnostics are not connected yet. No checks have been started.'
-                        : 'Storage is unavailable.',
+                ],
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 156),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                const [
+                                  'Drafts',
+                                  'Device',
+                                  'Diagnostics',
+                                  'Profiles and settings',
+                                ][selected],
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineMedium,
+                              ),
+                              Text(_status(state)),
+                              if (state != null)
+                                Text('Owner: ${state!.owner.name}'),
+                              if (state?.deviceCheck case final check?)
+                                Text(
+                                  'Device check ${check.id}: ${check.state.name} · session cleanup ${check.sessionCleanup.name} · host cleanup ${check.observerCleanup.name}',
+                                ),
+                              if (state?.error case final error?)
+                                Text(
+                                  '${state!.phase == RuntimePhase.fault ? 'Runtime fault' : 'Last request error'}: ${error.code}',
+                                ),
+                              if ((state?.maintenance?.failureCount ?? 0) > 0)
+                                const Text(
+                                  'Maintenance warning: an unacknowledged failure is retained.',
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (selected == 0 && quit != null)
+                        Expanded(
+                          child: DraftsView(
+                            editor: quit!.editor,
+                            prompt: prompt,
+                            onSave: () => commands.invoke('save'),
+                          ),
+                        )
+                      else if (selected == 3 && quit != null)
+                        Expanded(
+                          child: ProfilesView(
+                            editor: quit!.profiles,
+                            navigation: auxiliary,
+                            onSave: () => commands.invoke('save'),
+                            preview: quit!.preview,
+                            prompt: prompt,
+                          ),
+                        )
+                      else if (selected == 2 && quit != null)
+                        Expanded(
+                          child: DiagnosticsPanel(
+                            coordinator: quit!,
+                            chooseDevice: () => navigate(1),
+                          ),
+                        )
+                      else if (selected == 1 && quit != null)
+                        Expanded(child: DeviceView(model: quit!.device))
+                      else
+                        Text(
+                          selected == 1
+                              ? 'Device access is not connected yet. No ports have been listed or opened.'
+                              : selected == 2
+                              ? 'Diagnostics are not connected yet. No checks have been started.'
+                              : 'Storage is unavailable.',
+                        ),
+                    ],
                   ),
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
         ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
+}
+
+class _SaveIntent extends Intent {
+  const _SaveIntent();
+}
+
+class _SettingsIntent extends Intent {
+  const _SettingsIntent();
 }
 
 String _status(RuntimeSnapshot? state) => switch (state?.phase) {

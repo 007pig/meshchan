@@ -72,6 +72,66 @@ const original =
     '{"diagnosticSummaryFormatVersion":1,"exportedAt":"2026-11-14T20:00:00.000000Z","runs":[]}';
 Future<void> turn() => Future<void>.delayed(Duration.zero);
 void main() {
+  for (final stage in ['summary', 'panel', 'staging']) {
+    test('real controller blocks ordinary work before ACK while $stage drains', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'meshchan-quit-admission-',
+      );
+      final r = RuntimeController(resolveDirectory: () async => root.path);
+      await r.start();
+      final panel = Panel(), files = Files();
+      if (stage == 'panel') panel.pending = Completer<String?>();
+      if (stage == 'staging') files.creation = Completer<ExportStaging>();
+      final output = ExportCoordinator(r, platform: panel, files: files);
+      final q = DraftQuitCoordinator(r, output: output);
+      await q.editor.newDraft(
+        ({required unknown}) async => LeaveChoice.discard,
+      );
+      q.editor.body.text = 'dirty';
+      var prompts = 0;
+      q.prompt = ({required unknown}) async {
+        prompts++;
+        return LeaveChoice.continueEditing;
+      };
+      final work = output.start(const HistorySelection());
+      if (stage != 'summary') {
+        while (stage == 'panel' ? panel.panels == 0 : files.creates == 0) {
+          await turn();
+        }
+      }
+      final quitting = q.requestQuit();
+      // No event-loop turn after Begin: the real host has not received an ACK.
+      expect(r.ordinaryAdmissionOpen, false);
+      final parameters = PingParameterRequest();
+      for (final request in <RuntimeRequest>[
+        const RefreshDevicePorts(1),
+        StartDeviceCheck(1, '/never', const DeviceCheckOptions()),
+        StartRecordedDiagnostic(1, '/never', parameters),
+        const ListDrafts(),
+        const ListProfiles(),
+        const ReadSettings(),
+        const ReadMaintenanceStatus(),
+      ]) {
+        await expectLater(r.request(request), throwsA(isA<RuntimeFault>()));
+      }
+      await r.request(const GetStatus());
+      if (stage == 'staging') {
+        expect(prompts, 0);
+        files.creation!.complete(
+          const ExportStaging('/owned/temp', '/owned/temp/summary.json'),
+        );
+      }
+      expect(await quitting, false);
+      await work;
+      expect(prompts, 1);
+      expect(files.writes, 0);
+      expect(r.ordinaryAdmissionOpen, true);
+      expect(output.job!.canceled, true);
+      expect((await r.shutdown()).canExit, true);
+      q.disposeEditors();
+      await root.delete(recursive: true);
+    });
+  }
   test('async writer failure settles cleanup without publication', () async {
     final runtime = DraftRuntime(), panel = Panel(), files = Files();
     final writer = Completer<void>();
@@ -301,6 +361,12 @@ void main() {
           LeaveChoice.continueEditing;
       final work = out.start(const HistorySelection());
       final quit = coordinator.requestQuit();
+      expect(
+        r.begins,
+        1,
+        reason: 'Freeze ordinary admission before summary drain',
+      );
+      expect(r.snapshot.admissionPaused, true);
       summary.complete(
         const HistoryExportValue(DiagnosticSummaryPage(json: original)),
       );

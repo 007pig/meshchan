@@ -5,11 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:meshchan_core/meshchan_core.dart';
 
 import '../drafts/editor.dart';
-import '../runtime/protocol.dart';
 import 'editor.dart';
 import 'choice.dart';
 import 'parameter_form.dart';
 import 'preview.dart';
+import 'navigation.dart';
 
 class SaveProfileIntent extends Intent {
   const SaveProfileIntent();
@@ -21,43 +21,38 @@ class ProfilesView extends StatefulWidget {
     required this.editor,
     required this.preview,
     required this.prompt,
+    this.navigation,
+    this.onSave,
   });
   final ProfilesEditor editor;
   final ParameterPreview preview;
   final LeavePrompt prompt;
+  final ProfilesNavigation? navigation;
+  final Future<bool> Function()? onSave;
   @override
   State<ProfilesView> createState() => _ProfilesViewState();
 }
 
 class _ProfilesViewState extends State<ProfilesView> {
-  int page = 0;
+  late final ProfilesNavigation navigation;
+  int get page => navigation.page;
   ProfilesEditor get e => widget.editor;
   ParameterPreview get p => widget.preview;
   @override
   void initState() {
     super.initState();
-    page = e.target == EditorTarget.settings ? 1 : 0;
+    navigation = widget.navigation ?? ProfilesNavigation(e, p);
     unawaited(e.refresh());
   }
 
   Future<void> switchPage(int next) async {
-    if (next == page ||
-        e.quitting ||
-        e.deciding ||
-        e.deferDepartureForComposition() ||
-        p.composing) {
-      return;
-    }
-    if (next == 1) {
-      if (!await e.openSettings(widget.prompt)) return;
-    } else if (!await e.leave(widget.prompt)) {
-      return;
-    }
-    if (next == 0 && e.target != EditorTarget.profile) {
-      if (!await e.newProfile(widget.prompt)) return;
-    }
-    if (mounted) setState(() => page = next);
-    if (next == 2) unawaited(p.select(p.profileId));
+    await navigation.open(next, widget.prompt);
+  }
+
+  @override
+  void dispose() {
+    if (widget.navigation == null) navigation.dispose();
+    super.dispose();
   }
 
   Future<bool> confirm(String title, String text) async {
@@ -74,6 +69,7 @@ class _ProfilesViewState extends State<ProfilesView> {
         content: Text(text),
         actions: [
           TextButton(
+            autofocus: true,
             onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),
           ),
@@ -91,7 +87,7 @@ class _ProfilesViewState extends State<ProfilesView> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([e, p]),
+    listenable: Listenable.merge([e, p, navigation]),
     builder: (context, _) => Shortcuts(
       shortcuts: const {
         SingleActivator(LogicalKeyboardKey.keyS, meta: true):
@@ -104,7 +100,7 @@ class _ProfilesViewState extends State<ProfilesView> {
               if (page != 2 &&
                   e.canOperate &&
                   ModalRoute.of(context)?.isCurrent == true) {
-                unawaited(e.save());
+                unawaited(widget.onSave?.call() ?? e.save());
               }
               return null;
             },
@@ -237,7 +233,9 @@ class _ProfilesViewState extends State<ProfilesView> {
                   spacing: 12,
                   children: [
                     FilledButton(
-                      onPressed: e.canOperate ? () => e.save() : null,
+                      onPressed: e.canOperate
+                          ? () => widget.onSave?.call() ?? e.save()
+                          : null,
                       child: const Text('Save preset'),
                     ),
                     TextButton(
@@ -361,7 +359,9 @@ class _ProfilesViewState extends State<ProfilesView> {
           spacing: 12,
           children: [
             FilledButton(
-              onPressed: e.canOperate ? () => e.save() : null,
+              onPressed: e.canOperate
+                  ? () => widget.onSave?.call() ?? e.save()
+                  : null,
               child: const Text('Save settings'),
             ),
             TextButton(

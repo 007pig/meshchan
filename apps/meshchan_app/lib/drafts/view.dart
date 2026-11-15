@@ -16,7 +16,7 @@ Future<LeaveChoice> showDraftLeaveDialog(
 }) async =>
     await showDialog<LeaveChoice>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (context) => AlertDialog(
         title: Text(unknown ? 'Write result unknown' : 'Leave this $subject?'),
         content: Text(
@@ -26,6 +26,7 @@ Future<LeaveChoice> showDraftLeaveDialog(
         ),
         actions: [
           TextButton(
+            autofocus: true,
             onPressed: () =>
                 Navigator.pop(context, LeaveChoice.continueEditing),
             child: const Text('Continue editing'),
@@ -45,9 +46,15 @@ Future<LeaveChoice> showDraftLeaveDialog(
     LeaveChoice.continueEditing;
 
 class DraftsView extends StatelessWidget {
-  const DraftsView({super.key, required this.editor, required this.prompt});
+  const DraftsView({
+    super.key,
+    required this.editor,
+    required this.prompt,
+    this.onSave,
+  });
   final DraftEditor editor;
   final LeavePrompt prompt;
+  final Future<bool> Function()? onSave;
 
   Future<void> _delete(BuildContext context) async {
     if (!editor.beginConfirmation()) return;
@@ -63,6 +70,7 @@ class DraftsView extends StatelessWidget {
         ),
         actions: [
           TextButton(
+            autofocus: true,
             onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),
           ),
@@ -92,7 +100,14 @@ class DraftsView extends StatelessWidget {
         actions: {
           SaveDraftIntent: CallbackAction<SaveDraftIntent>(
             onInvoke: (_) {
-              if (editor.canSave) unawaited(editor.save());
+              if (ModalRoute.of(context)?.isCurrent == true) {
+                unawaited(
+                  onSave?.call() ??
+                      (editor.canSave
+                          ? editor.save()
+                          : Future<bool>.value(false)),
+                );
+              }
               return null;
             },
           ),
@@ -109,22 +124,24 @@ class DraftsView extends StatelessWidget {
                 key: ValueKey(editor.documentGeneration),
                 child: _form(context),
               );
-              return constraints.maxWidth >= 680
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(width: 240, child: list),
-                        const VerticalDivider(),
-                        Expanded(child: form),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        SizedBox(height: 190, child: list),
-                        const Divider(),
-                        Expanded(child: form),
-                      ],
-                    );
+              final wide = constraints.maxWidth >= 680;
+              return Flex(
+                direction: wide ? Axis.horizontal : Axis.vertical,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: wide ? 240 : null,
+                    height: wide ? null : 150,
+                    child: list,
+                  ),
+                  SizedBox(
+                    width: wide ? 16 : null,
+                    height: wide ? null : 16,
+                    child: wide ? const VerticalDivider() : const Divider(),
+                  ),
+                  Expanded(child: form),
+                ],
+              );
             },
           ),
         ),
@@ -196,7 +213,9 @@ class DraftsView extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           FilledButton(
-            onPressed: editor.canSave ? () => editor.save() : null,
+            onPressed: editor.canSave
+                ? () => onSave?.call() ?? editor.save()
+                : null,
             child: const Text('Save'),
           ),
           TextButton(
@@ -254,6 +273,7 @@ class DraftsView extends StatelessWidget {
                 ),
                 actions: [
                   TextButton(
+                    autofocus: true,
                     onPressed: () => Navigator.pop(context, false),
                     child: const Text('Continue editing'),
                   ),

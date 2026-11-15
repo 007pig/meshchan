@@ -1362,3 +1362,24 @@ existing files/directories/symlinks/dangling links and a target created after th
 UX check. Native tests use the disabled-owner host and external owned directories.
 Actual Save panel/Pinyin verification is separate from Widget/native primitives;
 see the Step 8 validation record for executed coverage and artifact cutoffs.
+
+## Desktop command regressions (1D.9)
+
+The regular sequential app suite discovers `desktop_test.dart` and the expanded
+Draft departure/Export regressions. They exercise current-context callbacks,
+coalesced saves, native-sheet generations, Escape/Continue, Settings subpages,
+minimum/wide geometry, live Delete/Reload input and stable EditableText state
+across the 680-point content breakpoint. Export tests use the real
+RuntimeController before any Begin ACK and while summary/panel/staging work is
+pending; no hardware is opened. Existing failed-page History and recording/close
+barriers remain in the suite. RunnerTests checks native menu wiring, modifier
+matching and independent-window Close without terminating XCTest.
+
+For external native products, first run the installed Flutter SDK's
+`flutter build macos --debug --no-pub --config-only`, then the existing Xcode
+workspace/scheme with an absolute `-derivedDataPath` outside Documents and
+`-parallel-testing-enabled NO`. Repeat configuration/build sequentially for
+Release. Inspect `-showBuildSettings` before isolated XCTest and retain its
+xcresult externally. This is the same product entry and project, with test
+locations isolated rather than a new product mode. Exact executed commands and
+artifact boundaries belong in the [1D.9 record](validation/phase-1d9-desktop-behavior.md).

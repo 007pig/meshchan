@@ -4,6 +4,137 @@ import XCTest
 @testable import Meshchan
 
 class RunnerTests: XCTestCase {
+  func testDesktopMenuConnectionsAndResponderScope() throws {
+    let menu = try XCTUnwrap(NSApp.mainMenu)
+    let file = try XCTUnwrap(menu.item(withTitle: "File")?.submenu)
+    let save = try XCTUnwrap(file.item(withTitle: "Save"))
+    let close = try XCTUnwrap(file.item(withTitle: "Close Window"))
+    let main = try XCTUnwrap(NSApp.windows.first { $0 is MainFlutterWindow } as? MainFlutterWindow)
+    XCTAssertEqual(save.action, #selector(MainFlutterWindow.saveDocument(_:)))
+    XCTAssertTrue(save.target === main)
+    XCTAssertEqual(save.keyEquivalent, "s")
+    XCTAssertEqual(save.keyEquivalentModifierMask, [.command])
+    XCTAssertEqual(close.action, #selector(NSWindow.performClose(_:)))
+    XCTAssertNil(close.target)
+    XCTAssertEqual(close.keyEquivalent, "w")
+    let application = try XCTUnwrap(menu.items.first?.submenu)
+    let settings = try XCTUnwrap(application.item(withTitle: "Settings…"))
+    XCTAssertEqual(settings.action, #selector(MainFlutterWindow.openSettings(_:)))
+    XCTAssertTrue(settings.target === main)
+    XCTAssertEqual(settings.keyEquivalent, ",")
+    let quit = try XCTUnwrap(application.items.first { $0.keyEquivalent == "q" })
+    XCTAssertEqual(quit.action, #selector(AppDelegate.requestUserQuit(_:)))
+    XCTAssertTrue(quit.target === NSApp.delegate)
+    let edit = try XCTUnwrap(menu.item(withTitle: "Edit")?.submenu)
+    for (title, action) in [("Undo", "undo:"), ("Redo", "redo:"), ("Cut", "cut:"), ("Copy", "copy:"), ("Paste", "paste:"), ("Select All", "selectAll:")] {
+      let item = try XCTUnwrap(edit.item(withTitle: title))
+      XCTAssertEqual(item.action, NSSelectorFromString(action))
+      XCTAssertNil(item.target)
+    }
+    XCTAssertNil(edit.item(withTitle: "Find"))
+    XCTAssertFalse(main.desktopSaveEnabled, "Disabled-owner host installs no business commands")
+    XCTAssertFalse(main.desktopSettingsEnabled)
+    XCTAssertEqual(main.contentMinSize, NSSize(width: 800, height: 600))
+    let temporary = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+    temporary.isReleasedWhenClosed = false
+    temporary.makeKeyAndOrderFront(nil)
+    main.desktopSaveEnabled = true
+    main.desktopSettingsEnabled = true
+    XCTAssertFalse(main.validateMenuItem(save), "About/another key window cannot save the main editor")
+    XCTAssertFalse(main.validateMenuItem(settings))
+    XCTAssertNil(temporary.delegate)
+    temporary.performClose(nil)
+    XCTAssertFalse(temporary.isVisible)
+    XCTAssertTrue(NSApp.windows.contains { $0 === main })
+    main.desktopSaveEnabled = false; main.desktopSettingsEnabled = false
+  }
+
+  func testDesktopEquivalentsAreNarrowAndIncludeCapsLock() {
+    for (character, command) in [("s", "save"), (",", "settings"), ("w", "close")] {
+      for type: NSEvent.EventType in [.keyDown, .keyUp] {
+        for flags: NSEvent.ModifierFlags in [[.command], [.command, .capsLock], [.command, .shift], [.command, .control], [.command, .option], []] {
+          let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: true, keyCode: 1)!
+          let matching = type == .keyDown && flags.intersection([.command, .shift, .control, .option]) == [.command]
+          XCTAssertEqual(MainFlutterWindow.desktopEquivalent(event), matching ? command : nil)
+        }
+      }
+    }
+  }
+
+  func testCommandCommaUsesThePhysicalKeyDuringPinyin() {
+    for character in [",", "，", ""] {
+      let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0, windowNumber: 0, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 43)!
+      XCTAssertEqual(MainFlutterWindow.desktopEquivalent(event, inputSourceID: "com.apple.inputmethod.SCIM.ITABC"), "settings")
+    }
+  }
+
+  func testDvorakCommandWDoesNotBecomeSettings() {
+    for flags: NSEvent.ModifierFlags in [[.command], [.command, .capsLock]] {
+      // ANSI key 43 translates to w under the standard macOS Dvorak layout.
+      let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+        timestamp: 0, windowNumber: 0, context: nil, characters: "w",
+        charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 43)!
+      for source in ["com.apple.keylayout.Dvorak", "com.apple.keylayout.US", "com.apple.inputmethod.SCIM.ITABC"] {
+        XCTAssertEqual(MainFlutterWindow.desktopEquivalent(event, inputSourceID: source), "close")
+      }
+    }
+  }
+
+  func testPhysicalCommaDoesNotInventACommandWithoutPinyin() {
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
+      timestamp: 0, windowNumber: 0, context: nil, characters: "",
+      charactersIgnoringModifiers: "", isARepeat: false, keyCode: 43)!
+    XCTAssertNil(MainFlutterWindow.desktopEquivalent(event))
+    for source in ["com.apple.keylayout.Dvorak", "com.apple.keylayout.US", "com.apple.inputmethod.TCIM.Zhuyin"] {
+      XCTAssertNil(MainFlutterWindow.desktopEquivalent(event, inputSourceID: source))
+    }
+  }
+
+  func testDialogEscapeEquivalentIsUnmodifiedKeyDownOnly() {
+    for type: NSEvent.EventType in [.keyDown, .keyUp] {
+      for flags: NSEvent.ModifierFlags in [[], [.capsLock], [.command], [.shift], [.control], [.option]] {
+        let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        XCTAssertEqual(MainFlutterWindow.isDialogCancelEquivalent(event), type == .keyDown && flags.intersection([.command, .shift, .control, .option]).isEmpty)
+      }
+    }
+  }
+
+  func testUserQuitDoesNotReenterAnAppKitDeferredExchange() {
+    let bridge = TerminationFixture()
+    bridge.authorizeResources()
+    bridge.termination.requestUserQuit()
+    XCTAssertEqual(bridge.terminateCalls, 1)
+    XCTAssertEqual(bridge.systemQuit(), .terminateLater)
+    for _ in 0..<4 { bridge.termination.requestUserQuit() }
+    XCTAssertEqual(bridge.terminateCalls, 1)
+    bridge.runScheduled()
+    for _ in 0..<4 { bridge.termination.requestUserQuit() }
+    XCTAssertEqual(bridge.requests.count, 1)
+    XCTAssertEqual(bridge.terminateCalls, 1)
+    bridge.requests[0](false)
+    XCTAssertEqual(bridge.replies, [false])
+    bridge.termination.requestUserQuit()
+    XCTAssertEqual(bridge.terminateCalls, 2, "Veto permits a new user attempt")
+    XCTAssertEqual(bridge.systemQuit(), .terminateLater)
+    bridge.runScheduled()
+    bridge.requests[1](true)
+    XCTAssertEqual(bridge.replies, [false, true])
+    XCTAssertEqual(bridge.terminateCalls, 2, "Original reply is never replaced")
+  }
+
+  func testRepeatedResourceFreeUserQuitKeepsOneStartupDecision() {
+    let bridge = TerminationFixture()
+    bridge.termination.handlerDidBecomeReady()
+    bridge.termination.requestUserQuit()
+    bridge.termination.requestUserQuit()
+    XCTAssertEqual(bridge.requests.count, 1)
+    bridge.requests[0](false)
+    bridge.termination.requestUserQuit()
+    XCTAssertEqual(bridge.requests.count, 2)
+    bridge.requests[1](true)
+    XCTAssertEqual(bridge.terminateCalls, 1)
+  }
+
   func testSavePanelPermitsTheExistingApplicationTerminationDelegate() {
     XCTAssertFalse(SummaryOutput.makePanel().preventsApplicationTerminationWhenModal)
   }

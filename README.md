@@ -52,7 +52,9 @@ selected alongside Apple Clang. Python is not required by the product bundle.
 
 ## Quick start
 
-On this machine, use the Homebrew-managed Flutter SDK and its bundled Dart SDK:
+Use **Flutter 3.50.0 stable and its bundled Dart 3.14.0**. On this machine,
+use the existing Homebrew-managed SDK; see the
+[current SDK and upgrade workflow](docs/development.md#current-flutter-sdk).
 
 ```bash
 export PATH="/opt/homebrew/share/flutter/bin:$PATH"

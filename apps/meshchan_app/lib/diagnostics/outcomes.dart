@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meshchan_core/meshchan_core.dart';
 
 import '../runtime/protocol.dart';

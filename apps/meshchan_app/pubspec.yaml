@@ -6,10 +6,12 @@ resolution: workspace
 
 environment:
   sdk: ^3.13.0
+  flutter: '>=3.50.0'
 
 dependencies:
   flutter:
     sdk: flutter
+  material_ui: ^1.11.0
   meshchan_core: ^0.1.0-dev.3
   meshcore_link: ^0.1.0-dev.3
 

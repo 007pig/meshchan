@@ -18,6 +18,13 @@ from smoke_cli import Checks, executable, nonempty_history_checks
 BASELINE = 'e237be5c2fb9e4fd1cf2f2c26717582f34a5e757'
 
 
+def database_files(directory):
+    """Record both presence and bytes of SQLite's recognized files, after close."""
+    return {suffix: digest(path) if path.exists() else None
+            for suffix in ('', '-wal', '-shm', '-journal')
+            for path in [directory / ('meshchan.sqlite' + suffix)]}
+
+
 def rows(directory):
     uri = (directory / 'meshchan.sqlite').resolve().as_uri() + '?mode=ro'
     with closing(sqlite3.connect(uri, uri=True)) as db:
@@ -84,7 +91,7 @@ def main():
                 db.execute('PRAGMA user_version=2')
         else:
             path.write_bytes(b'controlled corrupt database\x00')
-        previous = digest(path)
+        previous = database_files(target)
         def failure(value):
             data = json.loads(value)
             expected = 'unsupported_database_version' if name == 'future' else 'database_corrupt'
@@ -92,9 +99,10 @@ def main():
                 raise ValueError('Wrong schema rejection')
         checks.check('preserve rejected ' + name, [str(product), '--data-dir', str(target),
             'draft', 'list', '--json'], folder, code=74, out='', validate=failure)
-        if digest(path) != previous:
-            raise ValueError('Rejected original database changed')
-        rejected.append({'fixture': name, 'sha256BeforeAndAfter': previous})
+        if database_files(target) != previous:
+            raise ValueError('Rejected original database or SQLite sidecars changed')
+        rejected.append({'fixture': name, 'sha256BeforeAndAfter': previous[''],
+                         'sqliteFilesBeforeAndAfter': previous})
     write_json(base / 'schema-compatibility.json', {'status': 'PASS',
         'processPath': env['PATH'], 'dartExecutable': str(args.dart),
         'baselineCommit': BASELINE, 'baselineProductionSource': 'git archive; no production overlay',

@@ -1,0 +1,68 @@
+// Copied only into an isolated four-member workspace by prepare_mobile_probe.py.
+import 'dart:convert';
+import 'dart:ffi';
+import 'dart:io';
+
+import 'package:flutter/widgets.dart';
+import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart';
+import 'package:sqlite3/sqlite3.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final report = <String, Object?>{'probe': 'meshchan.mobile.1d10',
+    'os': Platform.operatingSystem, 'abi': Abi.current().toString()};
+  final parent = Directory.systemTemp.createTempSync('meshchan-mobile-probe-');
+  try {
+    final db = sqlite3.openInMemory();
+    try {
+      db.execute('CREATE TABLE probe (value TEXT NOT NULL)');
+      db.execute('INSERT INTO probe VALUES (?)', ['SQLite 中文😀']);
+      if (db.select('SELECT value FROM probe').single['value'] != 'SQLite 中文😀') {
+        throw StateError('SQLite round trip failed');
+      }
+      report['sqliteVersion'] = sqlite3.version.toString();
+    } finally {
+      db.close();
+    }
+    report['sqliteLoadReadWriteClose'] = 'PASS';
+    if (!Platform.isAndroid && !Platform.isIOS) throw StateError('Mobile only');
+    final business = Directory('${parent.path}/business-must-stay-absent');
+    try {
+      final storage = await CoreStorage.open(dataDirectory: business);
+      await storage.close();
+      throw StateError('Unexpected mobile business storage support');
+    } on CoreException catch (error) {
+      if (error.code != CoreErrorCode.storageOpenFailed || business.existsSync()) {
+        rethrow;
+      }
+      report['coreStorageRejection'] = 'PASS';
+      report['businessDirectoryAbsent'] = true;
+      report['storageCapability'] = 'UNSUPPORTED';
+    }
+    try {
+      SerialPorts().listPorts();
+      throw StateError('Enumeration must be rejected before native calls');
+    } on SerialPortFailure catch (error) {
+      final expected = Platform.isAndroid
+          ? 'Serial port enumeration is unavailable on Android'
+          : 'No native serial backend is available on ios';
+      if (!error.message.startsWith(expected)) rethrow;
+      report['serialEnumerationGuard'] = 'PASS';
+    }
+    report['passed'] = true;
+  } catch (error, stack) {
+    report['passed'] = false;
+    report['error'] = error.toString();
+    report['stack'] = stack.toString();
+  } finally {
+    parent.deleteSync(recursive: true);
+  }
+  final text = jsonEncode(report);
+  File('${Directory.systemTemp.path}/meshchan-mobile-report.json')
+      .writeAsStringSync(text, flush: true);
+  // A dependency/API probe, without the product's macOS bootstrap or device IO.
+  print(text);
+  runApp(Directionality(textDirection: TextDirection.ltr,
+      child: Text(text, style: const TextStyle(fontSize: 14))));
+}

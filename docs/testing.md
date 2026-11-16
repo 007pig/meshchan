@@ -8,6 +8,53 @@ stable Python 3.15 or newer for local Python scripts, as described in the
 [local toolchain selection](development.md#local-python-toolchain). Python is a
 development tool only; the distributed CLI does not require it.
 
+## Four-member sequential regression (1D.10)
+
+Use [the 1D.10 record](validation/phase-1d10-regression-compatibility.md) for the
+four-member ledger, fresh CLI/macOS bundle commands, historical dev.2 schema-1
+producer, actual app/CLI interoperability and bounded mobile evidence. Start a
+new external evidence root with `tool/regression_1d10.py --init --software`,
+passing absolute installed Flutter and bundled Dart paths. The runner stops at
+the first failed command and retains per-gate source/log hashes. It does not
+replace semantic receipt review or the interactive GUI checks.
+
+Handled SIGINT/SIGTERM stops the active gate and the remaining plan. The runner
+retains its checkout lock while terminating its isolated process group and
+observed descendants, including descendants that create another session. It
+reaps the immediate child and confirms descendant exit before returning
+130/143; the ledger records FAIL with outcome interrupted. Repeated signals do
+not skip cleanup. OS process observation is required before launch, and a
+cleanup observation error keeps ownership pending rather than releasing the
+lock. This forced interruption is not product normal-Quit evidence.
+Nonzero process exits also settle owned descendants before releasing the lock.
+A first interrupt during result or ledger publication triggers cleanup and
+revision of that gate's existing row; earlier rows are preserved. Final log
+hashes are calculated after cleanup output has finished. The process tests
+require OS process observation; a sandbox denial of `/bin/ps` is an environment
+blocker and must not be reported as a passing lifecycle check.
+Successful parent exits also retain ownership while descendant helpers finish
+naturally. The final source snapshot, log digest, PASS receipt and next gate
+all wait for OS-confirmed descendant exit. No success-path signal or wrapper
+deadline is used; a persistent helper keeps the gate RUNNING until it exits or
+the operator cancels through the handled interruption path. Gate commands must
+manage any intentionally long-lived child service before returning.
+
+`tool/prepare_mobile_probe.py` generates hosts only in a new external workspace
+copy. `tool/run_mobile_simulator_probe.py` accepts only the isolated probe ID and
+uses a new external simulator device set with an already installed runtime.
+These are manual dependency/API checks: successful SQLite loading and expected
+mobile storage/serial refusal do not establish a mobile product. Check installed
+Android/JDK/NDK and iOS tools first; never trigger toolchain/license installation
+to run these probes. Real hardware remains a separately authorized 1D.11 gate.
+
+For the Android follow-up, `tool/run_android_mobile_probe.py` installs only the
+isolated Debug probe on a newly created, identity-checked arm64 AVD. It requires
+an already installed system image and uses an explicit emulator serial for all
+adb calls. The [provisioned Android results](validation/phase-1d10-regression-compatibility.md#provisioned-android-build-and-runtime)
+record the NDK 30 host-only overlay, SDK/API 36, APK inventory and actual
+SQLite/public API assertions. The connected physical phone and Bluetooth
+permissions are outside this finite probe.
+
 ## macOS guest product GUI checks
 
 Use the [VM guide](macos-vm-gui-testing.md#meshchan-product-ui-runner) and

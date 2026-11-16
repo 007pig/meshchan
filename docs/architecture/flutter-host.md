@@ -1179,3 +1179,22 @@ AppKit terminate and receives the original `applicationShouldTerminate` reply;
 resource-free startup retains its original barrier. External system termination
 requests keep the existing delegate/reply protocol. This adds no native resource
 cleanup and does not replace the application coordinator.
+
+## 1D.10 regression and compatibility evidence
+
+The [1D.10 validation record](../validation/phase-1d10-regression-compatibility.md)
+binds the four-member software suites, six process gates, three CLI bundles and
+fresh macOS Debug/Release/native/runtime results to the PR #36 product source.
+Historical dev.2 production source generated a real schema-1 file; current
+app/CLI title edits retained identity, revision semantics and exact Unicode/CRLF
+body, and the app displayed the persisted dev.2 History. Actual future/corrupt
+GUI failures preserved the original SQLite files and normal shutdown contract.
+
+An isolated iOS simulator dependency probe built and loaded SQLite, then
+confirmed public mobile storage and serial refusal. Android initially lacked
+toolchain prerequisites; the operator-provisioned follow-up also built an
+arm64 APK and passed the dependency/API probe on an owned API 36 emulator.
+These results do not widen the ownership ABI
+allowlist, implement mobile bootstrap/BLE, or change the macOS arm64 + USB
+product boundary. The sourced BLE matrix is future design input. 1D.11 still
+owns host hardware/beta acceptance, and 1E owns distribution.

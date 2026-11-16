@@ -32,6 +32,12 @@ revision of that gate's existing row; earlier rows are preserved. Final log
 hashes are calculated after cleanup output has finished. The process tests
 require OS process observation; a sandbox denial of `/bin/ps` is an environment
 blocker and must not be reported as a passing lifecycle check.
+Successful parent exits also retain ownership while descendant helpers finish
+naturally. The final source snapshot, log digest, PASS receipt and next gate
+all wait for OS-confirmed descendant exit. No success-path signal or wrapper
+deadline is used; a persistent helper keeps the gate RUNNING until it exits or
+the operator cancels through the handled interruption path. Gate commands must
+manage any intentionally long-lived child service before returning.
 
 `tool/prepare_mobile_probe.py` generates hosts only in a new external workspace
 copy. `tool/run_mobile_simulator_probe.py` accepts only the isolated probe ID and

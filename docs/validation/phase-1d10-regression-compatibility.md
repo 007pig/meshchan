@@ -765,3 +765,48 @@ T05-runner-whitespace retains a verification-command failure: git diff
 diagnostics. T06-added-whitespace uses an explicit file-content check instead;
 the original exit code and empty log remain recorded, without changing the
 runner's failure handling or treating that command as a product failure.
+
+## Successful gate descendant drain, November 16, 2026
+
+[PR #37 review comment 4581976827](https://github.com/007pig/meshchan/pull/37#discussion_r4581976827)
+identified the remaining successful-parent path: exit 0 could publish PASS and
+advance the plan while an owned helper still wrote source/output. Two new real
+process tests reproduce the defect before correction, including an observed
+helper in another session. One observed an early PASS, the other a competing
+runner acquiring the checkout lock while the helper was alive. Evidence is
+`/private/tmp/meshchan-1d10-success-drain-20261116-01`; `before.log` and
+`source-reproduction` retain the failing run and its inputs at PR head
+`8bf66d8cf4c8c3f803aa5a3f30a3f2bc937981a5` plus the reproduction tests.
+
+After a zero parent exit, the runner now waits for every owned process to exit
+naturally and records the same OS exit/reaping facts used by failure cleanup.
+The published state stays RUNNING and the checkout lock remains held while a
+helper is active. Only after exit confirmation may the final source manifest,
+log hash, PASS result/ledger and subsequent gate be produced. Success sends no
+termination signals and has no wrapper deadline. Persistent helpers keep the
+gate pending; gate commands must settle intentional child services themselves.
+SIGINT/SIGTERM during the drain switches to the existing controlled cleanup and
+FAIL/interrupted result. Observation failures still take the failure path.
+
+The tests use a file barrier rather than assuming a sleep means completion.
+They confirm the helper was observed before its parent exits, reject a second
+runner while it remains active, then permit its final source write and output.
+They verify that the next gate reads that completed write, source-after contains
+its exact hash, the retained log hash includes its completion output, no
+success-path signal was sent, and an unrelated process survives. A third new
+test interrupts this wait and confirms cleanup and suppression of later gates.
+The existing publication-interruption tests now let the helper retire before
+injecting a late signal, preserving those checks under the stronger drain
+contract. Recording-failure coverage retains already-confirmed exit facts.
+
+| Check on corrected source | Actual result |
+| --- | --- |
+| T01-focused | PASS; 16 lifecycle/fault tests |
+| T02-python | PASS; 120 tests, Homebrew Python 3.15.2 with OS process observation |
+| T03-optimized | PASS; the same 16 tests with python3 -O |
+
+This is a tooling-only correction. The four-member product inputs and lock
+remain unchanged; no native/mobile target build, GUI, device, RF or BLE test is
+added. Existing unittest discovery covers the new cases without a new CI job.
+Final source manifests and the external review summary associate the corrected
+tooling, exact commands, logs and receipt hashes with this follow-up commit.

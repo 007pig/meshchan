@@ -23,7 +23,10 @@ class GateInterruptionTest(unittest.TestCase):
 
     def exercise_interruption(self, *, detached=False, signum=signal.SIGINT,
                               stubborn=False, during_manifest=False,
-                              interrupt_at=None, failed_exit=False):
+                              interrupt_at=None, failed_exit=False,
+                              successful_exit=False, interrupt_while_waiting=False):
+        late_interrupt = bool(during_manifest or interrupt_at)
+        natural_exit = successful_exit or late_interrupt
         with tempfile.TemporaryDirectory(prefix='meshchan-gate-interrupt-') as directory:
             folder = Path(directory)
             checkout = folder / 'checkout'
@@ -42,8 +45,18 @@ class GateInterruptionTest(unittest.TestCase):
                 f'    if {during_manifest!r} and manifest_calls == 2 and '
                 'Path(sys.argv[sys.argv.index("--evidence") + 1]).name == "first":\n'
                 '        os.kill(os.getpid(), signal.SIGINT)\n'
-                '    return {}\n'
+                '    output = runner.ROOT / "worker-output.txt"\n'
+                '    return {"worker-output.txt": runner.digest(output)} if output.exists() else {}\n'
                 'runner.source_manifest = manifest\n'
+                'original_observe = runner.OwnedGate.observe\n'
+                'def observe(owner):\n'
+                '    result = original_observe(owner)\n'
+                f'    pid_file = Path({str(folder / "leaf-pid")!r})\n'
+                f'    if Path({str(folder / "ready")!r}).exists() '
+                'and pid_file.exists() and int(pid_file.read_text()) in owner.members:\n'
+                f'        Path({str(folder / "observed")!r}).touch()\n'
+                '    return result\n'
+                'runner.OwnedGate.observe = observe\n'
                 f'interrupt_at = {interrupt_at!r}\n'
                 'published_interrupt = False\n'
                 'def interrupt_once():\n'
@@ -102,7 +115,9 @@ class GateInterruptionTest(unittest.TestCase):
                 '(folder / "leaf-pid").write_text(str(os.getpid()))\n'
                 '(folder / "ready").touch()\n'
                 f'while {stubborn!r} or not (folder / "release").exists():\n'
-                '    time.sleep(0.02)\n')
+                '    time.sleep(0.02)\n'
+                '(folder / "checkout/worker-output.txt").write_text("helper completed")\n'
+                'print("owned helper completion output", flush=True)\n')
             gate = folder / 'gate.py'
             gate.write_text(
                 'import os, signal, subprocess, sys, time\nfrom pathlib import Path\n'
@@ -112,10 +127,10 @@ class GateInterruptionTest(unittest.TestCase):
                 '(folder / "gate-pid").write_text(str(os.getpid()))\n'
                 f'child = subprocess.Popen([sys.executable, {str(leaf)!r}], '
                 f'start_new_session={detached!r})\n'
-                'while not (folder / "ready").exists():\n'
+                'while not (folder / "ready").exists() or not (folder / "observed").exists():\n'
                 '    time.sleep(0.01)\n'
                 f'raise SystemExit({7 if failed_exit else 0} if '
-                f'{bool(during_manifest or interrupt_at or failed_exit)!r} else child.wait())\n')
+                f'{bool(natural_exit or failed_exit or interrupt_while_waiting)!r} else child.wait())\n')
             children = []
 
             def start(label, target):
@@ -130,7 +145,10 @@ class GateInterruptionTest(unittest.TestCase):
                 if label == 'first':
                     gates.append({'name': 'must-not-run', 'cwd': str(checkout),
                                   'argv': [sys.executable, '-c',
-                                           f'from pathlib import Path; Path({str(folder / "next-gate")!r}).touch()']})
+                                           'from pathlib import Path\n'
+                                           f'if {successful_exit!r} and Path("worker-output.txt").read_text() != "helper completed":\n'
+                                           '    raise SystemExit(9)\n'
+                                           f'Path({str(folder / "next-gate")!r}).touch()']})
                 plan.write_text(json.dumps(gates))
                 log = (folder / (label + '.log')).open('wb')
                 try:
@@ -149,10 +167,16 @@ class GateInterruptionTest(unittest.TestCase):
             try:
                 controller, evidence = start('first', gate)
                 self.wait_for(lambda: (folder / 'ready').exists(), 'grandchild readiness')
-                if not (during_manifest or interrupt_at or failed_exit):
+                if natural_exit or interrupt_while_waiting:
+                    def parent_exited():
+                        state = regression.process_table().get(int((folder / 'gate-pid').read_text()))
+                        return state is None or state['state'].startswith('Z')
+                    self.wait_for(parent_exited, 'successful immediate parent exit')
+                elif not failed_exit:
                     controller.send_signal(signum)
-                self.wait_for(lambda: (folder / 'term').exists() or controller.poll() is not None,
-                              'cleanup start')
+                if not (natural_exit or interrupt_while_waiting):
+                    self.wait_for(lambda: (folder / 'term').exists() or controller.poll() is not None,
+                                  'cleanup start')
                 sentinel = folder / 'sentinel'
                 success = folder / 'success.py'
                 success.write_text(f'from pathlib import Path\nPath({str(sentinel)!r}).touch()\n')
@@ -160,21 +184,31 @@ class GateInterruptionTest(unittest.TestCase):
                 self.assertNotEqual(contender.wait(timeout=15), 0,
                                     'Checkout lock was released while the grandchild was live')
                 self.assertFalse(sentinel.exists())
+                self.assertFalse((folder / 'next-gate').exists())
+                if natural_exit or interrupt_while_waiting:
+                    self.assertEqual(json.loads((evidence / 'gate/result.json').read_text())['status'],
+                                     'RUNNING')
+                    self.assertFalse((folder / 'term').exists())
+                    self.assertFalse((checkout / 'worker-output.txt').exists())
+                if interrupt_while_waiting:
+                    controller.send_signal(signum)
+                    self.wait_for(lambda: (folder / 'term').exists(), 'cleanup of the draining helper')
                 if not stubborn:
                     self.assertIsNone(controller.poll())
                     # A repeated interrupt must not unwind the cleanup/lock scope.
-                    if not failed_exit:
+                    if not failed_exit and not natural_exit:
                         controller.send_signal(signal.SIGINT)
                     time.sleep(0.1)
                     self.assertIsNone(controller.poll())
                     (folder / 'release').touch()
                 else:
                     (folder / 'escalate').touch()
-                self.assertEqual(controller.wait(timeout=15), 1 if failed_exit else 128 + signum)
+                expected_code = 0 if successful_exit else (1 if failed_exit else 128 + signum)
+                self.assertEqual(controller.wait(timeout=15), expected_code)
                 record = json.loads((evidence / 'gate/result.json').read_text())
-                self.assertEqual(record['status'], 'FAIL')
-                if failed_exit:
-                    self.assertEqual(record['exitCode'], 7)
+                self.assertEqual(record['status'], 'PASS' if successful_exit else 'FAIL')
+                if failed_exit or successful_exit:
+                    self.assertEqual(record['exitCode'], 7 if failed_exit else 0)
                     self.assertNotIn('outcome', record)
                 else:
                     self.assertEqual(record['outcome'], 'interrupted')
@@ -186,19 +220,28 @@ class GateInterruptionTest(unittest.TestCase):
                 for name in ('gate-pid', 'leaf-pid'):
                     state = table.get(int((folder / name).read_text()))
                     self.assertTrue(state is None or state['state'].startswith('Z'))
-                self.assertFalse((folder / 'next-gate').exists())
+                self.assertEqual((folder / 'next-gate').exists(), successful_exit)
                 ledger = (evidence / 'ledger.jsonl').read_text()
-                self.assertEqual(len(ledger.splitlines()), 2 if interrupt_at else 1)
+                self.assertEqual(len(ledger.splitlines()), 1 + bool(interrupt_at) + successful_exit)
                 if interrupt_at:
                     self.assertTrue(ledger.startswith('{"name": "earlier", "status": "PASS"}\n'))
-                self.assertEqual(json.loads(ledger.splitlines()[-1]), record)
-                self.assertIn('owned helper shutdown output', (evidence / 'gate/output.log').read_text())
+                rows = [json.loads(line) for line in ledger.splitlines()]
+                self.assertEqual(next(row for row in rows if row['name'] == 'gate'), record)
+                output = (evidence / 'gate/output.log').read_text()
+                self.assertIn('owned helper completion output' if natural_exit else
+                              'owned helper shutdown output', output)
                 self.assertEqual(record['logSha256'], regression.digest(evidence / 'gate/output.log'))
                 self.assertIn('finishedUtc', record)
-                self.assertIn('SIGTERM', record['processTree']['signalsSent'])
+                if natural_exit:
+                    self.assertEqual(record['processTree']['signalsSent'], [])
+                    final_source = json.loads((evidence / 'gate/source-after.json').read_text())
+                    self.assertEqual(final_source['worker-output.txt'],
+                                     regression.digest(checkout / 'worker-output.txt'))
+                else:
+                    self.assertIn('SIGTERM', record['processTree']['signalsSent'])
                 if stubborn:
                     self.assertIn('SIGKILL', record['processTree']['signalsSent'])
-                elif not failed_exit:
+                elif not failed_exit and not natural_exit:
                     self.assertGreaterEqual(record['interruptCount'], 2)
                 self.assertIsNone(other.poll(), 'Cleanup signaled an unrelated process')
                 successor, _ = start('successor', success)
@@ -246,6 +289,15 @@ class GateInterruptionTest(unittest.TestCase):
     def test_pending_interrupt_at_final_seal_is_recorded(self):
         self.exercise_interruption(interrupt_at='seal', signum=signal.SIGTERM)
 
+    def test_successful_parent_waits_for_helper_before_next_gate(self):
+        self.exercise_interruption(successful_exit=True)
+
+    def test_successful_parent_waits_for_detached_observed_helper(self):
+        self.exercise_interruption(successful_exit=True, detached=True)
+
+    def test_interrupt_while_successful_parent_helper_drains_stays_failed(self):
+        self.exercise_interruption(interrupt_while_waiting=True, signum=signal.SIGTERM)
+
     def test_ledger_revision_refuses_to_truncate_another_writer(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'ledger.jsonl'
@@ -261,7 +313,7 @@ class GateInterruptionTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), unexpected)
             self.assertTrue(unexpected.startswith(prefix))
 
-    def test_receipt_recording_error_still_settles_owner_and_stays_failed(self):
+    def test_receipt_recording_error_preserves_settled_owner_and_stays_failed(self):
         write_json = regression.write_json
         injected = OSError('injected final receipt failure')
         failed = False
@@ -279,12 +331,13 @@ class GateInterruptionTest(unittest.TestCase):
                     patch.object(regression, 'process_table', return_value={}), \
                     patch.object(regression, 'OwnedGate') as owner, \
                     patch.object(regression, 'write_json', write_once):
-                owner.return_value.stop.return_value = {'exited': True, 'childReaped': True}
+                owner.return_value.wait_for_exit.return_value = {'exited': True, 'childReaped': True}
                 with self.assertRaises(OSError) as caught:
                     regression.run_gate(evidence, 'recording-failed',
                         [sys.executable, '-c', 'print("completed")'], evidence, os.environ.copy())
                 self.assertIs(caught.exception, injected)
-                owner.return_value.stop.assert_called_once_with()
+                owner.return_value.wait_for_exit.assert_called_once()
+                owner.return_value.stop.assert_not_called()
             record = json.loads((evidence / 'recording-failed/result.json').read_text())
             self.assertEqual(record['status'], 'BLOCKED')
             self.assertEqual(record['outcome'], 'recording_failed')

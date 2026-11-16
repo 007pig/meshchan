@@ -128,6 +128,26 @@ class OwnedGate:
                                     or current['state'][0] in ('Z', 'X'))
         return {pid: table[pid] for pid in owned if table[pid]['state'][0] not in ('Z', 'X')}
 
+    def exit_receipt(self):
+        return {'exited': True, 'childReaped': True,
+                'members': list(self.members.values()),
+                'signalsSent': self.signals_sent, 'cleanupErrors': self.errors}
+
+    def wait_for_exit(self, interrupted):
+        """Drain a successful gate naturally; only an interrupt requests stopping.
+
+        A zero parent exit does not close descendant writers. Retain ownership
+        without a wrapper deadline, then observe the final source/log cut only
+        after every owned process has exited. Observation failures propagate to
+        the existing failure/cleanup path.
+        """
+        while not interrupted:
+            self.child.poll()
+            if not self.observe() and self.child.poll() is not None:
+                return self.exit_receipt()
+            time.sleep(0.05)
+        return None
+
     def stop(self):
         """Keep ownership until exit is observed, even if observation/signaling fails.
 
@@ -142,9 +162,7 @@ class OwnedGate:
                 self.child.poll()  # Reap the immediate child, including a zombie.
                 live = self.observe()
                 if not live and self.child.poll() is not None:
-                    return {'exited': True, 'childReaped': True,
-                            'members': list(self.members.values()),
-                            'signalsSent': self.signals_sent, 'cleanupErrors': self.errors}
+                    return self.exit_receipt()
                 signum = signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL
                 # A group is signaled only while a current owned member proves
                 # its identity; isolated groups cover concurrent child forks.
@@ -270,6 +288,10 @@ def run_gate(evidence, name, argv, cwd, env):
                         pass
             record.update(exitCode=child.returncode,
                           status='PASS' if child.returncode == 0 else 'FAIL')
+            if child.returncode == 0 and not interrupted:
+                receipt = owned.wait_for_exit(interrupted)
+                if receipt is not None:
+                    record['processTree'] = receipt
         except (OSError, subprocess.SubprocessError) as error:
             failure = error
             record.update(exitCode=None, status='BLOCKED', error=str(error))

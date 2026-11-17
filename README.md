@@ -10,6 +10,8 @@ remaining hardware-free UI run in the operator-selected macOS VM. Intermittent
 USB initialization, a failed scheduling-margin assertion and host synthetic-input
 observations retain their documented limits. 1D.11 local acceptance is closed;
 1E distribution work remains.
+The [1E release contract](docs/releases/phase-1e-plan.md) defines the `0.1.0`
+scope, release gates, open decisions, and handoff to 1E.2.
 The earlier [fresh build 5 continuation](docs/validation/phase-1d11-build5-gui-delay.md)
 passed a GUI finite Check, but U03 failed USB initialization before receiving.
 B obtained actual local OK with the new finite delayed-confirmation policy,

@@ -25,6 +25,18 @@ class AppDelegate: FlutterAppDelegate {
     return termination.authorizeResourceBootstrap()
   }
 
+  @IBAction func showProductAbout(_ sender: Any?) {
+    // These required fields are checked in the actual built Info.plist.
+    guard let version = Bundle.main.object(forInfoDictionaryKey: "MeshchanProductVersion") as? String,
+      let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String else {
+      preconditionFailure("Missing Meshchan product identity")
+    }
+    NSApplication.shared.orderFrontStandardAboutPanel(options: [
+      .applicationVersion: version,
+      .version: build
+    ])
+  }
+
   @IBAction func requestUserQuit(_ sender: Any?) {
     requestApplicationQuit()
   }

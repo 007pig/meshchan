@@ -30,6 +30,62 @@ See the [3.50.0 upgrade validation](validation/flutter-3.50.0-upgrade.md) for
 the exact toolchain, dependency changes and automated acceptance. Older dated
 SDK and validation sections below retain their historical versions.
 
+## Product version and native identity (1E.2)
+
+The current engineering decision is product `0.1.0-rc.1`, App build `6`, following
+accepted 1D Beta build `5`. This local progression does not establish a remote
+build allocator or imply final distribution acceptance. Never reuse a build for
+changed distributable content. Keep historical evidence and stored run versions.
+
+The four member manifests and five internal constraints, CLI `meshctlVersion`,
+App `appBuildName` / `appBuildNumber`, and tracked native
+`apps/meshchan_app/macos/Runner/Configs/Version.xcconfig` are deliberately small,
+explicit inputs. Update them together for a new decision. The root workspace has
+no version. `tool/check_product_version.py` checks their correspondence; it does
+not generate files or allocate builds. Locked resolution currently needs no
+lockfile change for these workspace version updates.
+
+A validated SemVer without build metadata maps its `major.minor.patch` to
+`MESHCHAN_APPLE_SHORT_VERSION`. The full prerelease remains in
+`MESHCHAN_PRODUCT_VERSION`, the Dart source identity and CLI. The positive integer
+`MESHCHAN_APP_BUILD` supplies `CFBundleVersion`; native `MeshchanProductVersion`
+preserves the full version for the standard About panel. App runtime and new
+App records use `0.1.0-rc.1+6`; CLI and new CLI records use `0.1.0-rc.1`.
+Database schema, diagnostic format, JSON envelope and radio protocol do not change.
+
+Use ordinary `flutter run -d macos`, Debug/Release builds and source tests with
+the installed SDK. Do not pass version overrides: native preflight checks raw
+original Flutter version Dart defines and any explicit `BUILD_NAME` /
+`BUILD_NUMBER` values,
+rejecting missing or conflicting values before assemble/embed. In particular,
+`--build-name=0.1.0` is a conflicting override. Apple's fields use the dedicated
+tracked values; Flutter 3.50's normalized `FLUTTER_BUILD_NAME` is not an Apple or
+product source of truth. Dart runtime uses the checked source constants, so tests
+and direct Dart processes share the compiled identity without SDK defines.
+
+```bash
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 6
+(cd apps/meshchan_app && flutter build macos --release --no-pub)
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 6 \
+  --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
+```
+
+On this Mac invoke `/opt/homebrew/bin/python3` (3.15+) explicitly. Xcode phases
+prefer that installed path, otherwise `python3` on CI. Both native phases check
+source identity and raw inputs; the Runner phase also checks resolved identity
+settings. An explicit missing/incomplete App fails the static checker. Its JSON
+reports source templates and actual built metadata separately, for later 1E.4.
+
+`check_macos_runtime.py` now requires `--expected-version` and `--app-build` and
+checks the compiled report's `appVersion` as well as plist/normal shutdown.
+It **launches a Flutter/AppKit application**. On this Mac run it in the existing
+VM's GUI executor with an owned external evidence/fixture root, following the VM
+guide; hardware-free host GUI automation is excluded. Static plist inspection
+needs no launch. About visibility is a separate guest GUI check. CI retains its
+own macOS runner runtime/relocation test, now with explicit RC/build arguments.
+The historical three-member `candidate_common.versions()` default remains
+`0.1.0-dev.3`; current four-member checks always pass version/build explicitly.
+
 ## macOS VM GUI testing
 
 Prefer the existing macOS VM for UI tests that do not require real USB/serial,
@@ -143,7 +199,7 @@ Run these sequentially with the existing Flutter SDK and locked workspace:
 python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 (cd apps/meshchan_app && flutter build macos --debug --no-pub)
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 apps/meshchan_app/tool/check_macos_runtime.py \
+python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 6 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 

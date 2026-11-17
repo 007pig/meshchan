@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../launch_configuration.dart';
+import 'build_version.dart';
 import 'controller.dart';
 import 'protocol.dart';
 
@@ -101,6 +102,7 @@ Future<bool> verifyRuntime(
     jsonEncode({
       'verification': 'meshchan.runtime.1d3',
       'passed': passed,
+      'appVersion': appVersion,
       'mode': config.verification,
       'resourcesReleased': close.resourcesReleased,
       'workerExited': close.workerExited,

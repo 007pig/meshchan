@@ -168,7 +168,7 @@ void main() {
         final run = await reopened.history.read(
           LocalId(r.json['recording']['runId'] as String),
         );
-        expect(run.appVersion, '0.1.0-beta.1');
+        expect(run.appVersion, '0.1.0-rc.1');
         expect(run.operation.code, operation);
         expect(run.result!.reason, LogicalReason.completed);
         expect(s.events.where((e) => e == 'record'), hasLength(1));
@@ -177,6 +177,44 @@ void main() {
       },
     );
   }
+
+  test(
+    'RC CLI appends without rewriting closed Beta/dev record versions',
+    () async {
+      final storage = await CoreStorage.open(dataDirectory: fixture.directory);
+      final old = <LocalId, String>{};
+      for (final version in ['0.1.0-beta.1', '0.1.0-dev.3']) {
+        final operation = storage.record(
+          parameters: f.input(DiagnosticOperation.ping),
+          appVersion: version,
+          createTransport: () => auto('ping'),
+        );
+        final result = await operation.done;
+        expect(result.fullySuccessful, true);
+        old[result.registration.snapshot!.runId] = version;
+      }
+      await storage.close();
+      final result = await execute([
+        ...args('ping'),
+        '--record',
+      ], transport: auto('ping'));
+      expect(result.code, 0, reason: result.err);
+      final reopened = await CoreStorage.open(dataDirectory: fixture.directory);
+      final runs = (await reopened.history.query()).items;
+      expect(runs, hasLength(3));
+      expect(
+        runs.singleWhere((r) => !old.containsKey(r.runId)).appVersion,
+        '0.1.0-rc.1',
+      );
+      for (final entry in old.entries) {
+        expect(
+          (await reopened.history.read(entry.key)).appVersion,
+          entry.value,
+        );
+      }
+      await reopened.close();
+    },
+  );
 
   test('recorded listen emits one end and no per-entry event; unrecorded listen retains datagrams', () async {
     for (final record in [false, true]) {

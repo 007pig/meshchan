@@ -2,6 +2,7 @@
 import copy
 import io
 import json
+import re
 from pathlib import Path
 import shutil
 import tarfile
@@ -113,9 +114,10 @@ class CandidateTest(unittest.TestCase):
         # Reconstruct the historical 1C manifests; current source has a new release decision.
         for member in c.MEMBERS:
             spec = self.root / member / 'pubspec.yaml'
-            spec.write_text(spec.read_text().replace('0.1.0-beta.1', c.TARGET_VERSION))
+            current = re.search(r'^version: (\S+)$', spec.read_text(), re.M)[1]
+            spec.write_text(spec.read_text().replace(current, c.TARGET_VERSION))
         constant = self.root / 'apps/meshctl/lib/src/version.dart'
-        constant.write_text(constant.read_text().replace('0.1.0-beta.1', c.TARGET_VERSION))
+        constant.write_text(re.sub(r"(meshctlVersion = ')[^']+", r'\g<1>' + c.TARGET_VERSION, constant.read_text()))
         self.assertEqual(set(c.versions(self.root).values()), {c.TARGET_VERSION})
         before = c.product_inputs(self.root)
         generated = self.root / 'packages/meshchan_core/lib/src/storage/database.g.dart'

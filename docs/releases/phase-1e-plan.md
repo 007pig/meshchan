@@ -31,6 +31,21 @@ host input/rendering and narrower GUI/IME coverage retain their recorded limits.
 Signing or packaging does not resolve them. No complete 1A–1D rerun is required;
 1E obtains the limited new evidence needed for its release changes.
 
+## 1E.2 engineering candidate supplement
+
+After PR #39 merged as `692ac28edaef1d4913639f7c652bfadbf525ef99`, 1E.2 selected
+`0.1.0-rc.1` / App build `6`, following accepted Beta build `5`. The 1E.1 review
+facts above and below remain historical facts. Full SemVer maps its numeric
+core to Apple short `0.1.0`; build `6` remains separate. App runtime/new App
+records identify `0.1.0-rc.1+6`; CLI/new CLI records identify `0.1.0-rc.1`.
+Tracked native metadata and standard About preserve RC identity, with source,
+raw-input, actual-plist and compiled-runtime checks. See the
+[implementation/validation record](../validation/phase-1e2-version-identity.md)
+for candidate-specific results and limitations and the
+[developer contract](../development.md#product-version-and-native-identity-1e2)
+for repeatable commands. Subsequent work is 1E.3 distribution-material review;
+this supplement selects no license and closes no final-release gate.
+
 ## Release scope and platform support
 
 | Item | First release commitment |

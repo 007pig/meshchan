@@ -69,6 +69,21 @@ void main() {
     final dir = Directory.systemTemp.createTempSync(
       'meshchan-typed-recording-',
     );
+    // Produce closed historical records through the public recorder, then let
+    // the current App worker open the same schema-1 directory sequentially.
+    final historical = await CoreStorage.open(dataDirectory: dir);
+    final historicalIds = <LocalId, String>{};
+    for (final version in ['0.1.0-beta.1+5', '0.1.0-dev.3']) {
+      final operation = historical.record(
+        parameters: await historical.resolveParameters(diagnosticRequest()),
+        appVersion: version,
+        createTransport: DiagnosticFixtureTransport.new,
+      );
+      final result = await operation.done;
+      expect(result.fullySuccessful, true);
+      historicalIds[result.registration.snapshot!.runId] = version;
+    }
+    await historical.close();
     final observer = ReceivePort();
     final runtime = RuntimeController(
       resolveDirectory: () async => dir.path,
@@ -127,13 +142,26 @@ void main() {
     expect((await runtime.shutdown()).canExit, true);
     final storage = await CoreStorage.open(dataDirectory: dir);
     final runs = (await storage.history.query()).items;
-    expect(runs.length, 2);
+    expect(runs.length, 4);
     expect(runs.map((r) => r.operation).toSet(), {
       DiagnosticOperation.ping,
       DiagnosticOperation.respond,
     });
-    expect(runs.every((r) => r.appVersion == '0.1.0-beta.1+5'), true);
+    expect(
+      runs
+          .where((r) => !historicalIds.containsKey(r.runId))
+          .every((r) => r.appVersion == '0.1.0-rc.1+6'),
+      true,
+    );
+    for (final entry in historicalIds.entries) {
+      expect((await storage.history.read(entry.key)).appVersion, entry.value);
+    }
     await storage.close();
+    final reopened = await CoreStorage.open(dataDirectory: dir);
+    for (final entry in historicalIds.entries) {
+      expect((await reopened.history.read(entry.key)).appVersion, entry.value);
+    }
+    await reopened.close();
     await subscription.cancel();
     observer.close();
     dir.deleteSync(recursive: true);

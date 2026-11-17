@@ -1,4 +1,4 @@
-"""Current beta expectations reach manifests, processes and retained reports."""
+"""Current candidate expectations reach manifests, processes and retained reports."""
 import json
 from pathlib import Path
 import shutil
@@ -10,10 +10,10 @@ import candidate_common as c
 import regression_1d10 as runner
 import smoke_cli
 
-BETA = '0.1.0-beta.1'
+RC = '0.1.0-rc.1'
 
 
-class BetaVersionTest(unittest.TestCase):
+class CandidateVersionTest(unittest.TestCase):
     def test_four_members_five_constraints_constant_and_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -24,13 +24,13 @@ class BetaVersionTest(unittest.TestCase):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(c.ROOT / name, target)
-            self.assertEqual(c.versions(root, BETA, app_build=5)['meshchan_app'], BETA + '+5')
+            self.assertEqual(c.versions(root, RC, app_build=6)['meshchan_app'], RC + '+6')
             for name in names:
                 target = root / name
                 original = target.read_text()
-                target.write_text(original.replace(BETA, '0.1.0-dev.2'))
+                target.write_text(original.replace(RC, '0.1.0-dev.2'))
                 with self.assertRaises(ValueError, msg=name):
-                    c.versions(root, BETA, app_build=5)
+                    c.versions(root, RC, app_build=6)
                 target.write_text(original)
             for owner, dependency in [('meshchan_core', 'meshcore_link'),
                     ('meshctl', 'meshchan_core'), ('meshctl', 'meshcore_link'),
@@ -38,29 +38,41 @@ class BetaVersionTest(unittest.TestCase):
                 member = next(m for m in (*c.MEMBERS, 'apps/meshchan_app') if m.endswith('/' + owner))
                 target = root / member / 'pubspec.yaml'
                 original = target.read_text()
-                target.write_text(original.replace(dependency + ': ^' + BETA, dependency + ': ^0.1.0-dev.2'))
+                target.write_text(original.replace(dependency + ': ^' + RC, dependency + ': ^0.1.0-dev.2'))
                 with self.assertRaisesRegex(ValueError, 'constraint'):
-                    c.versions(root, BETA, app_build=5)
+                    c.versions(root, RC, app_build=6)
                 target.write_text(original)
+            fallback = root / 'apps/meshchan_app/lib/runtime/build_version.dart'
+            original = fallback.read_text()
+            fallback.write_text(original.replace("appBuildNumber = '6'", "appBuildNumber = '5'"))
+            with self.assertRaisesRegex(ValueError, 'App fallback'):
+                c.versions(root, RC, app_build=6)
+            fallback.write_text(original)
+            manifest = root / 'packages/meshcore_link/pubspec.yaml'
+            original = manifest.read_text()
+            manifest.write_text(original.replace('version: ' + RC, 'missing-version: ' + RC))
+            with self.assertRaisesRegex(ValueError, 'Missing or malformed version field'):
+                c.versions(root, RC, app_build=6)
+            manifest.write_text(original)
             with self.assertRaises(ValueError):
-                c.versions(root)  # Historical default must not accept a beta checkout.
+                c.versions(root)  # Historical default must not accept an RC checkout.
             with self.assertRaises(ValueError):
-                c.versions(root, BETA, app_build=1)
+                c.versions(root, RC, app_build=1)
             for invalid in ('', 'anything', '0.1.0+2'):
                 with self.assertRaises(ValueError):
                     c.versions(root, invalid)
 
     def test_runner_propagates_explicit_version_without_changing_historical_default(self):
-        plan = runner.software_plan(Path('/tmp/evidence'), Path('/sdk/flutter'), Path('/sdk/dart'), BETA, 3)
+        plan = runner.software_plan(Path('/tmp/evidence'), Path('/sdk/flutter'), Path('/sdk/dart'), RC, 6)
         for name in ('R01-versions', 'R13-smoke', 'R17-legacy'):
             argv = next(g['argv'] for g in plan if g['name'] == name)
-            self.assertEqual(argv[argv.index('--expected-version') + 1], BETA)
-        self.assertIn('--app-build', plan[0]['argv'])
+            self.assertEqual(argv[argv.index('--expected-version') + 1], RC)
+        self.assertEqual(plan[0]['argv'][plan[0]['argv'].index('--app-build') + 1], '6')
         historical = runner.software_plan(Path('/tmp/e'), Path('/sdk/f'), Path('/sdk/d'))
         self.assertNotIn('R01-versions', [g['name'] for g in historical])
         self.assertIn(c.TARGET_VERSION, next(g['argv'] for g in historical if g['name'] == 'R13-smoke'))
 
-    def test_smoke_passes_beta_to_aot_recording_history_and_report_validation(self):
+    def test_smoke_passes_rc_to_aot_recording_history_and_report_validation(self):
         records = []
         class Checks:
             count = 0
@@ -70,7 +82,7 @@ class BetaVersionTest(unittest.TestCase):
                 records.append((name, command, kwargs))
                 if 'synthetic runCli/core recording' in name:
                     report = {'passed': True, 'closedBeforeReport': True,
-                              'appVersion': BETA, 'runIds': ['a', 'b', 'c']}
+                              'appVersion': RC, 'runIds': ['a', 'b', 'c']}
                     kwargs['validate'](json.dumps(report))
                     report['appVersion'] = c.TARGET_VERSION
                     with self_test.assertRaises(ValueError):
@@ -82,7 +94,7 @@ class BetaVersionTest(unittest.TestCase):
             root = Path(directory)
             args = ['smoke', '--dart', str(root), '--cli-bundle', str(root),
                     '--observation-bundle', str(root), '--datagram-acceptance-bundle', str(root),
-                    '--expected-version', BETA]
+                    '--expected-version', RC]
             with patch('sys.argv', args), patch.object(smoke_cli, 'executable', side_effect=Path), \
                     patch.object(smoke_cli, 'bundle', side_effect=Path), \
                     patch.object(smoke_cli, 'bundle_executable', return_value=root / 'product'), \
@@ -91,20 +103,20 @@ class BetaVersionTest(unittest.TestCase):
                     patch.object(smoke_cli, 'nonempty_history_checks') as history:
                 self.assertEqual(smoke_cli.main(), 0)
             self.assertEqual(len(history.call_args_list), 3)
-            self.assertTrue(all(call.args[-1] == BETA for call in history.call_args_list))
+            self.assertTrue(all(call.args[-1] == RC for call in history.call_args_list))
             probes = [cmd for name, cmd, _ in records if 'synthetic runCli/core recording' in name]
             self.assertEqual(len(probes), 2)
-            self.assertTrue(all(cmd[-2:] == ['--expected-version', BETA] for cmd in probes))
+            self.assertTrue(all(cmd[-2:] == ['--expected-version', RC] for cmd in probes))
             versions = [kw['out'] for name, _, kw in records if name.endswith(': version')]
-            self.assertEqual(versions, ['meshctl ' + BETA + '\n'] * 3)
+            self.assertEqual(versions, ['meshctl ' + RC + '\n'] * 3)
 
-    def test_beta_nonempty_history_rejects_wrong_recorded_version(self):
+    def test_rc_nonempty_history_rejects_wrong_recorded_version(self):
         validators = []
         class Checks:
             def check(self, name, command, cwd, **kwargs):
                 validators.append(kwargs['validate'])
-        smoke_cli.nonempty_history_checks(Checks(), 'beta', ['product'], Path('/tmp'), Path('/tmp'), BETA)
-        run = {'appVersion': BETA, 'preparedAt': '2026-11-16T00:00:00.000001Z',
+        smoke_cli.nonempty_history_checks(Checks(), 'beta', ['product'], Path('/tmp'), Path('/tmp'), RC)
+        run = {'appVersion': RC, 'preparedAt': '2026-11-16T00:00:00.000001Z',
                'cleanup': {'core': None, 'hostSubscriptions': False, 'aggregate': 0}}
         report = {'diagnosticSummaryFormatVersion': 1, 'exportedAt': 'time', 'runs': [run]}
         validators[-1](json.dumps(report))

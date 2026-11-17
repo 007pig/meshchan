@@ -33,8 +33,8 @@ jobs:
       - name: Get locked workspace dependencies
         run: flutter pub get --enforce-lockfile
 
-      - name: Check explicit beta versions and app fallbacks
-        run: python3 tool/check_product_version.py --expected-version 0.1.0-beta.1 --app-build 5
+      - name: Check explicit candidate versions and identity
+        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 6
 
       - name: Generate production database and dependency probe
         working-directory: packages/meshchan_core
@@ -107,7 +107,7 @@ jobs:
       - name: Verify source and native entry points without hardware
         run: |
           python3 --version
-          python3 tool/smoke_cli.py --expected-version 0.1.0-beta.1 \
+          python3 tool/smoke_cli.py --expected-version 0.1.0-rc.1 \
             --dart "$(command -v dart)" \
             --cli-bundle apps/meshctl/build/dist/bundle \
             --observation-bundle packages/meshcore_link/build/serial-transport-check/bundle \
@@ -139,6 +139,8 @@ jobs:
           xcrun clang --version
       - name: Get locked workspace dependencies
         run: flutter pub get --enforce-lockfile
+      - name: Check candidate source identity
+        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 6
       - name: Test app without hardware
         working-directory: apps/meshchan_app
         run: flutter test --no-pub --concurrency=1
@@ -159,6 +161,8 @@ jobs:
         run: |
           flutter build macos --debug --no-pub
           flutter build macos --release --no-pub
+      - name: Check actual release plist identity
+        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 6 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
       - name: Test native macOS runner host without hardware
         working-directory: apps/meshchan_app
         run: >-
@@ -166,7 +170,7 @@ jobs:
           -configuration Debug -destination 'platform=macOS,arch=arm64'
           -derivedDataPath build/macos -parallel-testing-enabled NO test
       - name: Verify production runtime and relocated release without hardware
-        run: python3 apps/meshchan_app/tool/check_macos_runtime.py --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
+        run: python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 6 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
       - name: Verify release SQLite across app processes without serial access
         run: |
           python3 - <<'PY'

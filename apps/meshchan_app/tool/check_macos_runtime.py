@@ -6,14 +6,36 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tool"))
+from product_identity import check_app
+
+
+def validate_runtime_report(returncode, reports, shutdown, expected_version, app_build):
+    if returncode != 0 or len(reports) != 1 or reports[0].get('passed') is not True:
+        raise RuntimeError('Runtime acceptance failed')
+    if reports[0].get('appVersion') != f'{expected_version}+{app_build}':
+        raise RuntimeError('Compiled App version mismatch')
+    if reports[0]['receivePorts'] or reports[0]['pendingRequests']:
+        raise RuntimeError('Client resources were not drained')
+    phases = reports[0]['phases']
+    if not all(phase in phases for phase in ('opening', 'ready', 'closing', 'closed')) or (
+            phases.index('opening') >= phases.index('ready')):
+        raise RuntimeError('Production bridge did not observe Opening before Ready and final close')
+    if len(shutdown) != 1 or not shutdown[0]['resourcesReleased'] or not shutdown[0]['workerExited']:
+        raise RuntimeError('Normal quit did not confirm the shared shutdown barrier')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
     parser.add_argument('--evidence', type=Path)
+    parser.add_argument('--expected-version', required=True)
+    parser.add_argument('--app-build', required=True, type=int)
     args = parser.parse_args()
     app = args.app.resolve(strict=True)
+    identity = check_app(app, args.expected_version, args.app_build)
     root = (args.evidence or Path(tempfile.mkdtemp(prefix='meshchan-1d3-app-'))).resolve()
     root.mkdir(parents=True, exist_ok=True)
     fixture = root / 'meshchan-1d3-sqlite'
@@ -32,16 +54,8 @@ def main():
                  'shutdown': shutdown}
         runs.append(entry)
         (root / 'runtime-processes.json').write_text(json.dumps(runs, indent=2))
-        if result.returncode != 0 or len(reports) != 1 or reports[0].get('passed') is not True:
-            raise RuntimeError('Runtime acceptance failed; see ' + str(root))
-        if reports[0]['receivePorts'] or reports[0]['pendingRequests']:
-            raise RuntimeError('Client resources were not drained')
-        phases = reports[0]['phases']
-        if not all(phase in phases for phase in ('opening', 'ready', 'closing', 'closed')) or (
-                phases.index('opening') >= phases.index('ready')):
-            raise RuntimeError('Production bridge did not observe Opening before Ready and final close')
-        if len(shutdown) != 1 or not shutdown[0]['resourcesReleased'] or not shutdown[0]['workerExited']:
-            raise RuntimeError('Normal quit did not confirm the shared shutdown barrier')
+        validate_runtime_report(result.returncode, reports, shutdown,
+                                args.expected_version, args.app_build)
     signature = subprocess.run(['codesign', '--verify', '--deep', '--strict', '--all-architectures',
                                 str(root / 'Meshchan.app')], capture_output=True, text=True)
     (root / 'signature.json').write_text(json.dumps({'exitCode': signature.returncode,
@@ -67,7 +81,7 @@ def main():
             raise RuntimeError(mode + ' did not dispose its client resources')
         if mode == 'quit-ready' and not report['workerWasSpawned']:
             raise RuntimeError('Ready quit must close an actual live owner')
-    print(json.dumps({'passed': True, 'evidence': str(root), 'runs': len(runs)}))
+    print(json.dumps({'passed': True, 'evidence': str(root), 'runs': len(runs), 'identity': identity, 'appVersion': f'{args.expected_version}+{args.app_build}'}))
 
 
 if __name__ == '__main__':

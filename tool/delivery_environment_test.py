@@ -45,7 +45,7 @@ class DeliveryEnvironmentTest(unittest.TestCase):
         archive = io.BytesIO()
         with tarfile.open(fileobj=archive, mode='w'):
             pass
-        argv = ['compatibility', '--expected-version', '0.1.0-beta.1', '--build-directory', str(self.root), '--dart', sys.executable]
+        argv = ['compatibility', '--expected-version', '0.1.0-rc.1', '--build-directory', str(self.root), '--dart', sys.executable]
         with patch.object(sys, 'argv', argv), \
                 patch.dict(os.environ, {'PATH': '/synthetic/homebrew-compiler:/usr/bin'}), \
                 patch.object(compatibility.subprocess, 'check_output', return_value=archive.getvalue()), \
@@ -126,7 +126,7 @@ class DeliveryEnvironmentTest(unittest.TestCase):
                 if len(calls) == 2:
                     raise ReachedProbes
                 return ''
-        argv = ['compatibility', '--expected-version', '0.1.0-beta.1', '--build-directory', str(self.root), '--dart', relative]
+        argv = ['compatibility', '--expected-version', '0.1.0-rc.1', '--build-directory', str(self.root), '--dart', relative]
         with patch.object(sys, 'argv', argv), \
                 patch.object(compatibility.subprocess, 'check_output', return_value=archive.getvalue()), \
                 patch.object(compatibility.shutil, 'copy2'), patch.object(compatibility, 'Checks', ProbeChecks):
@@ -143,7 +143,7 @@ class DeliveryEnvironmentTest(unittest.TestCase):
         for dart in (self.root / 'missing-dart', empty, not_executable, self.root):
             with self.subTest(dart=dart):
                 build = self.root / 'unused build'
-                argv = ['compatibility', '--expected-version', '0.1.0-beta.1', '--build-directory', str(build), '--dart', str(dart)]
+                argv = ['compatibility', '--expected-version', '0.1.0-rc.1', '--build-directory', str(build), '--dart', str(dart)]
                 with patch.object(sys, 'argv', argv), \
                         patch.object(compatibility.subprocess, 'check_output') as archive, \
                         contextlib.redirect_stderr(io.StringIO()):
@@ -169,7 +169,7 @@ class DeliveryEnvironmentTest(unittest.TestCase):
                 return ''
         def capture_history(checks, label, prefix, cwd, data, *args):
             history_paths.append((Path(data), Path(cwd)))
-        argv = ['smoke', '--expected-version', '0.1.0-beta.1', '--dart', str(dart), '--cli-bundle', str(bundle),
+        argv = ['smoke', '--expected-version', '0.1.0-rc.1', '--dart', str(dart), '--cli-bundle', str(bundle),
             '--observation-bundle', str(bundle), '--datagram-acceptance-bundle', str(bundle),
             '--evidence-directory', relative]
         with patch.object(sys, 'argv', argv), patch.object(smoke_cli, 'Checks', CaptureChecks), \

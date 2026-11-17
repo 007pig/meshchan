@@ -12,3 +12,5 @@ PRODUCT_BUNDLE_IDENTIFIER = org.meshchan.meshchan
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 org.meshchan. All rights reserved.
+
+#include "Version.xcconfig"

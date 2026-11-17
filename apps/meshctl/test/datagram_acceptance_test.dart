@@ -12,7 +12,7 @@ void main() {
         'meshchan-recorded-test-',
       );
       try {
-        await runRecordedAcceptance(directory, expectedVersion: '0.1.0-beta.1');
+        await runRecordedAcceptance(directory, expectedVersion: '0.1.0-rc.1');
       } finally {
         directory.deleteSync(recursive: true);
       }

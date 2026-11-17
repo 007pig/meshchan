@@ -41,6 +41,18 @@ mechanisms and observation limits are assigned below to later steps. Dated
 and limits; they do not validate a Flutter worker, release build, or GUI at this
 HEAD.
 
+## Current version identity supplement (1E.2)
+
+The engineering candidate is `0.1.0-rc.1+6`. The
+[version input contract](../development.md#product-version-and-native-identity-1e2)
+keeps full SemVer, Apple numeric `0.1.0`, and build `6` separate and checks source,
+raw build inputs, generated plist and compiled runtime. Standard About retains RC
+identity. Bundle ID `org.meshchan.meshchan`, Application Support `meshchan`,
+explicit-directory precedence and pre-resource validation, one-owner sequential
+GUI/CLI handoff, Sandbox/signing/deployment configuration and all data/protocol
+formats remain as adopted. This supplement does not relabel earlier acceptance
+as evidence for the new RC or decide the minimum supported macOS.
+
 ## Product scope and decision status
 
 The first release has three primary pages: **Drafts**, **Device**, and

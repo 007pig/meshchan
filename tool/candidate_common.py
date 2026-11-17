@@ -167,18 +167,26 @@ def validate_gate(record, root=ROOT):
     versions(root)
 
 
-def production_closure(graph):
+def production_closure(graph, roots=('meshctl',)):
+    """Follow declared production edges, including hook helpers; keep 1C defaults."""
     packages = {p['name']: p for p in graph['packages']}
+    if len(packages) != len(graph['packages']):
+        raise ValueError('Duplicate dependency graph node')
     first_party = {p['name'] for p in graph['packages'] if p.get('source') in ('root', 'workspace')}
     first_party.add('meshctl')
     visited = set()
     def visit(name):
         if name in visited:
             return
+        if name not in packages:
+            raise ValueError('Missing production dependency node: ' + name)
         visited.add(name)
         for dependency in packages[name].get('directDependencies', []):
             visit(dependency)
-    visit('meshctl')
+    if not roots:
+        raise ValueError('At least one production root is required')
+    for root in roots:
+        visit(root)
     return packages, visited, first_party
 
 

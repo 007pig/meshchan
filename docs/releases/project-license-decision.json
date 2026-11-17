@@ -1,0 +1,38 @@
+{
+  "status": "approved",
+  "licenseExpression": "GPL-3.0-only",
+  "licenseName": "GNU General Public License, version 3 only",
+  "copyrightHolder": "Meshchan Contributors",
+  "copyrightYear": 2026,
+  "copyrightNotice": "Copyright (c) 2026 Meshchan Contributors",
+  "scope": [
+    "packages/meshcore_link",
+    "packages/meshchan_core",
+    "apps/meshctl",
+    "apps/meshchan_app",
+    "first-party tools, tests, documentation and original assets"
+  ],
+  "authorization": "007pig explicitly confirmed in this session that all first-party contributions may be licensed under GPL-3.0, with copyright attribution to Meshchan Contributors for 2026, and that 007pig has authority over all first-party contributions with no exceptions. This latest decision supersedes the earlier MIT selection.",
+  "confirmedBy": "007pig",
+  "authorityOverAllFirstPartyContributions": true,
+  "exceptions": [],
+  "licenseSha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+  "copyrightNoticeSha256": "0341970e78fa91e4da4c154c7de6c231db44cfa5ee82347486b9bc9557165999",
+  "versionPolicy": "GPL-3.0 means version 3 only; no authorization for later GPL versions is inferred.",
+  "boundary": "Applies to first-party contributions. Third-party original notices and license terms remain independently applicable. GPL corresponding-source obligations apply to distribution of the covered products.",
+  "contributionPolicy": {
+    "agreement": "CLA.md",
+    "agreementVersion": "1.0",
+    "agreementId": "meshchan-cla-1.0",
+    "agreementSha256": "c8856d4695a8cd5388f8277064a8fcd3f1fd55f1cd5a93e763bffe9fb85704c3",
+    "guide": "CONTRIBUTING.md",
+    "recipient": "007pig",
+    "contributorRetainsCopyright": true,
+    "additionalGrant": "Nonexclusive permission for GPL-3.0-only community and paid, closed-source commercial editions, including corresponding sublicensing; only covered rights are granted.",
+    "acceptance": "Explicit contributor PR comment identifying immutable CLA commit/hash and contribution head, followed by Recipient acknowledgement before merge; manual review.",
+    "retroactiveAcceptance": false,
+    "executionStatus": "Policy defined; no contributor acceptance is created or asserted by this decision record.",
+    "existingAuthorizationBoundary": "The earlier 007pig confirmation records GPL authority over existing first-party contributions; it does not by itself establish proprietary relicensing authority from other rights holders.",
+    "guideSha256": "729cb8d75f70f9bc35258c19a21d3771fbf5f2475737be3876e508c672f9a1fa"
+  }
+}

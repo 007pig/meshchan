@@ -1,9 +1,10 @@
 # Meshchan
 
-The current engineering candidate is **0.1.0-rc.1** (app build **6**).
+The current materials candidate is **0.1.0-rc.1** (app build **7**).
 [1E.2 version and identity validation](docs/validation/phase-1e2-version-identity.md)
-separates full product/runtime identity from Apple's numeric `0.1.0` / `6`.
-Final licensing, signing, notarization, installation and publication gates remain
+retains engineering build `6`; the [current candidate evidence](docs/validation/phase-1e3-materials.md)
+uses build `7` for updated automatic notices, with Apple numeric version `0.1.0`.
+Final packaging, signing, notarization, installation and publication gates remain
 pending under the [1E release contract](docs/releases/phase-1e-plan.md).
 
 The historical **0.1.0-beta.1** (app build **5**) remains the accepted 1D Beta.
@@ -84,7 +85,7 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
 | `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery; bounded history queries, guarded deletion, automatic retention and safe JSON summary export (1C.7). SQLite schema 1 remains unchanged. The public host API is now wired into meshctl (1C.8). See the [offline history API and example](packages/meshchan_core/README.md#diagnostic-history-retention-and-safe-export-1c7). |
 | `apps/meshctl` | Offline draft/profile/settings/history commands and asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
-| `apps/meshchan_app` | Flutter macOS host, version `0.1.0-rc.1+6`, with offline saves, finite USB checks, recorded PING/Responder, History/export and coordinated Quit. Normal startup opens offline storage without device access. |
+| `apps/meshchan_app` | Flutter macOS host, version `0.1.0-rc.1+7`, with offline saves, finite USB checks, recorded PING/Responder, History/export and coordinated Quit. Normal startup opens offline storage without device access. |
 
 Local Python scripts and tests use the latest installed stable Python **3.15 or
 newer**. On this Mac, `/opt/homebrew/bin/python3` is the verified 3.15.2 entry;
@@ -167,3 +168,29 @@ runtime, persistence, input and quit behavior and the handoff to presets/setting
 The app also provides [complete profiles, settings and offline parameter preview](apps/meshchan_app/README.md#profiles-settings-and-offline-preview-1d5). See the [1D.5 validation record](docs/validation/phase-1d5-profiles-settings.md) for evidence and device-step boundaries.
 
 The macOS app also provides [explicit finite USB device checks](apps/meshchan_app/README.md#explicit-finite-device-checks-1d6): Refresh, select an exact port, initialize once, publish dated source information, and await actual close. See the [1D.6 validation record](docs/validation/phase-1d6-device-check.md) for software, native, GUI and USB evidence boundaries.
+
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change. External
+contributors retain their copyright and explicitly accept [CLA.md](CLA.md)
+before merge. This separate agreement authorizes 007pig to use covered
+contributions in the GPL community edition and paid, closed-source commercial
+editions, including the corresponding sublicensing rights. Each rights holder
+records acceptance for the exact agreement version/hash and contribution head;
+the maintainer reviews and acknowledges it before merge.
+
+## License
+
+Copyright (c) 2026 Meshchan Contributors.
+
+Meshchan's first-party code, tools, tests, documentation and original assets are
+licensed under the GNU General Public License, version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the unmodified license text and
+[COPYRIGHT](COPYRIGHT) for the project notice and scope. Third-party components
+retain their original licenses and notices. Distribution materials and applicable
+corresponding-source requirements are documented in the
+[Phase 1E.3 contract](docs/releases/phase-1e3-licenses.md).
+The CLA governs incoming contributions and does not change this community
+license, transfer contributor copyright, or establish that past contributors
+already granted commercial relicensing rights.

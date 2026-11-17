@@ -1,0 +1,34 @@
+{
+  "GPL-3.0.txt": {
+    "url": "https://www.gnu.org/licenses/gpl-3.0.txt",
+    "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+  },
+  "sky_engine-371f77202a73e8dff57a8b3bff75bca55c090aee.zip": {
+    "url": "https://storage.googleapis.com/flutter_infra_release/flutter/371f77202a73e8dff57a8b3bff75bca55c090aee/sky_engine.zip",
+    "sha256": "02cc795dd6e8c7add0bf92c77210392f6e4c8788bc17cb5c7f8c652a56a8b461"
+  },
+  "sqlite3.dart-f144d1c56b22d5772d164c7c3f20eb1df482fcf3.tar.gz": {
+    "url": "https://codeload.github.com/simolus3/sqlite3.dart/tar.gz/f144d1c56b22d5772d164c7c3f20eb1df482fcf3",
+    "sha256": "17fddbce2e4b408f7134eed22fecee064232443e93c847ce492ff89233bd0ab6"
+  },
+  "sqlite-amalgamation-3540100.zip": {
+    "url": "https://sqlite.org/2026/sqlite-amalgamation-3540100.zip",
+    "sha256": "0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9"
+  },
+  "fonts-3012db47f3130e62f7cc0beabff968a33cbec8d8.zip": {
+    "url": "https://storage.googleapis.com/flutter_infra_release/flutter/fonts/3012db47f3130e62f7cc0beabff968a33cbec8d8/fonts.zip",
+    "sha256": "e56fa8e9bb4589fde964be3de451f3e5b251e4a1eafb1dc98d94add034dd5a86"
+  },
+  "dart-runtime-fa8c1270c374c1346931583a17c3b7f278d3822d.tar.gz": {
+    "url": "https://dart.googlesource.com/sdk/+archive/fa8c1270c374c1346931583a17c3b7f278d3822d/runtime.tar.gz",
+    "sha256": "8fe7e7076bb4ae94d449c67e20bfcbc94da01fa6edf5b975a82cc230c4e927be"
+  },
+  "dart-sdk-lib-fa8c1270c374c1346931583a17c3b7f278d3822d.tar.gz": {
+    "url": "https://dart.googlesource.com/sdk/+archive/fa8c1270c374c1346931583a17c3b7f278d3822d/sdk/lib.tar.gz",
+    "sha256": "ab9c36ec61d72cafc964f430bef2a711bdc390b252b5a765763d8db4aff54467"
+  },
+  "dart-DEPS-fa8c1270c374c1346931583a17c3b7f278d3822d.txt": {
+    "url": "https://raw.githubusercontent.com/dart-lang/sdk/fa8c1270c374c1346931583a17c3b7f278d3822d/DEPS",
+    "sha256": "d51a35c1d649af503d14ad1617f34473efd50b0991228387a7c42444ccef9303"
+  }
+}

@@ -32,8 +32,9 @@ SDK and validation sections below retain their historical versions.
 
 ## Product version and native identity (1E.2)
 
-The current engineering decision is product `0.1.0-rc.1`, App build `6`, following
-accepted 1D Beta build `5`. This local progression does not establish a remote
+The current materials candidate is product `0.1.0-rc.1`, App build `7`, following
+engineering build `6`. Automatic GPL notices required a new App build. The 1E.2
+record retains build `6`. This local progression does not establish a remote
 build allocator or imply final distribution acceptance. Never reuse a build for
 changed distributable content. Keep historical evidence and stored run versions.
 
@@ -50,7 +51,7 @@ A validated SemVer without build metadata maps its `major.minor.patch` to
 `MESHCHAN_PRODUCT_VERSION`, the Dart source identity and CLI. The positive integer
 `MESHCHAN_APP_BUILD` supplies `CFBundleVersion`; native `MeshchanProductVersion`
 preserves the full version for the standard About panel. App runtime and new
-App records use `0.1.0-rc.1+6`; CLI and new CLI records use `0.1.0-rc.1`.
+App records use `0.1.0-rc.1+7`; CLI and new CLI records use `0.1.0-rc.1`.
 Database schema, diagnostic format, JSON envelope and radio protocol do not change.
 
 Use ordinary `flutter run -d macos`, Debug/Release builds and source tests with
@@ -64,9 +65,9 @@ product source of truth. Dart runtime uses the checked source constants, so test
 and direct Dart processes share the compiled identity without SDK defines.
 
 ```bash
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 6
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 7
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 6 \
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 7 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
@@ -199,7 +200,7 @@ Run these sequentially with the existing Flutter SDK and locked workspace:
 python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 (cd apps/meshchan_app && flutter build macos --debug --no-pub)
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 6 \
+python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 7 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
@@ -307,6 +308,22 @@ PATH and can undo an explicit parent-interpreter selection. New provenance
 checks should retain the parent and child executable paths.
 
 ## Dependencies and licenses
+
+For current App/CLI distribution materials, use the [1E.3 collector and contract](releases/phase-1e3-licenses.md)
+and [candidate-specific validation](validation/phase-1e3-materials.md). It preserves
+original locked-package/SDK/resource declarations. The first-party license is
+GPL-3.0-only, Copyright (c) 2026 Meshchan Contributors, approved by 007pig.
+The [native SDK source supplement](releases/phase-1e3-sdk-sources.md) supplies
+engine/Dart/LLVM source acquisition, fresh GN closure checks and build instructions.
+The full gate requires that check plus current product binding. The earlier
+findings below retain their historical scope.
+
+External contributions follow [CONTRIBUTING.md](../CONTRIBUTING.md) and the
+separate [CLA](../CLA.md). Contributors retain copyright while granting 007pig
+rights for the GPL community edition and paid, closed-source commercial editions,
+including sublicensing. Explicit acceptance and maintainer acknowledgement are
+recorded per contribution; a PR checkbox or DCO sign-off is not a substitute.
+The CLA does not amend the root GPL text or override third-party conditions.
 
 The [published package](https://pub.dev/packages/libserialport_plus) and its [changelog](https://pub.dev/packages/libserialport_plus/changelog) were checked on November 8, 2026. Pub selected 1.0.5 with Dart 3.13.7. Version 1.0.0 removed the Flutter SDK/plugin dependency and introduced Dart native asset build hooks. The installed 1.0.5 archive's `hook/build.dart`, `lib/src/serial_port.dart`, `serial_port_info.dart`, and exception implementation were reviewed. `open()` returns `void` and defaults to read/write; `isOpen()` is a method. The Dart metadata API does not require an explicit `open()`, but native internals on some platforms open ports, so platform guards are required.
 

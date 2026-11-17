@@ -46,6 +46,30 @@ for candidate-specific results and limitations and the
 for repeatable commands. Subsequent work is 1E.3 distribution-material review;
 this supplement selects no license and closes no final-release gate.
 
+## 1E.3 materials handoff
+
+The [collection and distribution contract](phase-1e3-licenses.md) and
+[current validation record](../validation/phase-1e3-materials.md) define the
+dual-product material entry point. The [project license decision](project-license-decision.json)
+now records GPL-3.0-only, Copyright (c) 2026 Meshchan Contributors, with
+007pig confirming authority over all first-party contributions and no exceptions.
+The [native SDK source rules](phase-1e3-sdk-sources.md) provide original
+engine/Dart/LLVM source and build inputs; fresh native source closure verification
+remains required for the complete material gate. 1E.4/1E.5 must rebind new products; 1E.6 repeats
+modified-library loading under formal signing conditions.
+
+The subsequent candidate-evidence repair selects App build `7` with the same
+`0.1.0-rc.1` product version. Fresh automatic notices include the approved root
+GPL text, so the changed App content does not reuse build `6`. The old 1E.2
+products/records remain immutable. Current complete source-input/build/output
+and replacement receipts are linked from the 1E.3 validation record; they do not
+replace the separate 1E.4 build-entry or 1E.6 formal-signing acceptance.
+
+The separate [CLA](../../CLA.md) and [contribution guide](../../CONTRIBUTING.md)
+define explicit, recorded incoming grants to 007pig for GPL community and
+closed-source commercial editions. Contributors keep copyright. This policy
+does not amend the community GPL or establish past contributors' acceptance.
+
 ## Release scope and platform support
 
 | Item | First release commitment |
@@ -175,7 +199,7 @@ needed to complete this contract.
 
 | Item | Current evidence/status | Owner step | Blocks |
 | --- | --- | --- | --- |
-| Project license | No tracked project LICENSE or completed license decision found; historical distribution handoffs explicitly leave it open. Maintainer must choose; this step adds no license. | Maintainer / 1E.3 | Complete distribution materials and public redistribution. |
+| Project license | Closed in 1E.3: GPL-3.0-only; Copyright (c) 2026 Meshchan Contributors. Root LICENSE/COPYRIGHT and the approved decision record preserve 007pig's authority/no-exceptions confirmation. | Maintainer / 1E.3 | License decision closed; GPL corresponding-source and later release gates remain. |
 | App and CLI third-party materials | Beta preserves notices for its graph; [earlier material gaps](phase-1c-dev3.md#materials-and-distribution-limits) and 1D.11 retain native source/build/relinking and AOT runtime correspondence work. Final Flutter/App and CLI coverage is unverified. | 1E.3, integrated in 1E.5 | License gate and final distributable contents. |
 | Developer ID, Apple team, notarization credentials | No repository evidence establishes usable certificates/private keys, team access, or notarization credentials. Ad hoc configuration is insufficient; maintainer availability confirmation is pending. | Maintainer / 1E.6–1E.7 | Formal signing, notarization and final DMG. |
 | Minimum macOS and clean test coverage | Deployment target 12.0; recorded 27.2/27.2.1 runtime evidence does not establish an older supported minimum. Test environment/version selection and limited acceptance are pending. | Maintainer / 1E.9, documented in 1E.11 | Supported-version promise and installation gate. |

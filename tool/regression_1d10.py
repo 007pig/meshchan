@@ -339,7 +339,7 @@ def run_gate(evidence, name, argv, cwd, env):
     return record['status'] == 'PASS'
 
 
-def software_plan(evidence, flutter, dart):
+def software_plan(evidence, flutter, dart, expected_version='0.1.0-dev.3', app_build=None):
     app = 'apps/meshchan_app'
     core = 'packages/meshchan_core'
     cli = 'apps/meshctl'
@@ -347,6 +347,9 @@ def software_plan(evidence, flutter, dart):
     plan = []
     def add(name, argv, cwd='.'):
         plan.append({'name': name, 'argv': list(map(str, argv)), 'cwd': str(ROOT / cwd)})
+    if app_build is not None:
+        add('R01-versions', [sys.executable, 'tool/check_product_version.py',
+            '--expected-version', expected_version, '--app-build', app_build])
     add('R02-pub', [flutter, 'pub', 'get', '--enforce-lockfile'])
     add('R02-graph', [dart, 'pub', 'deps', '--json'])
     add('R03-generate', [dart, 'run', 'build_runner', 'build'], core)
@@ -375,9 +378,9 @@ def software_plan(evidence, flutter, dart):
     add('R13-smoke', [sys.executable, 'tool/smoke_cli.py', '--dart', dart,
         '--cli-bundle', evidence / 'cli/bundle', '--observation-bundle', evidence / 'observation/bundle',
         '--datagram-acceptance-bundle', evidence / 'acceptance/bundle',
-        '--evidence-directory', evidence / 'smoke-recordings'])
+        '--evidence-directory', evidence / 'smoke-recordings', '--expected-version', expected_version])
     add('R17-legacy', [sys.executable, 'tool/check_schema_compatibility.py',
-                     '--dart', dart, '--build-directory', evidence])
+                     '--dart', dart, '--build-directory', evidence, '--expected-version', expected_version])
     return plan
 
 
@@ -386,6 +389,8 @@ def main():
     parser.add_argument('--evidence', type=Path, required=True)
     parser.add_argument('--init', action='store_true')
     parser.add_argument('--software', action='store_true')
+    parser.add_argument('--expected-version', default='0.1.0-dev.3')
+    parser.add_argument('--app-build', type=int)
     parser.add_argument('--plan', type=Path, help='JSON array of name/argv/absolute cwd records')
     parser.add_argument('--flutter', type=Path)
     parser.add_argument('--dart', type=Path)
@@ -428,7 +433,7 @@ def main():
             for executable in (args.flutter, args.dart):
                 if not executable.is_absolute() or not executable.is_file():
                     parser.error('SDK executable must be an existing absolute path')
-            plan = software_plan(evidence, args.flutter, args.dart)
+            plan = software_plan(evidence, args.flutter, args.dart, args.expected_version, args.app_build)
         if args.plan:
             plan += json.loads(args.plan.read_text())
         env = dict(os.environ)

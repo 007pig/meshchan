@@ -170,15 +170,20 @@ final class MeshCoreSession {
     required this._transport,
     String appName = 'Meshchan',
     this.requestTimeout = const Duration(seconds: 5),
+    Duration? sendTimeout,
     this.initializationTimeout = const Duration(seconds: 15),
     this.startupDelay = Duration.zero,
     this.maxQueuedCommands = 8,
-  }) : _appStart = encodeAppStart(appName: appName),
+  }) : sendTimeout = sendTimeout ?? requestTimeout,
+       _appStart = encodeAppStart(appName: appName),
        _deviceQuery = encodeDeviceQuery(
          appTargetVersion: meshCoreSessionAppTargetVersion,
        ) {
     if (requestTimeout <= Duration.zero) {
       throw ArgumentError('requestTimeout must be positive.');
+    }
+    if (this.sendTimeout <= Duration.zero) {
+      throw ArgumentError('sendTimeout must be positive.');
     }
     if (initializationTimeout <= Duration.zero) {
       throw ArgumentError('initializationTimeout must be positive.');
@@ -195,6 +200,11 @@ final class MeshCoreSession {
   final Uint8List _appStart;
   final Uint8List _deviceQuery;
   final Duration requestTimeout;
+
+  /// Per-dispatch budget for SEND_CHANNEL_DATA write plus OK.
+  /// Defaults to [requestTimeout]. Initialization and reads retain their own
+  /// request budget. Input and duplicate OKs never renew either timer.
+  final Duration sendTimeout;
   final Duration initializationTimeout;
   final Duration startupDelay;
 
@@ -411,7 +421,10 @@ final class MeshCoreSession {
     if (_state != kind.stage) return;
     assert(_pending == null);
     final pending = _pending = _PendingRequest(++_requestId, kind, command);
-    pending.timer = Timer(requestTimeout, () {
+    final timeout = kind == _RequestKind.sendChannelData
+        ? sendTimeout
+        : requestTimeout;
+    pending.timer = Timer(timeout, () {
       if (_isCurrent(pending)) {
         _fail(_failure(MeshCoreSessionFailureKind.requestTimeout));
       }

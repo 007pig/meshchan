@@ -178,6 +178,23 @@ final class _Server {
 }
 
 void main() {
+  test('explicit delayed-confirmation configuration is finite and opt-in', () {
+    final original = _json(Uri.parse('http://127.0.0.1/'), 'ping');
+    expect(OpenHopPeerConfig(original, 'ping').sendConfirmationTimeout, isNull);
+    for (final invalid in [null, 0, -1, 1, 6, 1.5, '4']) {
+      final json = _json(Uri.parse('http://127.0.0.1/'), 'ping');
+      json['session'] = Map<String, dynamic>.from(json['session'] as Map);
+      (json['session'] as Map)['sendConfirmationSeconds'] = invalid;
+      expect(() => OpenHopPeerConfig(json, 'ping'), throwsFormatException);
+    }
+    (original['session'] as Map)['sendConfirmationSeconds'] = 4;
+    final config = OpenHopPeerConfig(original, 'ping');
+    expect(config.sendConfirmationTimeout, const Duration(seconds: 4));
+    expect(config.requestTimeout, const Duration(seconds: 2));
+    expect(config.taskTimeout, const Duration(seconds: 5));
+    expect(config.options!.responseTimeout, const Duration(seconds: 1));
+  });
+
   test(
     'raw OK facts survive a recorded session failure without a successful exit',
     () async {
@@ -865,6 +882,28 @@ void main() {
       );
       expect(code, 130);
       expect(signals.hasListener, isFalse);
+      final records = out
+          .toString()
+          .trim()
+          .split('\n')
+          .map((line) => jsonDecode(line) as Map)
+          .toList();
+      final read = records.singleWhere(
+        (record) => record['event'] == 'peer_receive_read_written',
+      );
+      expect(read['commandOpcode'], 0x0a);
+      expect(read['additionalReads'], 0);
+      expect(read['remoteMessageProven'], isFalse);
+      expect(DateTime.parse(read['observedAt'] as String).isUtc, isTrue);
+      expect(
+        records.indexOf(read),
+        greaterThan(
+          records.indexWhere(
+            (record) => record['event'] == 'peer_session_ready',
+          ),
+        ),
+      );
+      expect(records.indexOf(read), lessThan(records.length - 1));
       expect(
         jsonDecode(out.toString().trim().split('\n').last)['cleanup']['state'],
         'succeeded',

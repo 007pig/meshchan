@@ -19,7 +19,9 @@ Future<void> main(List<String> arguments) async {
     if (arguments.isEmpty || args.flag('help')) {
       output.out(
         'Development only. Usage: dart run tool/openhop_peer.dart --config <absolute-file> <info|send|listen|ping|respond>\n'
-        'No retries. Consumes the selected Companion inbox. JWT reference required for WS.\n${parser.usage}',
+        'No retries. Consumes the selected Companion inbox. JWT reference required for WS.\n'
+        'Optional session.sendConfirmationSeconds: bounded delayed-OK compatibility; '
+        'PING response timeout starts after local acceptance. Whole-task budget is unchanged.\n${parser.usage}',
       );
       await output.drain();
       return;

@@ -1,4 +1,7 @@
 import 'package:material_ui/material_ui.dart';
+
+import '../widgets/selectable_label.dart';
+
 import 'package:meshchan_core/meshchan_core.dart';
 
 import '../profiles/choice.dart';
@@ -58,7 +61,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
             const Text(
               'PING sends diagnostic data and waits for a response. Responder receives within a finite window and may send PONG. Both save safe diagnostic summaries.',
             ),
-            SelectableText(
+            SelectableLabel(
               'Selected session port: ${m.device.selected ?? 'None'}',
             ),
             if (m.device.stale)
@@ -238,19 +241,19 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                 'Preview ${r.operation.name} • profile ${r.profileId?.value ?? 'none'} • content ${r.content?.length ?? 0} bytes',
               ),
               for (final e in m.form.values(r.parameters).entries)
-                SelectableText('${e.key.name}: ${e.value}'),
+                SelectableLabel('${e.key.name}: ${e.value}'),
               const Text(
                 'Start resolves the captured request again in the worker.',
               ),
             ],
             if (a != null) ...[
-              SelectableText(
+              SelectableLabel(
                 'Captured attempt port (local session context): ${m.attemptPort ?? 'Unavailable'}',
               ),
               DiagnosticOutcomes(value: a),
             ],
             if (m.runtime.snapshot.maintenance case final h?)
-              SelectableText(
+              SelectableLabel(
                 'History maintenance: ${observed(h.latest)}\nUnacknowledged maintenance failures: ${h.failureCount}\nMaintenance error: ${h.failure?.code ?? 'None observed'}',
               ),
           ],

@@ -12,6 +12,36 @@ import 'support/session_test_support.dart';
 const second = Duration(seconds: 1);
 
 void main() {
+  test('send-specific timeout validates without I/O and leaves initialization finite', () {
+    fakeAsync((clock) {
+      final transport = FakeCompanionTransport();
+      for (final invalid in [Duration.zero, const Duration(seconds: -1)]) {
+        expect(
+          () => MeshCoreSession(transport: transport, sendTimeout: invalid),
+          throwsArgumentError,
+        );
+      }
+      expect(transport.calls, isEmpty);
+      final session = MeshCoreSession(
+        transport: transport,
+        requestTimeout: const Duration(seconds: 5),
+        sendTimeout: const Duration(seconds: 60),
+      );
+      final connected = Outcome(session.connect());
+      clock.flushMicrotasks();
+      clock.elapse(const Duration(seconds: 5));
+      expect(
+        (connected.error as MeshCoreSessionFailure).kind,
+        MeshCoreSessionFailureKind.requestTimeout,
+      );
+      expect(session.lastFailure!.commandOpcode, 0x16);
+      expect(transport.sent.map((frame) => frame[0]), [0x16]);
+      Outcome(session.close());
+      clock.flushMicrotasks();
+      expect(clock.pendingTimers, isEmpty);
+    });
+  });
+
   test('commands reject every non-ready state through Futures without I/O', () {
     for (final state in MeshCoreSessionState.values.where(
       (s) => s != MeshCoreSessionState.ready,

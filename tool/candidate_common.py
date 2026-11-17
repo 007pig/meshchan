@@ -44,24 +44,39 @@ def dart_sdk_directory(dart):
     raise ValueError('Cannot locate an installed Dart SDK; use its bin/dart or the standard Flutter dart launcher: ' + str(dart))
 
 
-def versions(root=ROOT):
+def versions(root=ROOT, expected_version=TARGET_VERSION, *, app_build=None):
+    """Validate independent manifest facts; the default remains the 1C contract."""
+    if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', expected_version):
+        raise ValueError('Invalid expected product version')
+    if app_build is not None and (type(app_build) is not int or app_build <= 0):
+        raise ValueError('Expected app build must be a positive integer')
     result = {}
     texts = {}
-    for member in MEMBERS:
+    members = MEMBERS + (('apps/meshchan_app',) if app_build is not None else ())
+    for member in members:
         value = (root / member / 'pubspec.yaml').read_text()
         name = re.search(r'^name: (\S+)$', value, re.M)[1]
         version = re.search(r'^version: (\S+)$', value, re.M)[1]
-        if version != TARGET_VERSION:
+        expected = expected_version + (f'+{app_build}' if member == 'apps/meshchan_app' else '')
+        if version != expected:
             raise ValueError('Member version mismatch: ' + name)
         result[name] = version
         texts[name] = value
-    for owner, dependency in [('meshchan_core', 'meshcore_link'),
-                              ('meshctl', 'meshchan_core'), ('meshctl', 'meshcore_link')]:
-        if re.search(r'^  ' + dependency + r': (\S+)$', texts[owner], re.M)[1] != '^' + TARGET_VERSION:
+    constraints = [('meshchan_core', 'meshcore_link'),
+                   ('meshctl', 'meshchan_core'), ('meshctl', 'meshcore_link')]
+    if app_build is not None:
+        constraints += [('meshchan_app', 'meshchan_core'), ('meshchan_app', 'meshcore_link')]
+    for owner, dependency in constraints:
+        if re.search(r'^  ' + dependency + r': (\S+)$', texts[owner], re.M)[1] != '^' + expected_version:
             raise ValueError('Internal constraint mismatch: ' + owner)
     constant = (root / 'apps/meshctl/lib/src/version.dart').read_text()
-    if re.search(r"const String meshctlVersion = '([^']+)';", constant)[1] != TARGET_VERSION:
+    if re.search(r"const String meshctlVersion = '([^']+)';", constant)[1] != expected_version:
         raise ValueError('CLI constant version mismatch')
+    if app_build is not None:
+        fallback = (root / 'apps/meshchan_app/lib/runtime/build_version.dart').read_text()
+        for name, value in [('appBuildName', expected_version), ('appBuildNumber', str(app_build))]:
+            if re.search(r"const String " + name + r" = '([^']+)';", fallback)[1] != value:
+                raise ValueError('App fallback version mismatch: ' + name)
     return result
 
 

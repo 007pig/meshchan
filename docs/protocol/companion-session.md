@@ -36,6 +36,15 @@ timeouts, a nonnegative startup delay, and nonnegative queue capacity. Invalid
 local arguments throw `ArgumentError` or `RangeError` without I/O.
 Construction, getters, and event subscriptions never open the transport.
 
+An optional positive `sendTimeout` separates SEND_CHANNEL_DATA write/OK waiting
+from the ordinary `requestTimeout`. It defaults to `requestTimeout`, preserving
+existing callers. Its timer starts at command dispatch, is never renewed by
+notifications/duplicates, and retains the sole FIFO slot until OK/write settle
+or a terminal event occurs. Initialization and GET_MSG retain `requestTimeout`.
+Callers still need a finite enclosing task budget for FIFO waiting and the
+operation as a whole. Close immediately invalidates pending/queued operations;
+no timeout or close automatically resends or retracts remote work.
+
 The session exclusively owns its transport's subscription, open, send, and close
 operations. The caller must not subscribe to `transport.frames`, send alongside
 the session, or reuse a transport from an earlier attempt. Concurrent, repeated,

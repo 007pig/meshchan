@@ -1,5 +1,12 @@
 # Hardware-free testing
 
+The source-only openHop peer has explicit bounded delayed-OK compatibility via
+`session.sendConfirmationSeconds`; it does not change USB defaults or require
+remote service changes. See the [client validation](validation/phase-1d11-delayed-ok-client.md)
+for clock semantics, member counts, localhost TCP/native checks and remaining
+RF work. Existing CLI/link suites discover these regressions without a
+hardware/private-endpoint CI job.
+
 The historical Phase 1 / 1A / Step 8 audit is retained below. Phase 1B.8 adds
 datagram serial-byte acceptance shared by ordinary tests and a source/AOT
 development probe, without changing product behavior.
@@ -8,7 +15,40 @@ stable Python 3.15 or newer for local Python scripts, as described in the
 [local toolchain selection](development.md#local-python-toolchain). Python is a
 development tool only; the distributed CLI does not require it.
 
+UI tests follow [AGENTS.md](../AGENTS.md): use the existing macOS VM whenever
+real USB/serial is not needed, including offline Save/Quit, Profiles/Settings,
+History/export and input methods. Host Computer Use is only for UI requiring
+real USB/serial. A VM blocker does not silently authorize host GUI fallback.
+The [build 5 completion](validation/phase-1d11-rf-matrix-completion.md) separates
+host hardware, guest offline UI and retained failed/unverified variants.
+
 ## Four-member sequential regression (1D.10)
+
+For the current beta candidate, explicitly validate the release decision and
+pass it through the existing runner (historical 1C defaults remain dev.3):
+
+```sh
+/opt/homebrew/bin/python3 tool/check_product_version.py --expected-version 0.1.0-beta.1 --app-build 5
+/opt/homebrew/bin/python3 tool/regression_1d10.py \
+  --evidence /private/tmp/meshchan-1d11-NEW --init --software \
+  --flutter /opt/homebrew/share/flutter/bin/flutter \
+  --dart /opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart \
+  --expected-version 0.1.0-beta.1 --app-build 5
+```
+
+`--app-build` adds the four-member manifest, five internal constraints, CLI
+constant and direct-Dart app fallback check. `--expected-version` reaches smoke,
+AOT recording, nonempty History/export and the current schema consumer/report.
+Direct smoke and schema-compatibility invocations also need this explicit beta
+argument. The dev.2 producer remains explicitly versioned at dev.2, and old
+three-member candidate/archive tools keep their original defaults. See
+[the beta record](validation/phase-1d11-hardware-beta.md) for actual results.
+Software acceptance does not establish GUI hardware acceptance.
+
+The [build 5 GUI/delayed-OK continuation](validation/phase-1d11-build5-gui-delay.md)
+records a fresh complete Release and native gates. Its U03 USB initialization
+failure stopped RF; neither the software baseline nor B's actual OK establishes
+an A/B round trip. Historical build 4 counts retain their original artifact cut.
 
 Use [the 1D.10 record](validation/phase-1d10-regression-compatibility.md) for the
 four-member ledger, fresh CLI/macOS bundle commands, historical dev.2 schema-1
@@ -1430,3 +1470,64 @@ Release. Inspect `-showBuildSettings` before isolated XCTest and retain its
 xcresult externally. This is the same product entry and project, with test
 locations isolated rather than a new product mode. Exact executed commands and
 artifact boundaries belong in the [1D.9 record](validation/phase-1d9-desktop-behavior.md).
+
+## Source-only USB initialization trace
+
+`packages/meshcore_link/tool/initialization_trace.dart` is a finite macOS
+development diagnostic, excluded from the product CLI/app. Run its inert help
+from the link member using the installed Flutter SDK's bundled Dart:
+
+```sh
+dart run tool/initialization_trace.dart --help
+```
+
+It requires exact `--port /dev/cu.EXPLICIT --execute` arguments before any native
+object is constructed. Actual execution requires current explicit device/attempt
+authorization and an unoccupied selected port; help or historical authorization
+does not grant a new attempt. Build a complete separate native bundle before
+the finite run, preserving native assets and command-local Apple Clang setup.
+It uses fixed request/init/write budgets of 15/30/2 seconds and zero startup
+delay, permits only DEVICE_QUERY followed by APP_START after its complete reply,
+and closes after ready or the first failure. It performs no inbox reads,
+application sends, reconnect, line toggle, repair query or firmware change.
+
+The existing internal link construction seam decorates one actual native reader
+and records safe write/RX structure in memory. Output follows awaited cleanup;
+native events do not expose raw bytes or device display fields. Exit 0 requires
+ready and confirmed cleanup; 69 retains failure, 64 rejects invocation. A source
+trace can affect scheduling and cannot substitute for current GUI acceptance.
+`initialization_trace_test.dart` is discovered by the ordinary hardware-free link
+suite. CI does not invoke a valid hardware execution. See the
+[actual bounded trace and applicability record](validation/phase-1d11-usb-initialization-investigation.md#one-authorized-native-traced-initialization).
+
+For a separately authorized independent macOS OS-read control,
+`tool/trace_usb_initialization.py --help` is inert. Its exact entry is
+`--port /dev/cu.EXPLICIT --wire-plan /absolute/owned/plan.json --execute`.
+Generate the public command plan with the inert link-member
+`dart run tool/initialization_wire_plan.dart`, retain its complete emission log,
+and validate the single JSON object before execution. Only the fixed target-3
+DEVICE_QUERY and Meshchan APP_START bytes are accepted. This source tool uses
+one exclusive nonblocking fd, raw 115200/8N1/no-flow, fixed 15/30/2-second budgets
+and no startup sleep; it never reads the Companion inbox, repairs a timeout or
+retries. Its deadline FIONREAD/select/final read use the same fd and do not accept
+late bytes as success. PASS is complete selected-board reply structure plus close,
+not MeshCoreSession/GUI acceptance. Focused tests are part of ordinary Python
+discovery, and no actual device execution belongs in CI. The
+[ten-attempt comparison](validation/phase-1d11-usb-posix-controls.md) contains
+executed results and the limits of the independent counter.
+
+The native source diagnostic also has an explicit final `--completion-probe`
+flag for a separately authorized [compatibility candidate](validation/phase-1d11-usb-completion-candidate.md).
+It changes only the source-tool plan to QUERY, QUERY, APP_START, QUERY (maximum
+four frames/34 bytes), requires complete extra replies and retains original
+deadlines. It is not a product default, automatic repair/retry or accepted
+hardware fix. Candidate regressions are hardware-free; valid execution consumes
+a fresh explicitly authorized device attempt.
+
+At the operator's subsequent request, app build 4 integrates that finite
+handshake in its production USB worker factories while the diagnostic flag
+remains source-only. Ten app regressions cover bounded completion, incomplete
+extra replies, original deadlines, close/cancel and ordinary command passthrough.
+The [app integration record](validation/phase-1d11-app-usb-compatibility.md)
+contains the fresh 262-test app suite, relevant process/native gates and actual
+limited GUI hardware cases; independent diagnostic passes are not GUI passes.

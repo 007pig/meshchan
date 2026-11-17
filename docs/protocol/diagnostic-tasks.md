@@ -81,6 +81,16 @@ PONG acceptance. Timer delivery still depends on event-loop scheduling.
 | Responder listen | Ready and enabling reception, through admission stop; one previously accepted PONG may settle afterward. |
 | Cache TTL | First atomic request acceptance, two minutes, without refresh. |
 
+PING optionally accepts `responseTimeoutFromAcceptance: true` for an explicitly
+configured deferred-send peer. Only the remote-response clock changes: it starts
+after local write plus actual OK, unless an exact PONG already retired it.
+Correlation and RTT still start before the high-level send; an early PONG
+cannot hide missing/rejected acceptance. `session.sendTimeout` bounds that
+command, and the original whole-task deadline still wins. The default remains
+false; product USB/profile/recording callers keep their original policy. The
+source-only openHop peer enables this mode only when its explicit finite send
+confirmation budget is present. No schema or wire format changes.
+
 Callbacks check absolute elapsed deadlines as well as timers. At a deadline or
 later, new corresponding observations/admissions are rejected. Earlier applicable
 upper-layer deadlines win; equal deadlines favor the overall budget. Input,

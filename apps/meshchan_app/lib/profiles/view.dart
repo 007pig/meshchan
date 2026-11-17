@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
+
+import '../widgets/selectable_label.dart';
+
 import 'package:flutter/services.dart';
 import 'package:meshchan_core/meshchan_core.dart';
 
@@ -552,7 +555,7 @@ class _ProfilesViewState extends State<ProfilesView> {
           'Resolved ${r.operation.name} • profile ${r.profileId?.value ?? 'none'} • content ${r.content?.length ?? 0} bytes',
         ),
         for (final entry in p.form.values(r.parameters).entries)
-          SelectableText('${entry.key.name}: ${entry.value}'),
+          SelectableLabel('${entry.key.name}: ${entry.value}'),
       ],
     ],
   );

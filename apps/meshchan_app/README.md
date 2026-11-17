@@ -8,6 +8,14 @@ Navigation, rebuilds, focus and minimization do not reopen storage or recover ag
 The public core packages and CLI remain pure Dart. The application uses the same
 root Pub lockfile; do not resolve a separate member lockfile.
 
+The complete `0.1.0-beta.1+5` Release has
+[local finite beta acceptance with documented limits](../../docs/validation/phase-1d11-rf-matrix-completion.md).
+Real USB/RF, physical fault/recovery, Cancel and active Quit were tested on the
+host; remaining hardware-free UI/export ran in the existing macOS VM using the
+same inventoried app. Follow `AGENTS.md`: VM first for UI without real USB,
+host Computer Use only for real USB/serial steps. Intermittent initialization
+and the retained input/timing limitations are not hidden by that acceptance.
+
 ## Runtime startup and shutdown (1D.3)
 
 Normal startup resolves Foundation's CLI compatibility target,
@@ -196,8 +204,8 @@ verify that native input changed the product state and committed exact text.
 
 ## Build and run
 
-Use the existing Flutter SDK (locally `/opt/homebrew/share/flutter`, 3.47.9 with
-bundled Dart 3.13.7), with Apple Clang selected for native hooks:
+Use the existing Flutter SDK (locally `/opt/homebrew/share/flutter`, 3.50.0 with
+bundled Dart 3.14.0), with Apple Clang selected for native hooks:
 
 ```bash
 export PATH="/opt/homebrew/share/flutter/bin:/usr/bin:$PATH"
@@ -206,22 +214,42 @@ flutter pub get --enforce-lockfile
 flutter analyze --no-pub --fatal-infos
 (cd apps/meshchan_app && flutter test --no-pub)
 cd apps/meshchan_app
-flutter build macos --debug --no-pub
+MESHCHAN_WORKSPACE="$PWD/macos/Runner.xcworkspace"
+MESHCHAN_BUILD_ROOT="$(mktemp -d /private/tmp/meshchan-build.XXXXXX)"
+flutter build macos --debug --no-pub --config-only
 xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath build/macos -parallel-testing-enabled NO test
-flutter build macos --release --no-pub
-codesign --verify --deep --strict --all-architectures build/macos/Build/Products/Release/Meshchan.app
+  -derivedDataPath "$MESHCHAN_BUILD_ROOT/Derived" -parallel-testing-enabled NO build-for-testing
+# Inspect TARGET_BUILD_DIR, TEST_HOST and the generated .xctestrun first.
+# Confirm MESHCHAN_TEST_HOST=disabled-owner-v1 before engine bootstrap.
+(cd "$MESHCHAN_BUILD_ROOT" && xcodebuild -workspace "$MESHCHAN_WORKSPACE" \
+  -scheme Runner -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$MESHCHAN_BUILD_ROOT/Derived" -parallel-testing-enabled NO test-without-building)
+flutter build macos --release --no-pub --config-only
+xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
+  -configuration Release -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$MESHCHAN_BUILD_ROOT/Derived" -parallel-testing-enabled NO build
+codesign --verify --deep --strict --all-architectures "$MESHCHAN_BUILD_ROOT/Derived/Build/Products/Release/Meshchan.app"
 MESHCHAN_DEV_DIRECTORY="$(mktemp -d /private/tmp/meshchan-app.XXXXXX)"
-open -n build/macos/Build/Products/Release/Meshchan.app \
+open -n "$MESHCHAN_BUILD_ROOT/Derived/Build/Products/Release/Meshchan.app" \
   --args --data-dir="$MESHCHAN_DEV_DIRECTORY"
 ```
 
 Only macOS platform files are generated. The minimum target is macOS 12.0.
 The product is `Meshchan`, Bundle identifier `org.meshchan.meshchan`. The package
-version is `0.1.0-dev.3+1`; Flutter maps its numeric macOS short version to
-`0.1.0.3` and its build number to `1`. This mapping is a development build, not a
-public release. Development signing is ad hoc, with no Developer ID/notarization.
+version is `0.1.0-beta.1+5`. Check the actual built Info.plist and retained
+build inputs rather than inferring Apple's numeric version from a prerelease.
+The previous build 3 observed short version was `0.1.0.1`, build `3`; its Dart
+build defines retained `0.1.0-beta.1` and `3`. Build 4 was independently observed
+as short version `0.1.0.1`, build `4`, with Flutter definitions `0.1.0-beta.1` / `4`.
+The fresh build 5 was independently checked as short version `0.1.0.1`, build
+`5`, with Flutter definitions `0.1.0-beta.1` / `5`. Its
+[GUI/delayed-OK continuation](../../docs/validation/phase-1d11-build5-gui-delay.md)
+retains a successful finite Check and a subsequent recording initialization
+failure; it does not establish reliable USB initialization or an RF round trip.
+The [beta record](../../docs/validation/phase-1d11-hardware-beta.md) separates
+candidate preparation from acceptance. Development signing is ad hoc, with no
+Developer ID/notarization.
 
 A local incremental Release build once failed the outer bundle's nested-code
 seal while its individual frameworks still verified. Preserve a failing generated
@@ -464,7 +492,17 @@ required. Preview resolves saved parameters without accessing hardware. Click
 **Start and record** to capture the request and selected path; the worker resolves
 again, freezes the effective parameters and calls public `CoreStorage.record()`.
 The core commits registration before invoking a fresh lazy transport factory.
-The actual app/build version is recorded as `0.1.0-dev.3+1` by default.
+The current candidate records `0.1.0-beta.1+5`, using Flutter build defines or
+the independently manifest-validated fallback for direct Dart processes.
+Historical runs retain their original app/build version.
+
+Build 4 applies a finite USB initialization compatibility sequence in the worker:
+DEVICE_QUERY, DEVICE_QUERY, APP_START, DEVICE_QUERY. It requires all extra
+DEVICE_INFO replies as well as the original SELF_INFO, uses one receive stream
+and preserves the original request/init deadlines. After initialization normal
+commands pass through once without additional queries. This is not an automatic
+reconnect/RF retry or permission to operate a hinted device. Actual current
+hardware results and limitations are in the beta validation record.
 
 Cancel requests cancellation of that attempt only. It does not pause offline
 editing, retract transmission or release the device gate. Navigation retains the

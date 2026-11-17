@@ -183,3 +183,21 @@ validated DEVICE_QUERY/DEVICE_INFO and APP_START/SELF_INFO on the selected port,
 without adding a session layer or changing this read-only example.
 See the dated [development checks](../development.md#serial-transport-step-4) and
 [hardware follow-up](../hardware-validation.md#authorized-read-only-follow-up-on-november-9-2026).
+
+## Device USB completion investigation
+
+The [1D.11 investigation](../validation/phase-1d11-usb-initialization-investigation.md)
+separates native accepted writes, partial input, complete frames and actual
+cleanup. ESP32 firmware-side USB IN endpoint/ZLP changes cannot be implemented
+by substituting a host serial flush or appending protocol bytes. The reviewed
+Offband patch is not adopted as a verified fix for the current Heltec V4.3
+initialization issue. The source-only trace lives inside this member's tooling;
+it adds no public transport option, reader, reset, retry or production deadline.
+
+The subsequently requested [app build 4 compatibility integration](../validation/phase-1d11-app-usb-compatibility.md)
+uses public CompanionTransport composition above this unchanged serial
+implementation. It sends a fixed additional DEVICE_QUERY after each original
+initialization command, requires complete extra replies and leaves ordinary
+commands unchanged. This app-local handshake is not a firmware ZLP patch, host
+flush, second reader or new default library/CLI behavior. Current GUI successes
+and failed initialization attempts remain separately recorded.

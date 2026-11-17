@@ -8,6 +8,7 @@ final class MeshchanPingTask extends _DiagnosticTask<DiagnosticPingResult> {
     required DiagnosticTaskOptions options,
     required Uint8List content,
     required this.responseTimeout,
+    this.responseTimeoutFromAcceptance = false,
     Uint8List Function()? nonceFactory,
     Duration Function()? elapsed,
   }) : _content = Uint8List.fromList(content).asUnmodifiableView(),
@@ -16,6 +17,11 @@ final class MeshchanPingTask extends _DiagnosticTask<DiagnosticPingResult> {
 
   final Uint8List _content;
   final Duration responseTimeout;
+
+  /// Opt-in for peers that defer the sending command itself. The response
+  /// budget starts once local write and OK settle. Whole-task and session send
+  /// budgets still bound this wait. RTT always starts before the send call.
+  final bool responseTimeoutFromAcceptance;
   final Uint8List Function() _nonceFactory;
   late MeshchanDiagnosticMessage _ping;
   Timer? _responseTimer;
@@ -74,13 +80,20 @@ final class MeshchanPingTask extends _DiagnosticTask<DiagnosticPingResult> {
       // Active correlation context and time origin precede the high-level send
       // in this synchronous segment, including FIFO waiting in application RTT.
       _sendOrigin = _now;
-      _responseDeadline = _sendOrigin! + responseTimeout;
-      _responseTimer = Timer(_timerDelay(responseTimeout), () => _check());
+      if (!responseTimeoutFromAcceptance) _startResponseTimer(_sendOrigin!);
       _send(_ping, () {
         _stage = DiagnosticTaskStage.waiting;
+        if (responseTimeoutFromAcceptance && _firstPong == null) {
+          _startResponseTimer(_now);
+        }
         _maybeSucceed();
       });
     });
+  }
+
+  void _startResponseTimer(Duration origin) {
+    _responseDeadline = origin + responseTimeout;
+    _responseTimer = Timer(_timerDelay(responseTimeout), () => _check());
   }
 
   @override

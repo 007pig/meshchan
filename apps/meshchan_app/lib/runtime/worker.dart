@@ -5,9 +5,11 @@ import 'dart:isolate';
 import 'package:meshchan_core/meshchan_core.dart';
 import 'package:meshcore_link/meshcore_link.dart';
 
+import 'build_version.dart';
 import 'protocol.dart';
 import 'recording_adapter.dart';
 import 'device_check.dart';
+import 'usb_initialization_transport.dart';
 
 /// Production entry deliberately captures no host resources or closures.
 void runtimeWorkerEntry(WorkerBootstrap bootstrap) {
@@ -53,11 +55,10 @@ final class WorkerDispatcher {
     CompanionTransport Function(String)? createCheckTransport,
     CompanionTransport Function(String)? createDiagnosticTransport,
   }) : _createDiagnosticTransport =
-           createDiagnosticTransport ??
-           ((path) => SerialTransport(portPath: path)),
+           createDiagnosticTransport ?? createUsbCompanionTransport,
        _enumeratePorts = enumeratePorts ?? SerialPorts().listPorts,
        _createCheckTransport =
-           createCheckTransport ?? ((path) => SerialTransport(portPath: path)),
+           createCheckTransport ?? createUsbCompanionTransport,
        _openStorage =
            openStorage ??
            ((directory) => CoreStorage.open(dataDirectory: directory));
@@ -944,8 +945,7 @@ final class WorkerDispatcher {
       if (parameters == null || attempt.canceled || _stop) return;
       final operation = _storage!.record(
         parameters: parameters,
-        appVersion:
-            '${const String.fromEnvironment('FLUTTER_BUILD_NAME', defaultValue: '0.1.0-dev.3')}+${const String.fromEnvironment('FLUTTER_BUILD_NUMBER', defaultValue: '1')}',
+        appVersion: appVersion,
         createTransport: createTransport,
       );
       obtainedOperation = true;

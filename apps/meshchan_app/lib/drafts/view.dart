@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
+
+import '../widgets/selectable_label.dart';
+
 import 'package:flutter/services.dart';
 
 import 'editor.dart';
@@ -266,7 +269,7 @@ class DraftsView extends StatelessWidget {
                 content: SizedBox(
                   width: 480,
                   child: SingleChildScrollView(
-                    child: SelectableText(
+                    child: SelectableLabel(
                       '${stored.title}\n\n${stored.body}\n\nReload replaces your local text and adopts this revision.',
                     ),
                   ),

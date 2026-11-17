@@ -4,6 +4,8 @@ import 'dart:ui' show AppExitResponse;
 
 import 'package:material_ui/material_ui.dart';
 
+import 'widgets/selectable_label.dart';
+
 import 'probe_request.dart';
 import 'desktop/commands.dart';
 import 'profiles/navigation.dart';
@@ -465,7 +467,7 @@ class _ProbeViewState extends State<_ProbeView> {
     appBar: AppBar(title: const Text('Developer platform verification')),
     body: SingleChildScrollView(
       padding: const EdgeInsets.all(24),
-      child: SelectableText(
+      child: SelectableLabel(
         result == null
             ? 'Running the finite fixture probe…'
             : const JsonEncoder.withIndent('  ').convert(result),

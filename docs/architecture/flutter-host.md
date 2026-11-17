@@ -1198,3 +1198,97 @@ These results do not widen the ownership ABI
 allowlist, implement mobile bootstrap/BLE, or change the macOS arm64 + USB
 product boundary. The sourced BLE matrix is future design input. 1D.11 still
 owns host hardware/beta acceptance, and 1E owns distribution.
+
+## 1D.11 beta preparation and acceptance boundary
+
+The current candidate is `0.1.0-beta.1+5` (link/core/CLI `0.1.0-beta.1`).
+The [November 17 completion](../validation/phase-1d11-rf-matrix-completion.md)
+closes local 1D.11 acceptance with documented limits: current GUI exact PONG
+in both directions, physical fault/explicit recovery, expected timeout,
+receiving-stage Cancel and active native Quit. Twelve settled records and
+exact committed text/Settings/preset/one-page safe export were verified across
+normal close and independent reopen. The operator routes hardware-free UI to
+the existing VM; host Computer Use is only for real USB/serial UI. Whole-app
+inventory correspondence binds the guest offline checks to this Release.
+Intermittent initialization, dispatch-margin and input/timing observations remain
+explicit; no reliability guarantee, new transport or distribution scope follows.
+
+The [beta validation record](../validation/phase-1d11-hardware-beta.md) separates
+fresh software/native results, historical evidence and the pending host USB/RF
+matrix. A manifest-validated app fallback supplies the version only for direct
+Dart entry points; Flutter build defines remain authoritative in built apps.
+Database/summary/CLI JSON/wire formats and ownership/cleanup contracts do not
+change with the product label.
+
+The finite hardware plan requires explicit current USB/peer selection, unique
+clients, shared-inbox acceptance and bounded application-send attempts. Live
+recording progress does not prove session readiness. Physical unplug needs a
+correlated peer PONG and the same still-active GUI run; Cancel/active Quit use
+post-result receiving-stage evidence, actual cleanup and normal process exit.
+No second reader, automatic reconnect, retry or private session API is added.
+Candidate preparation alone does not complete 1D.11. 1E retains signing,
+notarization, installer and public-distribution work.
+
+At the operator's explicit request, build 4 integrates the bounded USB
+completion-query handshake in the app's worker transport factory. Explicit
+finite Check and recording sessions send QUERY, QUERY, APP_START, QUERY during
+initialization. All original and extra replies must complete within the existing
+request/init budgets; APP_START is sent once. The wrapper maps the one owned
+receive stream and forwards subsequent commands without further probes. Closing
+settles a pending handshake and prevents a later probe write. Offline startup
+does not construct/open this transport. The core/link APIs, product CLI and
+storage/device gates retain their contracts. The prior source-only comparison
+established feasibility, not a reliability rate or a GUI acceptance result;
+build 4 requires its own complete artifact and real hardware evidence.
+
+The latest [peer-stop/Unicode continuation](../validation/phase-1d11-peer-stop-unicode.md)
+retains the exact same build 4 artifact. A failed development-peer PONG attempt
+stopped RF at cumulative 2/8 sends before A Start; no physical action followed.
+Actual manually composed Chinese/emoji/multiline GUI Save and independent/new
+GUI reopen subsequently passed offline. Fresh per-case label isolation is
+prepared without changing product correlation, wire format or send behavior;
+it does not prove the peer's missing OK repaired or complete the RF matrix.
+
+The separately authorized [v2 hardware continuation](../validation/phase-1d11-v2-hardware-continuation.md)
+executed the new labels with unchanged products/finite parameters. U02's guarded
+GUI Start was not admitted in time. In U03, A responded once with local OK, but
+B failed responseTimeout while its command still lacked OK and no exact PONG
+was established. Normal GUI Cancel preserved that accepted response, settled
+cleanup/saves and History; six-row safe export and independent reopen passed.
+RF stopped, no physical action followed, and 1D.11 remains incomplete. The
+cumulative send ceiling was removed; finite tasks and abnormal-stop rules remain.
+
+The later [B TCP acknowledgment investigation](../validation/phase-1d11-openhop-ok-investigation.md)
+reproduced server duty-cycle deferral beyond the finite client budget while
+standard OK worked for standalone sends. The operator explicitly excludes
+modifying openHop; the earlier server proposal was withdrawn and never
+deployed. Meshchan's source-only peer instead has an explicit finite delayed-OK
+policy: separate send confirmation from ordinary requests, start the PONG
+window at actual local acceptance, and preserve the original whole-task
+deadline and RTT origin. Defaults for USB/recording remain unchanged. No
+second reader, fallback, retry or invented acceptance is introduced. The
+[client validation](../validation/phase-1d11-delayed-ok-client.md) separates
+software/native local checks from pending real RF and the frozen build 4 cut.
+
+
+The earlier [build 5 continuation](../validation/phase-1d11-build5-gui-delay.md) rebuilt
+the complete current client source and kept the original finite USB parameters.
+A GUI Check passed, but the subsequent U03 recording failed initialization at
+DEVICE_QUERY before any receive or response. B obtained actual OK with the new
+finite send-confirmation policy, then waited for PONG and timed out. RF stopped;
+no physical action occurred. The successful Check is a closed historical
+snapshot, not proof of readiness for the later recording. Seven-row safe export,
+normal Quit and independent exact persisted-data checks passed. Required
+GUI round trips and physical recovery remained incomplete at that cutoff; its
+separate second GUI reopen was then pending after a Computer Use lookup error.
+
+The initial build 2 candidate crashed during an accessibility-observed finite
+Check. A resource-free native reproduction isolated live readonly display text;
+SelectionArea/Text now preserves selectable static labels without involving an
+editable input client. Real editor fields, accessibility and cleanup contracts
+remain enabled. The beta record retains the old crash and all artifact cuts;
+build 3's affected app/process/native gates and actual finite Check passed.
+At that repair cut, required GUI RF, active Cancel/Quit, physical actions and the
+full user path remained incomplete. A separately observed synthetic-keyboard redispatch
+loop is retained as an automation/input-path limitation; it does not establish
+ordinary physical keyboard reproduction or justify changing SDK/accessibility.

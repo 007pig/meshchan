@@ -107,12 +107,14 @@ final class Harness {
     this.clock, {
     int slots = 8,
     Duration commandTimeout = const Duration(seconds: 5),
+    Duration? sendTimeout,
   }) {
     _virtualClocks.add(clock);
     session = MeshCoreSession(
       transport: transport,
       maxQueuedCommands: slots,
       requestTimeout: commandTimeout,
+      sendTimeout: sendTimeout,
     );
   }
   final FakeAsync clock;
@@ -123,10 +125,12 @@ final class Harness {
     Duration response = second,
     Uint8List Function()? nonce,
     Uint8List? content,
+    bool responseFromAcceptance = false,
   }) => MeshchanPingTask(
     session: session,
     options: config ?? options(),
     responseTimeout: response,
+    responseTimeoutFromAcceptance: responseFromAcceptance,
     content: content ?? Uint8List.fromList([0, 128, 255]),
     elapsed: () => clock.elapsed,
     nonceFactory: nonce ?? () => Uint8List(16),
@@ -164,6 +168,213 @@ final class Harness {
 }
 
 void main() {
+  test('delayed acceptance keeps one send and a full later PONG window', () {
+    fakeAsync((clock) {
+      final h = Harness(
+        clock,
+        commandTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 60),
+      );
+      final task = h.ping(
+        config: options(timeout: const Duration(seconds: 90)),
+        response: const Duration(seconds: 15),
+        responseFromAcceptance: true,
+      );
+      final done = Outcome(task.done);
+      final cleanup = Outcome(task.cleanupDone);
+      Outcome(task.start());
+      h.ready();
+      h.empty();
+      clock.elapse(const Duration(milliseconds: 19100));
+      expect(done.done, isFalse);
+      h.ok();
+      clock.elapse(const Duration(seconds: 14));
+      h.transport.receive(frame(message()));
+      clock.flushMicrotasks();
+      expect(done.value!.roundTripSucceeded, isTrue);
+      expect(done.value!.send.localOkObserved, isTrue);
+      expect(done.value!.applicationRtt, const Duration(milliseconds: 33100));
+      expect(h.transport.sent.map((frame) => frame[0]), [0x16, 1, 0x0a, 0x3e]);
+      expect(h.transport.listenCount, 1);
+      cleanupIs(cleanup, DiagnosticCleanupState.succeeded);
+    });
+  });
+
+  test(
+    'delayed acceptance without PONG expires in waiting after its full window',
+    () {
+      fakeAsync((clock) {
+        final h = Harness(clock, sendTimeout: const Duration(seconds: 60));
+        final task = h.ping(
+          config: options(timeout: const Duration(seconds: 90)),
+          response: const Duration(seconds: 15),
+          responseFromAcceptance: true,
+        );
+        final done = Outcome(task.done);
+        Outcome(task.start());
+        h.ready();
+        h.empty();
+        clock.elapse(const Duration(milliseconds: 19100));
+        h.ok();
+        clock.elapse(const Duration(milliseconds: 14999));
+        expect(done.done, isFalse);
+        clock.elapse(const Duration(milliseconds: 1));
+        expect(done.value!.reason, DiagnosticTaskReason.responseTimeout);
+        expect(done.value!.stage, DiagnosticTaskStage.waiting);
+        expect(done.value!.send.deviceAcceptanceConfirmed, isTrue);
+        expect(done.value!.matchingPongObserved, isFalse);
+      });
+    },
+  );
+
+  for (final ending in [
+    'ok',
+    'error',
+    'cancel',
+    'taskDeadline',
+    'sendDeadline',
+  ]) {
+    test('delayed acceptance retains early PONG facts through $ending', () {
+      fakeAsync((clock) {
+        final h = Harness(clock, sendTimeout: const Duration(seconds: 45));
+        final task = h.ping(
+          config: options(
+            timeout: Duration(seconds: ending == 'taskDeadline' ? 30 : 90),
+          ),
+          response: const Duration(seconds: 15),
+          responseFromAcceptance: true,
+        );
+        final done = Outcome(task.done);
+        final cleanup = Outcome(task.cleanupDone);
+        Outcome(task.start());
+        h.ready();
+        h.empty();
+        clock.elapse(const Duration(seconds: 20));
+        h.transport.receive(frame(message()));
+        clock.flushMicrotasks();
+        expect(done.done, isFalse);
+        if (ending == 'ok') h.ok();
+        if (ending == 'error') {
+          h.transport.receive([1, 3]);
+          clock.flushMicrotasks();
+        }
+        if (ending == 'cancel') Outcome(task.cancel());
+        if (ending == 'taskDeadline') clock.elapse(const Duration(seconds: 10));
+        if (ending == 'sendDeadline') clock.elapse(const Duration(seconds: 25));
+        clock.flushMicrotasks();
+        final result = done.value!;
+        expect(result.matchingPongObserved, isTrue);
+        expect(result.firstMatchingPongElapsed, const Duration(seconds: 20));
+        expect(result.roundTripSucceeded, ending == 'ok');
+        expect(result.send.deviceAcceptanceConfirmed, ending == 'ok');
+        expect(
+          result.applicationRtt,
+          ending == 'ok' ? const Duration(seconds: 20) : null,
+        );
+        if (ending == 'error') {
+          expect(
+            result.sessionFailure!.kind,
+            MeshCoreSessionFailureKind.deviceRejected,
+          );
+        }
+        if (ending == 'sendDeadline') {
+          expect(
+            result.sessionFailure!.kind,
+            MeshCoreSessionFailureKind.requestTimeout,
+          );
+        }
+        if (ending == 'cancel' || ending == 'taskDeadline') {
+          expect(
+            result.reason,
+            ending == 'cancel'
+                ? DiagnosticTaskReason.canceled
+                : DiagnosticTaskReason.taskTimeout,
+          );
+          expect(result.send.pendingAtTermination, isTrue);
+        }
+        h.transport.receive([0]);
+        clock.flushMicrotasks();
+        expect(done.completionCount, 1);
+        expect(
+          h.transport.sent.where((frame) => frame[0] == 0x3e),
+          hasLength(1),
+        );
+        cleanupIs(cleanup, DiagnosticCleanupState.succeeded);
+        expect(clock.pendingTimers, isEmpty);
+      });
+    });
+  }
+
+  test('delayed acceptance does not extend an initial consuming read', () {
+    fakeAsync((clock) {
+      final h = Harness(clock, sendTimeout: const Duration(seconds: 60));
+      final task = h.ping(responseFromAcceptance: true);
+      final done = Outcome(task.done);
+      Outcome(task.start());
+      h.ready();
+      clock.elapse(const Duration(seconds: 5));
+      expect(
+        done.value!.sessionFailure!.kind,
+        MeshCoreSessionFailureKind.requestTimeout,
+      );
+      expect(done.value!.sessionFailure!.commandOpcode, 0x0a);
+      expect(done.value!.send.dispatched, isFalse);
+      expect(h.transport.sent.map((frame) => frame[0]), [0x16, 1, 0x0a]);
+    });
+  });
+
+  test('delayed acceptance is not renewed by notices or unrelated PONGs', () {
+    fakeAsync((clock) {
+      final h = Harness(clock, sendTimeout: const Duration(seconds: 45));
+      final task = h.ping(
+        config: options(timeout: const Duration(seconds: 90)),
+        responseFromAcceptance: true,
+      );
+      final done = Outcome(task.done);
+      Outcome(task.start());
+      h.ready();
+      h.empty();
+      for (var i = 0; i < 4; i++) {
+        clock.elapse(const Duration(seconds: 10));
+        h.transport.receive([0x83]);
+        h.transport.receive(frame(message(sender: 3)));
+        clock.flushMicrotasks();
+        expect(done.done, isFalse);
+      }
+      clock.elapse(const Duration(seconds: 5));
+      expect(
+        done.value!.sessionFailure!.kind,
+        MeshCoreSessionFailureKind.requestTimeout,
+      );
+      expect(done.value!.matchingPongObserved, isFalse);
+      expect(done.value!.send.localOkObserved, isFalse);
+      expect(h.transport.sent.map((frame) => frame[0]), [0x16, 1, 0x0a, 0x3e]);
+    });
+  });
+
+  test('legacy PING response budget expires before a delayed send OK', () {
+    fakeAsync((clock) {
+      final h = Harness(clock, commandTimeout: const Duration(seconds: 15));
+      final task = h.ping(
+        config: options(timeout: const Duration(seconds: 90)),
+        response: const Duration(seconds: 15),
+      );
+      final done = Outcome(task.done);
+      final cleanup = Outcome(task.cleanupDone);
+      Outcome(task.start());
+      h.ready();
+      h.empty();
+      expect(h.transport.sent.where((frame) => frame[0] == 0x3e), hasLength(1));
+      clock.elapse(const Duration(seconds: 15));
+      clock.flushMicrotasks();
+      expect(done.value!.reason, DiagnosticTaskReason.responseTimeout);
+      expect(done.value!.stage, DiagnosticTaskStage.sending);
+      expect(done.value!.send.pendingAtTermination, isTrue);
+      expect(done.value!.send.deviceAcceptanceConfirmed, isFalse);
+      cleanupIs(cleanup, DiagnosticCleanupState.succeeded);
+    });
+  });
+
   test(
     'construction/getters are inert; cancel before start and repeated start',
     () {

@@ -143,11 +143,52 @@ the WS passive-window failure and the user's separate selection of direct TCP.
 It does not attribute that failure to RF or silently replace historical results.
 
 `localWriteCompleted` in **B peer** projections means only that the local WS
-submission interface completed. It is not a native USB write, TCP receipt,
-openHop processing confirmation, or RF transmission completion. A separately
+submission or explicitly selected TCP sink flush completed. It is not a native
+USB write, remote receipt, openHop processing confirmation, or RF completion. A separately
 associated Companion OK establishes local acceptance. Only an exact PONG
 establishes an application round trip. RTT includes hosts, queues, USB, WS,
 openHop, and radio processing, not just airtime.
+
+The [November 16 B acknowledgment investigation](validation/phase-1d11-openhop-ok-investigation.md)
+observed standard OK on TCP 5050 but also a server duty-cycle deferral longer
+than the client's finite budget. Closing a client does not prove a deferred
+server send was retracted: the server read loop may still await that command.
+Never treat missing OK as proof of zero RF or automatically resend. The linked
+upstream modification proposal was withdrawn: changing the peer server is
+outside Meshchan's scope. The client must tolerate delayed acceptance within
+an explicit finite policy, preserve unknown acceptance at termination, and
+retain the remote-send caveat after close.
+
+### Explicit delayed send confirmation
+
+The source-only peer accepts optional `session.sendConfirmationSeconds`, a
+positive integer between `commandSeconds` and `taskSeconds`. Omitting it keeps
+the original command and PING-response timing. Supplying it opts into separate
+budgets: SEND_CHANNEL_DATA write plus OK uses that confirmation budget, while
+initialization and GET_MSG retain `commandSeconds`. PING's response window
+starts only after successful local write plus actual OK. Its matcher and RTT
+origin still precede the single send. A PONG seen before OK is retained, but
+success still requires local acceptance. Whole-task time starts before connect
+and is never extended. Neither notices nor duplicate frames renew a budget.
+
+For example, a reviewed B configuration can retain command/init/task budgets
+15/30/90 seconds and a 15-second PING response window while allocating 60
+seconds inside that existing task for delayed send confirmation. This is a new
+explicit operation policy, not an unchanged-parameter rerun or an RF pass.
+The helper emits `peer_timing_policy` with the active values and origins. It
+uses one session/FIFO/reader, with no resend, reconnect, fallback, second
+consumer or acceptance inferred from flush. Cancel, ERR, transport failure,
+send deadline and whole-task deadline retain their normal terminal/cleanup
+behavior. A deferred server send may still run after client cancellation.
+
+This option is for the explicitly configured development peer only. It does
+not add a TCP product transport, GUI control, profile/schema field or changed
+USB default. See [the client validation](validation/phase-1d11-delayed-ok-client.md)
+for source/native local fixtures and the unperformed real RF comparison.
+The [first approved real B-only case](validation/phase-1d11-delayed-ok-rf.md)
+subsequently received OK after 4.165858 seconds and kept the full 15-second
+post-acceptance window. This is an accepted no-responder test, not an exact-PONG
+or greater-than-15-second OK-delay pass; prior missing-OK failures remain.
 
 After a task accepts ownership, only the task connects, sends, receives, and
 closes. The helper's session observer subscribes read-only and emits

@@ -113,7 +113,7 @@ from USB A, and other clients are disconnected. No deployment setting changed.
 | Dart peer from IDE agent | REST preflight failed, WS attempted false, cleanup succeeded |
 | Native peer from IDE agent | Same REST-stage failure, WS attempted false |
 | Dart TCP to router 192.168.1.1:443 | Connected; subsequent HTTPS certificate validation failed, without bypass |
-| Dart TCP to OpenHop 192.168.1.189:8000 | SocketException, errno 65 |
+| Dart TCP to OpenHop <private-peer-host>:8000 | SocketException, errno 65 |
 | Python TCP to the same two management ports | Both connected |
 | Explicit IPv4, local source address, known deployment hostname | OpenHop still errno 65; no routes/settings changed |
 | User's first manual command, later clarified as IDE integrated Terminal | Same three errno-65 results; not an independent Terminal control |

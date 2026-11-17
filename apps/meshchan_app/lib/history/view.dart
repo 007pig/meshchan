@@ -1,4 +1,7 @@
 import 'package:material_ui/material_ui.dart';
+
+import '../widgets/selectable_label.dart';
+
 import 'package:meshchan_core/meshchan_core.dart';
 
 import '../diagnostics/outcomes.dart';
@@ -7,7 +10,7 @@ import '../profiles/choice.dart';
 import '../runtime/protocol.dart';
 import 'model.dart';
 
-Widget historyFacts(List<(String, Object?)> facts) => SelectableText(
+Widget historyFacts(List<(String, Object?)> facts) => SelectableLabel(
   facts
       .map(
         (f) =>
@@ -217,7 +220,7 @@ class HistoryView extends StatelessWidget {
                 ),
             ],
             if (m.selectedId != null)
-              SelectableText('Selected run ID: ${m.selectedId}'),
+              SelectableLabel('Selected run ID: ${m.selectedId}'),
             if (m.detailLoading) const Text('Reading persisted detail…'),
             if (m.detailError != null)
               Text(
@@ -237,7 +240,7 @@ class HistoryView extends StatelessWidget {
                       context: context,
                       builder: (context) => AlertDialog(
                         title: const Text('Delete this diagnostic record?'),
-                        content: SelectableText(
+                        content: SelectableLabel(
                           'Run ID: ${run.runId.value}\n${run.operation.name} • ${run.preparedAt.toIso8601String()}\nCore checks eligibility and active pins at commit. There is no force delete.',
                         ),
                         actions: [
@@ -259,7 +262,7 @@ class HistoryView extends StatelessWidget {
             if (m.deleting)
               Text('Deleting ${m.deleteTargetId}; waiting for commit…'),
             if (m.deletedId != null)
-              SelectableText(
+              SelectableLabel(
                 'Deletion committed for ${m.deletedId}. Independent retention may remove other records.',
               ),
             if (m.deleteError != null)
@@ -335,7 +338,7 @@ class HistoryView extends StatelessWidget {
                   'Export failure: ${job.failure!.name}${job.generationError == null ? '' : ' (${job.generationError!.code})'}',
                 ),
               if (job.published)
-                SelectableText(
+                SelectableLabel(
                   'New file generated: ${job.target}\nExported rows: ${job.count}; more available: ${job.more}',
                 ),
               if (job.cleanupWarning)

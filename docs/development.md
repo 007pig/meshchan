@@ -32,6 +32,11 @@ SDK and validation sections below retain their historical versions.
 
 ## macOS VM GUI testing
 
+Prefer the existing macOS VM for UI tests that do not require real USB/serial,
+as required by [AGENTS.md](../AGENTS.md). Use host Computer Use only for real
+USB/serial UI steps; record VM blockers instead of switching hardware-free
+tests to host GUI automation.
+
 Use the [UTM macOS VM guide](macos-vm-gui-testing.md) and the repository's
 [GUI testing skill](../.agents/skills/macos-vm-gui-testing/SKILL.md) for
 guest-side native input, host-input isolation and real Pinyin composition.

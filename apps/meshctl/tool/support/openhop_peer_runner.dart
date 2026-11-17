@@ -12,6 +12,7 @@ import 'package:meshctl/src/datagram_projection.dart';
 import 'package:meshctl/src/session_command.dart';
 
 import 'openhop_frame_transport.dart';
+import 'reception_observer_transport.dart';
 
 /// Pure configuration validation precedes secret reads and all network access.
 final class OpenHopPeerConfig {
@@ -49,6 +50,17 @@ final class OpenHopPeerConfig {
       seconds: _number(session, 'initializationSeconds', 1, 86400),
     );
     taskTimeout = Duration(seconds: _number(session, 'taskSeconds', 1, 86400));
+    if (session.containsKey('sendConfirmationSeconds')) {
+      sendConfirmationTimeout = Duration(
+        seconds: _number(session, 'sendConfirmationSeconds', 1, 86400),
+      );
+      if (sendConfirmationTimeout! < requestTimeout ||
+          sendConfirmationTimeout! > taskTimeout) {
+        throw const FormatException(
+          'Send confirmation budget must be within command and task budgets.',
+        );
+      }
+    }
     startupDelay = Duration(
       milliseconds: _number(session, 'startupDelayMilliseconds', 0, 86399999),
     );
@@ -135,6 +147,7 @@ final class OpenHopPeerConfig {
       initializationTimeout,
       startupDelay,
       taskTimeout;
+  Duration? sendConfirmationTimeout;
   DatagramOptions? options;
   Uint8List? expectedPayload;
 
@@ -296,13 +309,6 @@ Future<int> runOpenHopPeer(
   Stream<CliStopRequest>? stopRequests,
   Map<String, Object?>? preflight,
 }) async {
-  final session = MeshCoreSession(
-    transport: createTransport(),
-    appName: 'Meshchan',
-    requestTimeout: config.requestTimeout,
-    initializationTimeout: config.initializationTimeout,
-    startupDelay: config.startupDelay,
-  );
   void event(String name, Map<String, Object?> fields) => output.out(
     jsonEncode({
       'schemaVersion': 1,
@@ -312,6 +318,26 @@ Future<int> runOpenHopPeer(
       'event': name,
       ...fields,
     }),
+  );
+  final transport = createTransport();
+  final session = MeshCoreSession(
+    transport: config.operation == 'respond'
+        ? ReceptionObserverTransport(
+            transport,
+            onFirstReadWritten: () => event('peer_receive_read_written', {
+              'observedAt': DateTime.now().toUtc().toIso8601String(),
+              'meaning': 'First task-owned GET_MSG write completed only',
+              'commandOpcode': 0x0a,
+              'additionalReads': 0,
+              'remoteMessageProven': false,
+            }),
+          )
+        : transport,
+    appName: 'Meshchan',
+    requestTimeout: config.requestTimeout,
+    sendTimeout: config.sendConfirmationTimeout,
+    initializationTimeout: config.initializationTimeout,
+    startupDelay: config.startupDelay,
   );
   final observer = session.events.listen((e) {
     if (e is MeshCoreSessionStateChanged &&
@@ -340,6 +366,16 @@ Future<int> runOpenHopPeer(
   StreamSubscription<CompanionResponse>? entries;
   Future<void>? rawClosing;
   try {
+    if (config.sendConfirmationTimeout != null) {
+      event('peer_timing_policy', {
+        'commandSeconds': config.requestTimeout.inSeconds,
+        'sendConfirmationSeconds': config.sendConfirmationTimeout!.inSeconds,
+        'taskSeconds': config.taskTimeout.inSeconds,
+        'pingResponseTimeoutOrigin': 'localAcceptance',
+        'applicationRttOrigin': 'beforeSend',
+        'retries': 0,
+      });
+    }
     final options = config.options;
     if (config.operation == 'ping' || config.operation == 'respond') {
       final dynamic task = config.operation == 'ping'
@@ -348,6 +384,8 @@ Future<int> runOpenHopPeer(
               options: options!.taskOptions(),
               content: options.bytes,
               responseTimeout: options.responseTimeout!,
+              responseTimeoutFromAcceptance:
+                  config.sendConfirmationTimeout != null,
             )
           : MeshchanResponderTask(
               session: session,

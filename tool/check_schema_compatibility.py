@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a schema-1 file with controlled dev.2 source, then open it with dev.3."""
+"""Generate a schema-1 file with controlled dev.2 source, then open it with an explicitly checked consumer."""
 import argparse
 from contextlib import closing
 import datetime
@@ -12,7 +12,7 @@ import sqlite3
 import subprocess
 import tarfile
 
-from candidate_common import ROOT, digest, product_inputs, write_json
+from candidate_common import ROOT, digest, product_inputs, write_json, versions
 from smoke_cli import Checks, executable, nonempty_history_checks
 
 BASELINE = 'e237be5c2fb9e4fd1cf2f2c26717582f34a5e757'
@@ -38,7 +38,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-directory', type=Path, required=True)
     parser.add_argument('--dart', type=executable, required=True)
+    parser.add_argument('--expected-version', default='0.1.0-dev.3')
     args = parser.parse_args()
+    versions(expected_version=args.expected_version)
     base = args.build_directory.resolve()
     folder = base / 'schema-compatibility'
     folder.mkdir(exist_ok=False)
@@ -66,19 +68,19 @@ def main():
     shutil.copytree(legacy, folder / 'original closed fixture')
     old_hash = digest(legacy / 'meshchan.sqlite')
     current = base / 'acceptance/bundle/bin/datagram_acceptance'
-    checks.check('dev.3 AOT runCli/core records into schema-1 file',
-        [str(current), '--recording-directory', str(legacy)], folder, out='')
+    checks.check(args.expected_version + ' AOT runCli/core records into schema-1 file',
+        [str(current), '--recording-directory', str(legacy), '--expected-version', args.expected_version], folder, out='')
     product = base / 'cli/bundle/bin/meshctl'
     checks.check('new product business commit into legacy file', [str(product), '--data-dir', str(legacy),
-        'draft', 'create', '--body=new dev.3 中文😀', '--json'], folder, out='')
-    nonempty_history_checks(checks, 'schema compatibility', [str(product)], folder, legacy)
+        'draft', 'create', '--body=new ' + args.expected_version + ' 中文😀', '--json'], folder, out='')
+    nonempty_history_checks(checks, 'schema compatibility', [str(product)], folder, legacy, args.expected_version)
     after = rows(legacy)
     for table, existing in before.items():
         if any(row not in after[table] for row in existing):
             raise ValueError('Upgrade changed old row bytes/IDs/revision/times/configuration: ' + table)
     if len(after['stored_runs']) != len(before['stored_runs']) + 3:
         raise ValueError('Unexpected recording count')
-    if any(row[2] != '0.1.0-dev.3' for row in after['stored_runs'] if row not in before['stored_runs']):
+    if any(row[2] != args.expected_version for row in after['stored_runs'] if row not in before['stored_runs']):
         raise ValueError('New run appVersion mismatch')
     rejected = []
     for name in ('future', 'corrupt'):
@@ -110,7 +112,7 @@ def main():
         'productCompilationInputHashes': product_inputs(), 'oldDatabaseSha256': old_hash,
         'originalClosedFixture': str(folder / 'original closed fixture'),
         'newDatabaseSha256': digest(legacy / 'meshchan.sqlite'),
-        'preservedTables': list(before), 'oldAppVersion': '0.1.0-dev.2', 'newAppVersion': '0.1.0-dev.3',
+        'preservedTables': list(before), 'oldAppVersion': '0.1.0-dev.2', 'newAppVersion': args.expected_version,
         'recoveryRetention': 'No residual rows; limit 1000. Existing recovery/retention suites remain the separate contract gate.',
         'rejections': rejected, 'checks': checks.records,
         'verifiedUtc': datetime.datetime.now(datetime.timezone.utc).isoformat()})

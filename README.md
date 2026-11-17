@@ -1,5 +1,39 @@
 # Meshchan
 
+The current local candidate is **0.1.0-beta.1** (app build **5**).
+**Local beta accepted with documented limits** for macOS arm64 and the selected
+USB Companion. The [completed finite matrix](docs/validation/phase-1d11-rf-matrix-completion.md)
+establishes exact PONG in both GUI directions, real unplug/error/explicit Check
+recovery, expected timeout, receiving Cancel and active native Quit. Offline
+Save/reopen and twelve-row safe export use the same complete Release, with the
+remaining hardware-free UI run in the operator-selected macOS VM. Intermittent
+USB initialization, a failed scheduling-margin assertion and host synthetic-input
+observations retain their documented limits. 1D.11 local acceptance is closed;
+1E distribution work remains.
+The earlier [fresh build 5 continuation](docs/validation/phase-1d11-build5-gui-delay.md)
+passed a GUI finite Check, but U03 failed USB initialization before receiving.
+B obtained actual local OK with the new finite delayed-confirmation policy,
+then timed out waiting for PONG. RF stopped; no physical action followed.
+History, safe export and the first normal Quit/independent read passed.
+Build 4 retains its own receiving-stage Cancel, active native Quit and exact
+Chinese/emoji Save/reopen evidence. The earlier [reviewed v2 continuation](docs/validation/phase-1d11-v2-hardware-continuation.md)
+recorded one locally accepted GUI Responder reply, but B did not obtain exact
+PONG. RF stopped; current exact PONG and physical unplug/replug remain unestablished.
+The later [B acknowledgment investigation](docs/validation/phase-1d11-openhop-ok-investigation.md)
+reproduced a server duty-cycle deferral longer than the finite client budget.
+The upstream modification proposal was withdrawn. Meshchan's source-only peer
+now offers explicit bounded delayed-OK handling; remote code/configuration is
+outside this work. See the [client compatibility record](docs/validation/phase-1d11-delayed-ok-client.md).
+The first [real B-only policy check](docs/validation/phase-1d11-delayed-ok-rf.md)
+obtained actual OK and the expected post-acceptance no-responder timeout;
+it did not reproduce an OK delay beyond 15 seconds or establish GUI exact PONG.
+The macOS arm64 host provides offline drafts, presets/settings, explicit USB
+checks, recorded PING/Responder, History and safe single-page export through
+one long-lived storage/device worker. See [the beta delivery](docs/releases/phase-1d-beta1.md)
+and [current validation](docs/validation/phase-1d11-hardware-beta.md).
+Developer ID, notarization, installers and public distribution belong to 1E.
+
+
 Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
 
 The offline business core and product CLI now cover **Phase 1 / 1C / Step 9**:
@@ -10,7 +44,7 @@ explains data directories, revision/cursor inputs and independent logical,
 cleanup, save, maintenance and close results. All finite datagrams open business
 storage; only `--record` adds a diagnostic run. Recorded listen emits one final
 summary, while unrecorded listen keeps its per-entry NDJSON. Package versions
-are `0.1.0-dev.3`; the [local delivery record](docs/releases/phase-1c-dev3.md)
+were `0.1.0-dev.3` at that historical cut; the [local delivery record](docs/releases/phase-1c-dev3.md)
 separates source/native/archive acceptance from CI, clean-environment and public distribution status.
 These are software/source/AOT results, not new hardware acceptance.
 
@@ -18,8 +52,7 @@ These are software/source/AOT results, not new hardware acceptance.
 to one application-owned long-lived storage worker, a typed control/read bridge,
 device admission, recording lifecycle observation and confirmed shutdown.
 Normal startup reads bounded offline data without enumerating or opening devices.
-Drafts, Device and Diagnostics share real runtime status; their business workflows
-remain later steps. See the [runtime record](docs/validation/phase-1d3-runtime.md)
+Drafts, Device and Diagnostics share real runtime status and public business APIs. See the [runtime record](docs/validation/phase-1d3-runtime.md)
 for current results and limits, and the [1D.2 platform record](docs/validation/phase-1d2-platform.md)
 for the historical finite probe. The [host contract](docs/architecture/flutter-host.md)
 retains the macOS arm64 + USB target and the deferred distribution/hardware scope.
@@ -43,7 +76,7 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
 | `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery; bounded history queries, guarded deletion, automatic retention and safe JSON summary export (1C.7). SQLite schema 1 remains unchanged. The public host API is now wired into meshctl (1C.8). See the [offline history API and example](packages/meshchan_core/README.md#diagnostic-history-retention-and-safe-export-1c7). |
 | `apps/meshctl` | Offline draft/profile/settings/history commands and asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
-| `apps/meshchan_app` | Flutter macOS navigation skeleton and explicit finite native fixture probe, version `0.1.0-dev.3+1`. Normal startup does not bootstrap business resources. |
+| `apps/meshchan_app` | Flutter macOS host, version `0.1.0-beta.1+5`, with offline saves, finite USB checks, recorded PING/Responder, History/export and coordinated Quit. Normal startup opens offline storage without device access. |
 
 Local Python scripts and tests use the latest installed stable Python **3.15 or
 newer**. On this Mac, `/opt/homebrew/bin/python3` is the verified 3.15.2 entry;
@@ -73,7 +106,7 @@ dart run bin/meshctl.dart datagram ping --help
 dart run bin/meshctl.dart datagram respond --help
 ```
 
-Running without arguments or with `-h` also displays help. The application version is `0.1.0-dev.3`. Help and version do not access hardware. Select and authorize a port explicitly before device commands; old selections do not carry over. `ports` lists exact system paths, descriptions, transport types, and USB VID/PID when available. It does not open ports or send probes. Missing metadata appears as `-`; a per-port metadata failure retains the path and writes a warning to stderr.
+Running without arguments or with `-h` also displays help. The application version is `0.1.0-beta.1`. Help and version do not access hardware. Select and authorize a port explicitly before device commands; old selections do not carry over. `ports` lists exact system paths, descriptions, transport types, and USB VID/PID when available. It does not open ports or send probes. Missing metadata appears as `-`; a per-port metadata failure retains the path and writes a warning to stderr.
 
 **Current native platform limits:** macOS is locally validated. With the pinned `libserialport_plus` 1.0.5, native `ports` is blocked on Linux, Android, and Windows before enumeration because the backend can open unselected ports. Windows `port-check` is also blocked before native handle creation because the wrapper's handle state check is unsafe on 64-bit Windows. These operations return `69` with an explanation. Explicit-port checking on Linux/Android remains unverified. Malformed UTF-8 metadata on an enabled backend produces a warning for that path while other records remain available.
 
@@ -88,7 +121,7 @@ To check a device, select its exact path explicitly, then run `dart run bin/mesh
 | `130` / `143` | SIGINT / SIGTERM cancellation; cleanup is still awaited. |
 | `70` | Unexpected program error at the process boundary. |
 
-**An open/close success does not identify a MeshCore device.** Transport `open()` establishes local I/O only; `sendFrame()` completion means the local native/OS API accepted the framed bytes. Neither proves command execution, physical TX completion, or remote receipt. Offline database features are available in the CLI; Flutter business pages remain later 1D work. Automated tests do not access hardware.
+**An open/close success does not identify a MeshCore device.** Transport `open()` establishes local I/O only; `sendFrame()` completion means the local native/OS API accepted the framed bytes. Neither proves command execution, physical TX completion, or remote receipt. Offline database features are available through the CLI and Flutter host. Automated tests do not access hardware.
 
 ## Native CLI bundle
 

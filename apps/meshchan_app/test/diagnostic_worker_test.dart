@@ -132,7 +132,7 @@ void main() {
       DiagnosticOperation.ping,
       DiagnosticOperation.respond,
     });
-    expect(runs.every((r) => r.appVersion == '0.1.0-dev.3+1'), true);
+    expect(runs.every((r) => r.appVersion == '0.1.0-beta.1+5'), true);
     await storage.close();
     await subscription.cancel();
     observer.close();

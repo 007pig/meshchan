@@ -110,6 +110,12 @@ class CandidateTest(unittest.TestCase):
             shutil.copytree(c.ROOT / member / 'lib', self.root / member / 'lib')
             shutil.copy2(c.ROOT / member / 'pubspec.yaml', self.root / member / 'pubspec.yaml')
         shutil.copytree(c.ROOT / 'apps/meshctl/bin', self.root / 'apps/meshctl/bin')
+        # Reconstruct the historical 1C manifests; current source has a new release decision.
+        for member in c.MEMBERS:
+            spec = self.root / member / 'pubspec.yaml'
+            spec.write_text(spec.read_text().replace('0.1.0-beta.1', c.TARGET_VERSION))
+        constant = self.root / 'apps/meshctl/lib/src/version.dart'
+        constant.write_text(constant.read_text().replace('0.1.0-beta.1', c.TARGET_VERSION))
         self.assertEqual(set(c.versions(self.root).values()), {c.TARGET_VERSION})
         before = c.product_inputs(self.root)
         generated = self.root / 'packages/meshchan_core/lib/src/storage/database.g.dart'

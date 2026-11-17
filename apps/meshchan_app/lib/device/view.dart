@@ -1,5 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../widgets/selectable_label.dart';
+
 import '../profiles/choice.dart';
 import '../runtime/protocol.dart';
 import 'model.dart';
@@ -55,7 +57,7 @@ class DeviceView extends StatelessWidget {
                 ),
               ],
             ),
-            SelectableText('Selected port: ${model.selected ?? 'None'}'),
+            SelectableLabel('Selected port: ${model.selected ?? 'None'}'),
             if (model.stale)
               const Text(
                 'Previous metadata is stale. Refresh successfully before checking.',
@@ -69,7 +71,7 @@ class DeviceView extends StatelessWidget {
             for (final p in model.ports)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
-                child: SelectableText(
+                child: SelectableLabel(
                   '${p.path}\nDescription: ${p.description ?? 'Unavailable'} · Transport: ${p.transport ?? 'Unknown'} · USB VID: ${p.usbVid ?? 'Unknown'} · PID: ${p.usbPid ?? 'Unknown'}${p.warning == null ? '' : '\nMetadata warning: ${p.warning}'}',
                 ),
               ),
@@ -129,7 +131,7 @@ class DeviceView extends StatelessWidget {
             if (attempt != null) ...[
               const Divider(),
               const Text('Active / last attempt'),
-              SelectableText(
+              SelectableLabel(
                 'Check ${attempt.id} · ${attempt.port}\nRequest ${attempt.options.requestSeconds} s · Initialization ${attempt.options.initializationSeconds} s · Startup ${attempt.options.startupMilliseconds} ms\nSession: ${attempt.state.name}\nCancel applied: ${attempt.cancelApplied}\nSession cleanup: ${attempt.sessionCleanup.name}\nHost observer cleanup: ${attempt.observerCleanup.name}',
               ),
               if (attempt.failure != null)
@@ -146,7 +148,7 @@ class DeviceView extends StatelessWidget {
               const Text(
                 'Last successful information — historical, not a live connection',
               ),
-              SelectableText(
+              SelectableLabel(
                 'Source port: ${info.port}\nObserved: ${info.observedAt.toLocal().toIso8601String()} ${info.observedAt.toLocal().timeZoneName} (local time)\nName: ${info.nodeName}\nModel: ${info.hardwareModel}\nFirmware: ${info.firmwareVersion}\nBuild date: ${info.firmwareBuildDate}\nReported protocol code: ${info.protocolVersion}\nInitialization app target: ${info.appTargetVersion}\nTX power: ${info.txPowerDbm} dBm · Maximum: ${info.maxTxPowerDbm} dBm\nFrequency: ${info.radioFrequencyKhz} kHz\nBandwidth: ${info.radioBandwidthHz} Hz\nSpreading factor: ${info.radioSpreadingFactor}\nCoding rate code: ${info.radioCodingRate}\nAdvert type: ${info.advertType}\nMax contacts: ${info.maxContacts} · Max channels: ${info.maxChannels}\nRepeat enabled: ${info.repeatEnabled ?? 'Unavailable'}\nPath hash mode: ${info.pathHashMode ?? 'Unavailable'}',
               ),
             ],

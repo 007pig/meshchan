@@ -354,6 +354,7 @@ def main():
     parser.add_argument("--observation-bundle", required=True, type=bundle)
     parser.add_argument("--datagram-acceptance-bundle", required=True, type=bundle)
     parser.add_argument('--evidence-directory', type=Path)
+    parser.add_argument('--expected-version', default='0.1.0-dev.3')
     args = parser.parse_args()
     if args.evidence_directory is not None:
         args.evidence_directory = args.evidence_directory.expanduser().resolve()
@@ -363,13 +364,13 @@ def main():
         native = bundle_executable(args.cli_bundle, "meshctl")
         observation = bundle_executable(args.observation_bundle, "serial_transport_check")
         acceptance = bundle_executable(args.datagram_acceptance_bundle, "datagram_acceptance")
-        from candidate_common import versions, TARGET_VERSION
-        versions()  # Independent release target, members, constraints and CLI constant.
+        from candidate_common import versions
+        versions(expected_version=args.expected_version)  # Independent manifest check.
         definition = (CLI / "lib/src/version.dart").read_text(encoding="utf-8")
         version = re.search(r"const String meshctlVersion = '([^']+)';", definition)
         if version is None:
             raise ValueError("Cannot read the application version from lib/src/version.dart")
-        expected_version = f"meshctl {version[1]}\n"
+        expected_version = f"meshctl {args.expected_version}\n"
         checks = Checks()
         rejections = [
             (["info"], "--port"),
@@ -464,12 +465,12 @@ def main():
                 def recording_report(value):
                     report = json.loads(value)
                     if (report.get('passed') is not True or report.get('closedBeforeReport') is not True
-                            or report.get('appVersion') != TARGET_VERSION or len(report.get('runIds', [])) != 3):
+                            or report.get('appVersion') != args.expected_version or len(report.get('runIds', [])) != 3):
                         raise ValueError('Recording probe did not validate real content')
-                checks.check(label + ': synthetic runCli/core recording', probe + ['--recording-directory', str(data)],
+                checks.check(label + ': synthetic runCli/core recording', probe + ['--recording-directory', str(data), '--expected-version', args.expected_version],
                              CLI if label == 'source' else destination, out='', validate=recording_report)
-                nonempty_history_checks(checks, label, [str(native)], destination, data)
-            nonempty_history_checks(checks, 'relocated', relocated, destination, evidence / 'native recorded database')
+                nonempty_history_checks(checks, label, [str(native)], destination, data, args.expected_version)
+            nonempty_history_checks(checks, 'relocated', relocated, destination, evidence / 'native recorded database', args.expected_version)
             (evidence / 'process-checks.json').write_text(json.dumps(checks.records, indent=2) + '\n')
         print(f"PASS: {checks.count} process checks on {sys.platform}; "
               "CLI, observation, and development acceptance bundles contain native assets; "

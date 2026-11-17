@@ -33,6 +33,9 @@ jobs:
       - name: Get locked workspace dependencies
         run: flutter pub get --enforce-lockfile
 
+      - name: Check explicit beta versions and app fallbacks
+        run: python3 tool/check_product_version.py --expected-version 0.1.0-beta.1 --app-build 5
+
       - name: Generate production database and dependency probe
         working-directory: packages/meshchan_core
         run: dart run build_runner build
@@ -104,7 +107,7 @@ jobs:
       - name: Verify source and native entry points without hardware
         run: |
           python3 --version
-          python3 tool/smoke_cli.py \
+          python3 tool/smoke_cli.py --expected-version 0.1.0-beta.1 \
             --dart "$(command -v dart)" \
             --cli-bundle apps/meshctl/build/dist/bundle \
             --observation-bundle packages/meshcore_link/build/serial-transport-check/bundle \

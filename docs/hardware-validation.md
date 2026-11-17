@@ -1124,7 +1124,8 @@ are appended, with failures preserved rather than replacing the initial record.
 
 This record appends to, and does not replace, the historical USB/body/H10
 observations above. The user explicitly selected A `/dev/cu.usbmodem211101` and
-B `http://192.168.1.189:8000/`, subsequently selected registration `007-02`,
+B at its private management endpoint on port 8000, subsequently selected
+registration `007-02`,
 confirmed no other clients, and authorized H0-H7 once with at most 12 application
 sending attempts. Queue/channel prerequisites were not asserted by that consent.
 No PSK, token, original user-message body, identity key, or raw configuration is
@@ -1633,3 +1634,178 @@ archive revision draws its native bundle from the verified original tar.gz and
 retains its exact hashes. This does not add a hardware pass, explain historical
 USB failures, or change NOT_RUN relay/unplug and NOT_READY public-distribution
 states. See the [software follow-up](development.md#ledger-raw-session-and-archive-provenance-fixes-on-november-11-2026).
+
+## Phase 1D.11 beta candidate, November 16, 2026
+
+The [current beta record](validation/phase-1d11-hardware-beta.md) retains the
+fresh `0.1.0-beta.1+2` software/native cut and proposed finite host GUI matrix.
+That original cut is historical: an actual GUI Check crash was reproduced in a
+resource-free fixture and repaired for `0.1.0-beta.1+3`. Fresh build 3 native and
+host GUI finite Check passed. Present A/B/exclusive-inbox authorization is now
+recorded, with eight operational application-send attempts reserved and zero
+used. U02 is BLOCKED by automatic approval review before A Start; a naturally
+completed B responder consumed one read and reported zero responses/entries.
+A later synthetic-keyboard loop is retained separately from a successful
+pointer-only offline normal Quit. Current RF/physical/active Cancel/Quit and
+complete user-path acceptance remain incomplete; see the latest section of the
+record for exact artifact and failure facts. Earlier H10, USB initialization failures and
+1D.8 successes keep their original evidence, budgets and limitations.
+
+A subsequently authorized single U02 replacement reached B's existing consuming
+read write and actually started GUI PING on the same build 3 Release. A failed
+USB initialization (requestTimeout, opcode 22) before any send/receive; this is
+an executed prerequisite FAIL, with no PONG. The run settled with committed saves,
+successful cleanup, normal Quit and independent CLI reopen. B naturally closed
+with six consumed entries, nine reads and zero response attempts. Actual task
+application sends remain 0/8. No retry or later case ran, and the operator's
+requested pause is effective. The latest beta record preserves both attempts.
+
+A further explicitly approved single retry, with unchanged parameters/artifact,
+again failed USB initialization before send/reception (requestTimeout, opcode
+22). The stop instruction was followed without another Start or B session.
+The new failure settled, normal Quit and independent reopen passed, and the
+prior record remained unchanged. B naturally closed with 36 consumed entries,
+37 completed reads and zero responses; application sends remain 0/8. The latest
+beta section preserves this separate attempt and the continued requested pause.
+
+## November 16, 2026: independent USB initialization controls
+
+The current beta investigation added a separately authorized, finite
+[ten-attempt native/POSIX comparison](validation/phase-1d11-usb-posix-controls.md).
+It reproduced APP_START header-only/64-content-byte timeouts in both backends;
+the POSIX failure had an empty public tty input queue at the original deadline.
+A different case showed delayed body delivery with later device data. No RF
+application sends, inbox reads, firmware changes or GUI acceptance passes were
+added. Every case closed/reaped and released its port; exact device/USB/host
+responsibility remains unconfirmed. Earlier failures and their source cuts
+remain preserved in this document and the linked validation records.
+
+A subsequently authorized, source-only
+[completion-query comparison](validation/phase-1d11-usb-completion-candidate.md#executed-four-case-comparison)
+ran standard/probe/probe/standard once each on the same complete diagnostic
+bundle. All four passed; both probe cases collected complete original and extra
+replies. All four confirmed cleanup, OS exit/reap and absent port owner before
+continuing. Actual use was 12 initialization control frames / 116 serial bytes,
+zero application sends/inbox reads and no B session. This supports bounded
+feasibility of the consecutive-query prototype, while the two successful
+standard controls leave comparative mitigation effectiveness unestablished.
+No product default, delivered beta binary or GUI/RF acceptance result changed.
+The four-case allowance is exhausted and further hardware is paused.
+
+## November 16, 2026: compatibility integrated into app build 4
+
+The operator then resumed the matrix and explicitly required app integration.
+The [build 4 record](validation/phase-1d11-app-usb-compatibility.md) binds the new
+complete Release to 262 app tests, four relevant process gates, 135 Python tests,
+22 XCTest cases, Debug/Release signing, runtime and SQLite checks. A fresh
+standard audit failed before queries, while the same app compatibility
+implementation completed the selected-slot audit without RF/inbox reads.
+
+Actual build 4 GUI Check failed transport, failed requestTimeout, then passed
+on its third bounded invocation; all failures and cleanup/release checks remain.
+Real GUI Cancel and active native Quit independently reopened canceled at
+receiving with zero responses. One real GUI PING obtained local acceptance and
+the intended responseTimeout; current application attempts are 1/8. A five-row
+native-panel safe export matched the independent public-core run projection.
+U02's B responder reached its 128-entry limit before A Start, with zero replies;
+no replacement session was silently started. Current exact PONG, U03/U04 physical
+actions and complete Chinese/emoji GUI input remain unestablished. Every task
+consumer closed normally; candidate acceptance is incomplete. Previous hardware
+cuts, failures and budgets are not rewritten by these bounded passes.
+
+A later, explicitly authorized [two-session/512-entry continuation](validation/phase-1d11-peer-stop-unicode.md)
+used only its first B responder. Before A Start, a matching queued PING triggered
+one PONG attempt; local write completed but OK was not observed, ending in
+sendFailed/requestTimeout with succeeded cleanup and normal exit. RF stopped
+at cumulative 2/8 application attempts, 1/2 B sessions and 62/1024 consumed
+entries for that continuation. No second session or physical action followed.
+Manual underlined Pinyin preedit/natural commit and Chinese/emoji/multiline
+GUI Save were then verified offline, including exact CLI read and new GUI reopen.
+The packet's origin and missing OK remain unresolved; an unexecuted fresh-ID
+fixture proposal and hardware-free codec checks address cross-case isolation
+without manufacturing a new RF pass. All task consumers are closed.
+
+The separately authorized [reviewed v2 GUI continuation](validation/phase-1d11-v2-hardware-continuation.md)
+used fresh per-case IDs and the corrected B PING option with unchanged build 4
+products. Current finite GUI Check passed once. U02's A Start was declined after
+tool round trips missed its fixed admission window; B naturally completed with
+zero replies. U03 executed: A responded once and obtained local OK, but B lacked
+OK/exact PONG and ended responseTimeout/sending. RF stopped; normal A Cancel,
+cleanup/saves/History, six-row safe new-file export and normal Quit/independent
+reopen passed. No physical action occurred. This continuation used two B
+sessions, 49 entries/50 reads and two application attempts. Cumulative attempts
+are four with no cumulative ceiling; earlier bounded counts retain their cuts.
+All consumers closed, missing B acknowledgment remains unresolved, and beta
+acceptance is incomplete.
+
+The [B TCP5050/0x3E investigation](validation/phase-1d11-openhop-ok-investigation.md)
+renewed finite RF diagnostics with A/USB closed. VM and AOT raw sends received
+standard OK, while one AOT diagnostic PING lacked OK and timed out sending.
+A contemporaneous server log reported local duty-cycle deferral by 19.1 seconds,
+beyond the unchanged 15-second budget; later matching-size TX completions are
+preserved with their attribution limit. RF stopped, all owned peers exited,
+and no server or radio setting changed. This adds three application attempts
+and one consumed entry/read: seven cumulative attempts, no cumulative ceiling.
+The initial upstream candidate passed eight offline method tests, but the
+operator rejected server modification. It was never deployed and is removed
+from project deliverables; prior evidence remains outside Git. Current work is
+[Meshchan client delayed-OK compatibility](validation/phase-1d11-delayed-ok-client.md),
+with no new real RF at that software cutoff. The beta remains incomplete.
+
+The later [approved B-only timing case](validation/phase-1d11-delayed-ok-rf.md)
+used the new client policy with 15/60/30/90-second control/send/init/task budgets
+and a 15-second post-OK response window. It obtained standard OK after 4.165858
+seconds, then ended at the expected `responseTimeout / waiting` with normal
+cleanup and process exit. A stayed closed and no server setting changed. This
+adds one attempt / 75 consumed entries / 76 reads, bringing current totals to
+8 attempts / 357 B entries / 364 reads without a cumulative send ceiling.
+Real OK beyond 15 seconds, GUI exact PONG and physical recovery remain open.
+
+## Complete build 5 GUI continuation on November 16, 2026
+
+The [current-source rebuild and delayed-OK GUI matrix](validation/phase-1d11-build5-gui-delay.md)
+used complete `0.1.0-beta.1+5` Release and matching native CLI/peer, with no
+openHop changes. GUI finite Check passed and closed. U02's fixed admission
+window was missed, so A was not started; B naturally completed with zero
+responses, 12 entries/13 reads and successful cleanup. U03 registered a real
+GUI Responder run, but A failed initialization at DEVICE_QUERY before receiving
+or sending. B obtained actual standard OK, then responseTimeout/waiting with
+no matching PONG, consuming three entries/five reads. RF stopped and no physical
+action occurred. This adds one B application-send attempt: cumulative nine
+attempts, 372 consumed B entries/382 reads, without a cumulative ceiling.
+
+The settled failed run preserves `0.1.0-beta.1+5`; six earlier rows and exact
+Chinese/emoji/multiline draft text remain unchanged. Seven-row new-file GUI safe
+export, the first normal Quit/OS exit and independent CLI comparison passed.
+The second GUI reopen is pending: Computer Use cannot locate the window of the
+known live process. Its live fixture is not copied or opened by another owner.
+Build 4 Cancel/active Quit/IME facts are retained at their original source and
+artifact cut; no current build 5 hardware or beta acceptance is inferred.
+
+## Build 5 finite matrix completion on November 17, 2026
+
+The operator renewed the same selected A/B and finite clocks, no cumulative
+send ceiling, no openHop change and abnormal-stop rules. The
+[full completion record](validation/phase-1d11-rf-matrix-completion.md) binds
+the exact complete build 5 Release and current peer to real GUI PING exact PONG
+(2324003 us), GUI Responder exact B PONG (3596318 us), user physical unplug,
+transport/ready failure with the accepted response preserved, clean final saves,
+and explicit replug/Refresh/reselection/new Check. Exact physical-action seconds
+and detection latency are unknown; no immediate-notification claim is made.
+
+Expected no-responder responseTimeout/waiting, receiving-stage zero-response
+Cancel and active native Quit passed. Actual shutdown/OS exit and independent
+reopen preserved twelve settled records, all seven older rows and exact text.
+Five application attempts and 60 B entries/62 reads bring cumulative 1D.11
+accounting to fourteen attempts / 432 B entries / 444 reads. The failed U02
+scheduling-margin assertion is retained alongside its actual successful RF
+target; no deadline or finite parameter was relaxed to obtain a pass.
+
+After host normal closure, the operator moved hardware-free UI to the existing
+macOS VM. Inventory-identical Release/closed fixture copies passed History
+filtering, new-file native Save-panel export, normal Quit and independent exact
+comparison. Host Computer Use filter/black-frame observations remain unresolved;
+the guest native keyboard path remained interactive, with an incorrect expected
+menu destination and an early PID check retained separately. Local beta is
+accepted with documented limits for this selected finite scope. USB reliability,
+Intel/mobile/BLE and 1E public-distribution capabilities are not established.

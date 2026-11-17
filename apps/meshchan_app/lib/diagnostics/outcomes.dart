@@ -1,4 +1,7 @@
 import 'package:material_ui/material_ui.dart';
+
+import '../widgets/selectable_label.dart';
+
 import 'package:meshchan_core/meshchan_core.dart';
 
 import '../runtime/protocol.dart';
@@ -141,8 +144,9 @@ List<(String, Object?)> configurationFacts(DiagnosticRun run) {
 class DiagnosticOutcomes extends StatelessWidget {
   const DiagnosticOutcomes({super.key, required this.value});
   final OperationSnapshot value;
-  Widget facts(List<(String, Object?)> facts) =>
-      SelectableText(facts.map((e) => '${e.$1}: ${observed(e.$2)}').join('\n'));
+  Widget facts(List<(String, Object?)> facts) => SelectableLabel(
+    facts.map((e) => '${e.$1}: ${observed(e.$2)}').join('\n'),
+  );
   Widget save(String label, SaveSnapshot? s) => facts([
     ('$label save', s?.state),
     ('$label error', s?.error?.code),
@@ -171,7 +175,7 @@ class DiagnosticOutcomes extends StatelessWidget {
         ('Gate lease', value.generation),
         ('Cancel requested', value.cancelRequested),
       ]),
-      SelectableText(
+      SelectableLabel(
         value.runId == null
             ? 'No committed run ID observed.'
             : 'Run ID: ${value.runId}',

@@ -8,7 +8,7 @@ Navigation, rebuilds, focus and minimization do not reopen storage or recover ag
 The public core packages and CLI remain pure Dart. The application uses the same
 root Pub lockfile; do not resolve a separate member lockfile.
 
-The current engineering candidate is `0.1.0-rc.1+6`; see the
+The current materials candidate is `0.1.0-rc.1+7`; see the
 [version input contract](../../docs/development.md#product-version-and-native-identity-1e2).
 Its RC identity does not inherit historical hardware acceptance.
 The historical complete `0.1.0-beta.1+5` Release has
@@ -240,9 +240,9 @@ open -n "$MESHCHAN_BUILD_ROOT/Derived/Build/Products/Release/Meshchan.app" \
 
 Only macOS platform files are generated. The minimum target is macOS 12.0.
 The product is `Meshchan`, Bundle identifier `org.meshchan.meshchan`. The package
-version is `0.1.0-rc.1+6`. Tracked `Configs/Version.xcconfig` supplies Apple's
-numeric `0.1.0` / `6` and the full `MeshchanProductVersion`. The standard About
-panel displays `0.1.0-rc.1` and build `6`. Native preflight rejects conflicting
+version is `0.1.0-rc.1+7`. Tracked `Configs/Version.xcconfig` supplies Apple's
+numeric `0.1.0` / `7` and the full `MeshchanProductVersion`. The standard About
+panel displays `0.1.0-rc.1` and build `7`. Native preflight rejects conflicting
 Flutter inputs; actual plist and compiled runtime are checked separately.
 The previous build 3 observed short version was `0.1.0.1`, build `3`; its Dart
 build defines retained `0.1.0-beta.1` and `3`. Build 4 was independently observed
@@ -497,7 +497,7 @@ required. Preview resolves saved parameters without accessing hardware. Click
 **Start and record** to capture the request and selected path; the worker resolves
 again, freezes the effective parameters and calls public `CoreStorage.record()`.
 The core commits registration before invoking a fresh lazy transport factory.
-The current candidate records `0.1.0-rc.1+6`, using the source identity checked
+The current candidate records `0.1.0-rc.1+7`, using the source identity checked
 against manifests and raw native build inputs, including direct Dart processes.
 Historical runs retain their original app/build version.
 

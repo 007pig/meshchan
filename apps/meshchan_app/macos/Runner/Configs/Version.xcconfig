@@ -1,5 +1,5 @@
-// Explicit engineering candidate; build 6 follows accepted Beta build 5.
+// Materials candidate build 7 follows engineering build 6 with updated notices.
 // Checked by tool/check_product_version.py and every native build.
 MESHCHAN_PRODUCT_VERSION = 0.1.0-rc.1
 MESHCHAN_APPLE_SHORT_VERSION = 0.1.0
-MESHCHAN_APP_BUILD = 6
+MESHCHAN_APP_BUILD = 7

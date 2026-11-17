@@ -26,10 +26,10 @@ class ProductIdentityTest(unittest.TestCase):
                 apple_short_version(version)
 
     def test_source_template_and_explicit_build_progression(self):
-        # Accepted 1D build 5 -> engineering candidate 6, a known local decision,
+        # Engineering build 6 -> materials candidate 7, a known local decision,
         # not proof of a global never-reused build allocator.
-        self.assertGreater(6, 5)
-        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', 6)['CFBundleVersion'], '6')
+        self.assertGreater(7, 6)
+        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', 7)['CFBundleVersion'], '7')
         for build in (0, -1, True, '6'):
             with self.assertRaises(ValueError):
                 check_source_identity(c.ROOT, '0.1.0-rc.1', build)
@@ -47,7 +47,7 @@ class ProductIdentityTest(unittest.TestCase):
                 original = path.read_text()
                 path.write_text(original.replace(before, after))
                 with self.assertRaises(ValueError):
-                    check_source_identity(root, '0.1.0-rc.1', 6)
+                    check_source_identity(root, '0.1.0-rc.1', 7)
                 path.write_text(original)
 
     def test_actual_app_missing_incomplete_and_each_wrong_or_missing_field(self):

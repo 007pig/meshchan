@@ -830,3 +830,59 @@ record remain unchanged. 1E.4 must still establish its sustainable build entry;
 replacement/installation-information checks under formal signing. No Developer
 ID, notarization, DMG, installation/upgrade/minimum OS/Intel acceptance, USB/RF,
 remote CI dispatch or public release was performed or pre-approved here.
+
+## PR #41 CI follow-up: diagnostic process version
+
+On November 17, 2026, both jobs in the initial PR run
+[44109824424](https://github.com/007pig/meshchan/actions/runs/44109824424)
+failed in the independent diagnostic-process check with `Bad state: actual app
+version`. The push run failed at the same check. The build-7 runtime correctly
+recorded `0.1.0-rc.1+7`, but `tool/diagnostic_process.dart` still expected build 6
+in its final-record and independent-reopen assertions. Update both assertions
+to the explicit build-7 value; keep the actual persisted-version checks. Also
+correct the App README's current candidate, native build and recorded-version
+descriptions. Historical fixtures and historical product evidence retain their
+original identities.
+
+The host used `/opt/homebrew/bin/python3` 3.15.2 and the existing bundled Dart
+3.14.0. The first local attempt selected Homebrew clang-18 from the inherited
+PATH and failed linking libserialport with `library 'System' not found` before
+reaching the version assertion. Repeating with the documented process-local
+Apple-compiler-first PATH reproduced the exact CI assertion failure. No SDK,
+dependency or global environment setting was changed.
+
+After the fix, the following checks exited 0:
+
+```sh
+PATH="/usr/bin:/opt/homebrew/bin:$PATH" /opt/homebrew/bin/python3 apps/meshchan_app/tool/check_diagnostic_process.py --dart /opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart --evidence-root build/phase-1e3-ci-fix/evidence/diagnostic
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart format --output=none --set-exit-if-changed apps/meshchan_app/tool/diagnostic_process.dart
+/opt/homebrew/share/flutter/bin/cache/dart-sdk/bin/dart analyze apps/meshchan_app/tool/diagnostic_process.dart
+/opt/homebrew/bin/python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 7
+/opt/homebrew/bin/python3 -m unittest discover -s tool -p product_identity_test.py
+git diff --check
+```
+
+The diagnostic check passed all five modes (`normal`, `resolve`, `stop`,
+`prepared`, `fault`), including independent history reopens. Fault reclamation
+still reports `normalClose: false` and `resourcesReleased: false`. Format made
+no changes, analysis found no issues, and all five Python identity tests passed.
+These checks use owned synthetic data and fake transports, without USB/RF or
+GUI interaction. Evidence, including the original failures, is retained under
+`build/phase-1e3-ci-fix/evidence/`.
+
+Recollect and strictly check the updated source snapshot with the commands in
+[the current materials contract](../releases/phase-1e3-licenses.md#collection-and-strict-checking).
+Both commands exited 0: PASS, 273 materials, no open gates or check failures;
+integrityAndCoverage and thirdPartyMaterials both PASS. The new directory is
+`build/phase-1e3-ci-fix/materials/`, with 725,054,629 material bytes plus manifest.
+Manifest SHA-256:
+`86c64b9cf03ecd827b90b7c0eaa1a3ff6514696d3deb77798130332c451a0d50`.
+Its source baseline is `dd1c4ce87cc1f1a72d33b4df5a85af732a19c207` plus actual
+working-tree input hashes. The outcome document remains excluded as specified.
+The independently required 137 compilation inputs still exactly match the
+original before/after build map, and complete App/CLI inventories match the
+previous build-7 package. No new product build is needed for this verification
+script/documentation correction; the original candidates, receipts and material
+package are preserved. GPL-3.0-only, CLA and downstream signing/distribution
+boundaries remain unchanged. Remote CI results for the follow-up commit are
+reported separately on PR #41.

@@ -5,6 +5,10 @@ description: Run real macOS GUI automation inside a UTM VM over SSH, including b
 
 # macOS VM GUI Testing
 
+For a Meshchan review fix, run the relevant unit tests. Use this skill when
+the task includes guest GUI validation, such as applicable validation before
+opening a PR. See the [validation workflow](../../../docs/testing.md#review-fixes-and-pre-pr-validation).
+
 Read [the project guide](../../../docs/macos-vm-gui-testing.md) for first-time
 installation, permissions, command examples, historical evidence and recovery.
 Use `scripts/vm.py --help` for orchestration. Use the project's verified Python

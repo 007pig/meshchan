@@ -22,6 +22,30 @@ real USB/serial. A VM blocker does not silently authorize host GUI fallback.
 The [build 5 completion](validation/phase-1d11-rf-matrix-completion.md) separates
 host hardware, guest offline UI and retained failed/unverified variants.
 
+## Review fixes and pre-PR validation
+
+After fixing a review finding, run the smallest set of unit tests that covers
+the changed behavior and the regression. Include the directly affected callers
+when a shared helper changes. For example, a change to the Release builder can
+start with its focused tool tests.
+
+```sh
+/opt/homebrew/bin/python3 -m unittest discover -s tool -p 'build_release_test.py'
+```
+
+Passing the relevant unit tests completes local verification of a review fix,
+including follow-up fixes on an open PR. Defer the full test matrix, complete
+product builds, installation tests, VM GUI acceptance, and strict materials
+verification to the applicable pre-PR validation. Report the commands actually
+run, their outcomes and any deferred or blocked checks.
+
+Before opening a PR, complete the applicable full validation for the final
+proposed changes. For Release candidate changes, use the [Release build guide](releases/phase-1e4-build.md)
+for real builds, product verification, applicable installation and runtime
+tests, and strict materials. For documentation or skill changes, check the
+affected Markdown, links, and skill format. Existing CI, release acceptance,
+and explicit authorization for real hardware testing follow their own rules.
+
 ## Four-member sequential regression (1D.10)
 
 For the current beta candidate, explicitly validate the release decision and

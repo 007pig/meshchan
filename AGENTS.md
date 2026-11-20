@@ -1,5 +1,14 @@
 # Agent Guidance
 
+## Review fixes and pull requests
+
+- After fixing a review finding, run the unit tests that cover the changed
+  behavior and its regression risk. Passing those tests completes local
+  review-fix verification, including follow-up fixes on an open PR.
+- Run the applicable full validation once the changes are ready and before
+  opening a PR. See the [validation workflow](docs/testing.md#review-fixes-and-pre-pr-validation)
+  for test selection, reporting, and Release candidate checks.
+
 ## Local Python toolchain
 
 - Run Python scripts with `python3`, never `python`.

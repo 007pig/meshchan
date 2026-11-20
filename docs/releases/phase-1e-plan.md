@@ -65,6 +65,10 @@ products/records remain immutable. Current complete source-input/build/output
 and replacement receipts are linked from the 1E.3 validation record; they do not
 replace the separate 1E.4 build-entry or 1E.6 formal-signing acceptance.
 
+The 1E.4 Release recipe selects App build `8` for the embedded Flutter
+engine's runpath change. See the [build guide](phase-1e4-build.md) and
+[candidate validation record](../validation/phase-1e4-build.md).
+
 The separate [CLA](../../CLA.md) and [contribution guide](../../CONTRIBUTING.md)
 define explicit, recorded incoming grants to 007pig for GPL community and
 closed-source commercial editions. Contributors keep copyright. This policy
@@ -242,3 +246,12 @@ are accurate, and the public downloads match the accepted final assets.
 1E.2 can start from build 5, the checked member/constant/fallback versions, the
 observed Apple-version mapping risk, and the preserved identity/data contracts
 above; it must recheck actual source state before making its changes.
+
+## 1E.4 build entry
+
+The [local Release entry](phase-1e4-build.md) implements repeatable complete
+App/CLI builds, contemporaneous input/output receipts and explicit strict
+material integration. [Its validation record](../validation/phase-1e4-build.md)
+reports handoff status and identifies the exact products once accepted for 1E.5.
+Later steps consume those bytes and rebind them after signing and packaging.
+Final release acceptance follows the remaining gates in this contract.

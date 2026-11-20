@@ -1,9 +1,10 @@
 # Meshchan
 
-The current materials candidate is **0.1.0-rc.1** (app build **7**).
+The current Release build candidate is **0.1.0-rc.1** (app build **8**).
 [1E.2 version and identity validation](docs/validation/phase-1e2-version-identity.md)
-retains engineering build `6`; the [current candidate evidence](docs/validation/phase-1e3-materials.md)
-uses build `7` for updated automatic notices, with Apple numeric version `0.1.0`.
+retains engineering build `6`; the [1E.3 candidate evidence](docs/validation/phase-1e3-materials.md)
+uses build `7` for updated automatic notices. Build `8` updates the embedded
+Flutter engine runpath and uses Apple numeric version `0.1.0`.
 Final packaging, signing, notarization, installation and publication gates remain
 pending under the [1E release contract](docs/releases/phase-1e-plan.md).
 
@@ -85,7 +86,7 @@ A subsequent [independent POSIX control](docs/hardware-validation.md#step-7-inde
 | `packages/meshcore_link` | Flutter-independent Dart core with single-use Companion sessions, serialized commands, bounded shared-inbox reception, binary channel codecs, finite diagnostic PING/responder tasks, serial framing/transport, and serial diagnostics. |
 | `packages/meshchan_core` | Persistent drafts/profiles/settings and parameter resolution; finite diagnostic recording with separate logical/cleanup/persistence results and exclusive startup recovery; bounded history queries, guarded deletion, automatic retention and safe JSON summary export (1C.7). SQLite schema 1 remains unchanged. The public host API is now wired into meshctl (1C.8). See the [offline history API and example](packages/meshchan_core/README.md#diagnostic-history-retention-and-safe-export-1c7). |
 | `apps/meshctl` | Offline draft/profile/settings/history commands and asynchronous diagnostic CLI: `ports`, `port-check`, `info`, `watch`, and finite `datagram send/listen/ping/respond`; text/JSON/NDJSON output and awaited cleanup. Separate development-only source/AOT acceptance probe. |
-| `apps/meshchan_app` | Flutter macOS host, version `0.1.0-rc.1+7`, with offline saves, finite USB checks, recorded PING/Responder, History/export and coordinated Quit. Normal startup opens offline storage without device access. |
+| `apps/meshchan_app` | Flutter macOS host, version `0.1.0-rc.1+8`, with offline saves, finite USB checks, recorded PING/Responder, History/export and coordinated Quit. Normal startup opens offline storage without device access. |
 
 Local Python scripts and tests use the latest installed stable Python **3.15 or
 newer**. On this Mac, `/opt/homebrew/bin/python3` is the verified 3.15.2 entry;

@@ -5,7 +5,9 @@
   },
   "sky_engine-371f77202a73e8dff57a8b3bff75bca55c090aee.zip": {
     "url": "https://storage.googleapis.com/flutter_infra_release/flutter/371f77202a73e8dff57a8b3bff75bca55c090aee/sky_engine.zip",
-    "sha256": "02cc795dd6e8c7add0bf92c77210392f6e4c8788bc17cb5c7f8c652a56a8b461"
+    "sha256": "02cc795dd6e8c7add0bf92c77210392f6e4c8788bc17cb5c7f8c652a56a8b461",
+    "licenseMember": "sky_engine/LICENSE",
+    "licenseSha256": "0d5050142d6b4605704d8844fcd5656ac23e718cf8f7d1e41149950da5edb4ef"
   },
   "sqlite3.dart-f144d1c56b22d5772d164c7c3f20eb1df482fcf3.tar.gz": {
     "url": "https://codeload.github.com/simolus3/sqlite3.dart/tar.gz/f144d1c56b22d5772d164c7c3f20eb1df482fcf3",

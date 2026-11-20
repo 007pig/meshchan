@@ -150,7 +150,7 @@ void main() {
     expect(
       runs
           .where((r) => !historicalIds.containsKey(r.runId))
-          .every((r) => r.appVersion == '0.1.0-rc.1+7'),
+          .every((r) => r.appVersion == '0.1.0-rc.1+8'),
       true,
     );
     for (final entry in historicalIds.entries) {

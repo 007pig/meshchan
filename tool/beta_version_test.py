@@ -24,13 +24,13 @@ class CandidateVersionTest(unittest.TestCase):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(c.ROOT / name, target)
-            self.assertEqual(c.versions(root, RC, app_build=7)['meshchan_app'], RC + '+7')
+            self.assertEqual(c.versions(root, RC, app_build=8)['meshchan_app'], RC + '+8')
             for name in names:
                 target = root / name
                 original = target.read_text()
                 target.write_text(original.replace(RC, '0.1.0-dev.2'))
                 with self.assertRaises(ValueError, msg=name):
-                    c.versions(root, RC, app_build=7)
+                    c.versions(root, RC, app_build=8)
                 target.write_text(original)
             for owner, dependency in [('meshchan_core', 'meshcore_link'),
                     ('meshctl', 'meshchan_core'), ('meshctl', 'meshcore_link'),
@@ -40,19 +40,19 @@ class CandidateVersionTest(unittest.TestCase):
                 original = target.read_text()
                 target.write_text(original.replace(dependency + ': ^' + RC, dependency + ': ^0.1.0-dev.2'))
                 with self.assertRaisesRegex(ValueError, 'constraint'):
-                    c.versions(root, RC, app_build=7)
+                    c.versions(root, RC, app_build=8)
                 target.write_text(original)
             fallback = root / 'apps/meshchan_app/lib/runtime/build_version.dart'
             original = fallback.read_text()
-            fallback.write_text(original.replace("appBuildNumber = '7'", "appBuildNumber = '6'"))
+            fallback.write_text(original.replace("appBuildNumber = '8'", "appBuildNumber = '7'"))
             with self.assertRaisesRegex(ValueError, 'App fallback'):
-                c.versions(root, RC, app_build=7)
+                c.versions(root, RC, app_build=8)
             fallback.write_text(original)
             manifest = root / 'packages/meshcore_link/pubspec.yaml'
             original = manifest.read_text()
             manifest.write_text(original.replace('version: ' + RC, 'missing-version: ' + RC))
             with self.assertRaisesRegex(ValueError, 'Missing or malformed version field'):
-                c.versions(root, RC, app_build=7)
+                c.versions(root, RC, app_build=8)
             manifest.write_text(original)
             with self.assertRaises(ValueError):
                 c.versions(root)  # Historical default must not accept an RC checkout.

@@ -1,5 +1,12 @@
 # Developer Guide
 
+## Review fixes and pre-PR validation
+
+Run the relevant unit tests for each review fix. Complete the applicable full
+validation for the final changes before opening a PR. In a full repository
+checkout, use the [testing guide](testing.md#review-fixes-and-pre-pr-validation)
+for test selection and reporting.
+
 ## Current Flutter SDK
 
 The project uses **Flutter 3.50.0 stable and its bundled Dart 3.14.0**.
@@ -32,9 +39,9 @@ SDK and validation sections below retain their historical versions.
 
 ## Product version and native identity (1E.2)
 
-The current materials candidate is product `0.1.0-rc.1`, App build `7`, following
-engineering build `6`. Automatic GPL notices required a new App build. The 1E.2
-record retains build `6`. This local progression does not establish a remote
+The current Release build candidate is product `0.1.0-rc.1`, App build `8`.
+Its embedded Flutter engine omits the host library runpath. Build `7` added
+automatic GPL notices, following the engineering build `6` recorded in 1E.2. This local progression does not establish a remote
 build allocator or imply final distribution acceptance. Never reuse a build for
 changed distributable content. Keep historical evidence and stored run versions.
 
@@ -51,7 +58,7 @@ A validated SemVer without build metadata maps its `major.minor.patch` to
 `MESHCHAN_PRODUCT_VERSION`, the Dart source identity and CLI. The positive integer
 `MESHCHAN_APP_BUILD` supplies `CFBundleVersion`; native `MeshchanProductVersion`
 preserves the full version for the standard About panel. App runtime and new
-App records use `0.1.0-rc.1+7`; CLI and new CLI records use `0.1.0-rc.1`.
+App records use `0.1.0-rc.1+8`; CLI and new CLI records use `0.1.0-rc.1`.
 Database schema, diagnostic format, JSON envelope and radio protocol do not change.
 
 Use ordinary `flutter run -d macos`, Debug/Release builds and source tests with
@@ -65,9 +72,9 @@ product source of truth. Dart runtime uses the checked source constants, so test
 and direct Dart processes share the compiled identity without SDK defines.
 
 ```bash
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 7
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 7 \
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
@@ -200,7 +207,7 @@ Run these sequentially with the existing Flutter SDK and locked workspace:
 python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 (cd apps/meshchan_app && flutter build macos --debug --no-pub)
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 7 \
+python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 8 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
@@ -4146,3 +4153,13 @@ signature verification fails. Preserve the failed build/signature log; do not
 manually alter SDK, renderer, privacy state or signing policy to manufacture a
 pass. See [desktop validation](validation/phase-1d9-desktop-behavior.md) for exact
 source/product cutoffs, owned fixtures and remaining evidence limits.
+
+## Traceable Release entry (1E.4)
+
+Use [the local Release build guide](releases/phase-1e4-build.md) for the owned
+`tool/build_release.py build`, independent `check`, and strict `materials` stages.
+It preserves the current RC/build decision, builds complete App/CLI products,
+records full inputs/inventories and shares the existing checkout build lock.
+[The validation record](validation/phase-1e4-build.md) reports handoff status and
+names the exact candidate once accepted for 1E.5. Later signing and packaging
+consume and rebind those recorded bytes.

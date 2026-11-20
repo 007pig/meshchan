@@ -4,7 +4,10 @@ Describe the problem and the resulting behavior.
 
 ## Validation
 
-List relevant commands and outcomes, including failures or unavailable checks.
+Before opening the PR, complete the applicable full validation for the proposed
+changes. List the commands and outcomes, including failed or unavailable checks.
+For later review fixes, record the relevant unit tests and their results.
+See the [validation workflow](https://github.com/007pig/meshchan/blob/master/docs/testing.md#review-fixes-and-pre-pr-validation).
 
 ## Contribution rights
 

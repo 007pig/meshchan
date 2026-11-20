@@ -2,9 +2,14 @@
 import base64
 import contextlib
 import io
+import json
+import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -16,6 +21,55 @@ from product_identity import (apple_short_version, check_app, check_source_ident
 
 
 class ProductIdentityTest(unittest.TestCase):
+    def test_xcode_version_checks_use_the_supplied_interpreter(self):
+        project = c.ROOT/'apps/meshchan_app/macos/Runner.xcodeproj/project.pbxproj'
+        scripts = [json.loads(value) for value in re.findall(r'shellScript = ("(?:[^"\\]|\\.)*");', project.read_text())
+                   if 'check_product_version.py' in value]
+        self.assertEqual(len(scripts), 2)
+        with tempfile.TemporaryDirectory(prefix='version phase with spaces ') as directory:
+            root = Path(directory)
+            macos = root/'apps/meshchan_app/macos'
+            (macos/'Flutter/ephemeral').mkdir(parents=True)
+            checker = root/'tool/check_product_version.py'
+            checker.parent.mkdir()
+            checker.write_text("from pathlib import Path\nPath('checker.log').write_text('fallback')\n")
+            interpreter = root/'selected bin/python3'
+            interpreter.parent.mkdir()
+            interpreter.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > checker.log\n')
+            interpreter.chmod(0o755)
+            flutter = root/'flutter sdk'
+            assemble = flutter/'packages/flutter_tools/bin/macos_assemble.sh'
+            assemble.parent.mkdir(parents=True)
+            assemble.write_text('#!/bin/sh\ntouch assemble.log\n')
+            assemble.chmod(0o755)
+            env = {'PROJECT_DIR': str(macos), 'PRODUCT_NAME': 'Meshchan', 'FLUTTER_ROOT': str(flutter),
+                   'PATH': str(Path(sys.executable).parent)+os.pathsep+os.defpath}
+            checker_log, assemble_log = macos/'checker.log', macos/'assemble.log'
+            for index, script in enumerate(scripts):
+                for setting in ('selected', 'missing', 'fallback'):
+                    with self.subTest(phase=index, setting=setting):
+                        checker_log.unlink(missing_ok=True)
+                        assemble_log.unlink(missing_ok=True)
+                        phase_env = env.copy()
+                        if setting != 'fallback':
+                            phase_env['MESHCHAN_BUILD_PYTHON'] = str(interpreter if setting == 'selected'
+                                                                      else root/'missing interpreter')
+                        phase = subprocess.run(['/bin/sh', '-c', script], cwd=macos, env=phase_env,
+                                               text=True, capture_output=True)
+                        if setting == 'missing':
+                            self.assertNotEqual(phase.returncode, 0)
+                            self.assertFalse(checker_log.exists())
+                            self.assertFalse(assemble_log.exists())
+                        else:
+                            self.assertEqual(phase.returncode, 0, phase.stderr)
+                            self.assertTrue(assemble_log.is_file())
+                            if setting == 'fallback':
+                                self.assertEqual(checker_log.read_text(), 'fallback')
+                            else:
+                                path, flag = checker_log.read_text().splitlines()
+                                self.assertEqual(Path(path).resolve(), checker.resolve())
+                                self.assertEqual(flag, '--xcode-environment')
+
     def test_semver_mapping_and_rejections(self):
         for version in ('0.1.0-rc.1', '0.1.0-beta.1', '0.1.0'):
             self.assertEqual(apple_short_version(version), '0.1.0')
@@ -26,10 +80,9 @@ class ProductIdentityTest(unittest.TestCase):
                 apple_short_version(version)
 
     def test_source_template_and_explicit_build_progression(self):
-        # Engineering build 6 -> materials candidate 7, a known local decision,
-        # not proof of a global never-reused build allocator.
-        self.assertGreater(7, 6)
-        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', 7)['CFBundleVersion'], '7')
+        # Recorded build progression after the App engine runpath change.
+        self.assertGreater(8, 7)
+        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', 8)['CFBundleVersion'], '8')
         for build in (0, -1, True, '6'):
             with self.assertRaises(ValueError):
                 check_source_identity(c.ROOT, '0.1.0-rc.1', build)
@@ -47,7 +100,7 @@ class ProductIdentityTest(unittest.TestCase):
                 original = path.read_text()
                 path.write_text(original.replace(before, after))
                 with self.assertRaises(ValueError):
-                    check_source_identity(root, '0.1.0-rc.1', 7)
+                    check_source_identity(root, '0.1.0-rc.1', 8)
                 path.write_text(original)
 
     def test_actual_app_missing_incomplete_and_each_wrong_or_missing_field(self):

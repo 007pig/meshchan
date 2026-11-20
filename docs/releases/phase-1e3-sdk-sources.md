@@ -157,6 +157,11 @@ platform and toolchain paths with xcrun/xcode-select, regenerates release Ninja
 definitions, and records the exact compiler archive hashes and Ninja argv in
 `evidence/build-configuration.json`. It does not compile or modify a product.
 The original GN arguments are also in `sdk-source-report.json`.
+Before writing, the command checks the report, compiler extraction paths, and
+persistent GN output paths. Existing files at write destinations must be owned
+regular files. Compiler symlinks must match their pinned archive entries, and
+Dart's generated SDK links may point to the corresponding SDKs in the selected
+Xcode developer directory.
 
 The executable native compilation commands are then:
 

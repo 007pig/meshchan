@@ -54,8 +54,10 @@ runtime. Reuse the accepted Release build for packaging-only changes.
 
 ## Four-member sequential regression (1D.10)
 
-For the current beta candidate, explicitly validate the release decision and
-pass it through the existing runner (historical 1C defaults remain dev.3):
+To repeat the historical Beta build 5 regression, use its matching checkout
+and pass that candidate's identity explicitly. The runner's historical 1C
+defaults remain dev.3. For the current Release candidate, follow the
+[Release build guide](releases/phase-1e4-build.md).
 
 ```sh
 /opt/homebrew/bin/python3 tool/check_product_version.py --expected-version 0.1.0-beta.1 --app-build 5
@@ -1036,6 +1038,11 @@ boundary and real SQLite transactions. No maintenance skip switch or raised
 blanket retention limit is introduced. Existing profile/settings commit-failure
 cases now await their preceding settings-triggered maintenance before arming the
 next one-shot commit fault, so the fault still tests its intended transaction.
+
+After exclusive startup recovery, retention can skip decoding already validated
+settled runs if the total row count fits within the configured limit. It still
+validates archived rows. Over-limit and explicit maintenance passes read the full
+rank, preserving ordering and the committed-per-batch deletion evidence.
 
 | Test file under test/history | Evidence |
 | --- | --- |

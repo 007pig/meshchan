@@ -7,6 +7,7 @@ import 'package:meshchan_core/meshchan_core.dart';
 import 'package:meshcore_link/meshcore_link.dart';
 
 import 'src/business_command.dart';
+import 'src/business_input.dart';
 import 'src/business_storage.dart';
 import 'src/stored_datagram_command.dart';
 import 'src/cli_display.dart';
@@ -32,8 +33,9 @@ Future<int> runCli(
   String Function(String? explicit)? selectDataDirectory,
 }) async {
   final io = CliOutput(output, error);
+  final int code;
   try {
-    final code = await _run(
+    code = await _run(
       arguments,
       io,
       serialPorts,
@@ -44,11 +46,10 @@ Future<int> runCli(
       openStorage,
       selectDataDirectory,
     );
-    await io.drain();
-    return code == 0 && io.failed ? 74 : code;
   } finally {
     await io.drain();
   }
+  return code == 0 && io.failed ? 74 : code;
 }
 
 Future<int> _run(
@@ -229,12 +230,10 @@ Future<int> _run(
   if (options.wasParsed('data-dir')) {
     return _usageError(io, '--data-dir does not apply to this command.');
   }
+  final String? checkedPort;
   SessionOptions? sessionOptions;
   try {
-    if (name == 'port-check' &&
-        (command.option('port')?.trim().isEmpty ?? true)) {
-      throw FormatException('$name requires a nonempty --port.');
-    }
+    checkedPort = name == 'port-check' ? requiredPortOption(command) : null;
     if (name == 'info' || name == 'watch') {
       final request = _number(command, 'timeout', 1, 86400)!;
       final initialization = _number(command, 'init-timeout', 1, 86400)!;
@@ -247,12 +246,9 @@ Future<int> _run(
       final duration = name == 'watch'
           ? _number(command, 'duration', 1, 86400)
           : null;
-      if (command.option('port')?.trim().isEmpty ?? true) {
-        throw FormatException('$name requires a nonempty --port.');
-      }
       sessionOptions = SessionOptions(
         command: name,
-        port: command.option('port')!,
+        port: requiredPortOption(command),
         json: command.flag('json'),
         verbose: command.flag('verbose'),
         requestTimeout: Duration(seconds: request),
@@ -318,7 +314,7 @@ Future<int> _run(
           }
         }
       case 'port-check':
-        final path = command.option('port')!;
+        final path = checkedPort!;
         ports.checkPort(path);
         io.out(
           json

@@ -38,12 +38,16 @@ final class MeshchanResponderTask
   @override
   void _ready() {
     final now = _now;
+    final remaining = options.taskTimeout - now;
+    if (listenDuration >= remaining) {
+      _receiveFor(remaining, () {});
+      return;
+    }
     _listenDeadline = now + listenDuration;
-    _listenTimer = Timer(_timerDelay(listenDuration), () {
+    _listenTimer = Timer(timerDelay(listenDuration), () {
       if (_check()) _stopListening(DiagnosticListenStopReason.durationElapsed);
     });
-    final remaining = options.taskTimeout - now;
-    _receiveFor(listenDuration < remaining ? listenDuration : remaining, () {});
+    _receiveFor(listenDuration, () {});
   }
 
   bool _canProcess() {

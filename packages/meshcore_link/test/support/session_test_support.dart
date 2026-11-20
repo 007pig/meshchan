@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -6,6 +7,23 @@ import 'package:meshcore_link/meshcore_link.dart';
 import 'package:test/test.dart';
 
 import 'fake_companion_transport.dart';
+
+// Match the VM's timer truncation while retaining fake elapsed precision.
+void withMillisecondTimers(void Function(FakeAsync) body) {
+  fakeAsync((clock) {
+    runZoned(
+      () => body(clock),
+      zoneSpecification: ZoneSpecification(
+        createTimer: (_, parent, zone, duration, callback) =>
+            parent.createTimer(
+              zone,
+              Duration(milliseconds: duration.inMilliseconds),
+              callback,
+            ),
+      ),
+    );
+  });
+}
 
 /// Observe immediately so an error is never detached from its owning test zone.
 final class Outcome<T> {

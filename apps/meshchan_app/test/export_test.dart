@@ -16,19 +16,24 @@ import 'support/draft_runtime.dart';
 class Panel implements ExportPlatform {
   Completer<String?>? pending;
   int panels = 0, cancels = 0, publishes = 0;
+  int? canceledJob;
   String? target = '/owned/new.json';
   ExportFailure? failure;
   Future<void>? publication;
+  Future<void>? cancellation;
   @override
   Future<String?> choose(int job, String name) async {
     panels++;
+    if (canceledJob == job) throw StateError('Panel was already canceled.');
     return pending == null ? target : pending!.future;
   }
 
   @override
   Future<void> cancelPanel(int job) async {
     cancels++;
+    canceledJob = job;
     if (pending?.isCompleted == false) pending!.complete(null);
+    await cancellation;
   }
 
   @override
@@ -259,6 +264,93 @@ void main() {
       },
     );
   }
+  test('cancel from a choosing listener reaches the opened panel', () async {
+    final runtime = DraftRuntime();
+    runtime.onHistory = (_) async =>
+        const HistoryExportValue(DiagnosticSummaryPage(json: original));
+    final panel = Panel()..pending = Completer<String?>();
+    final files = Files();
+    final output = ExportCoordinator(runtime, platform: panel, files: files);
+    output.addListener(() {
+      final job = output.job!;
+      if (job.phase == ExportPhase.choosing && !job.canceled) output.cancel();
+    });
+
+    await output.start(const HistorySelection());
+    await output.drain();
+
+    expect(panel.cancels, 1);
+    expect(output.job!.canceled, isTrue);
+    expect(output.job!.failure, isNull);
+    expect(files.creates, 0);
+    output.dispose();
+    await runtime.states.close();
+  });
+
+  for (final phase in [ExportPhase.generating, ExportPhase.staging]) {
+    test('synchronous cancel during $phase prevents new work', () async {
+      final runtime = DraftRuntime();
+      var queries = 0;
+      runtime.onHistory = (_) async {
+        queries++;
+        return const HistoryExportValue(DiagnosticSummaryPage(json: original));
+      };
+      final panel = Panel(), files = Files();
+      final output = ExportCoordinator(runtime, platform: panel, files: files);
+      output.addListener(() {
+        if (output.job!.phase == phase) output.cancel();
+      });
+
+      await output.start(const HistorySelection());
+
+      expect(output.job!.canceled, isTrue);
+      expect(output.job!.failure, isNull);
+      expect(queries, phase == ExportPhase.generating ? 0 : 1);
+      expect(panel.panels, queries);
+      expect(files.creates, 0);
+      expect(output.settled, isTrue);
+      output.dispose();
+      await runtime.states.close();
+    });
+  }
+
+  test(
+    'pending native cancellation keeps the current export job owned',
+    () async {
+      final runtime = DraftRuntime();
+      runtime.onHistory = (_) async =>
+          const HistoryExportValue(DiagnosticSummaryPage(json: original));
+      final cancelAck = Completer<void>();
+      final panel = Panel()
+        ..pending = Completer<String?>()
+        ..cancellation = cancelAck.future;
+      final output = ExportCoordinator(
+        runtime,
+        platform: panel,
+        files: Files(),
+      );
+
+      final first = output.start(const HistorySelection());
+      await turn();
+      final canceled = output.job;
+      output.cancel();
+      await first;
+      expect(output.busy, isTrue);
+      await output.start(const HistorySelection());
+      expect(output.job, same(canceled));
+      expect(panel.panels, 1);
+
+      cancelAck.complete();
+      await output.drain();
+      panel.pending = null;
+      await output.start(const HistorySelection());
+      expect(panel.panels, 2);
+      expect(output.job!.published, isTrue);
+      output.dispose();
+      await runtime.states.close();
+    },
+  );
+
   for (final failure in [
     ExportFailure.targetExists,
     ExportFailure.unsupported,
@@ -341,6 +433,71 @@ void main() {
     q.disposeEditors();
     await r.states.close();
   });
+  test(
+    'Quit requested during export cancellation shares the active attempt',
+    () async {
+      final r = DraftRuntime();
+      final panel = Panel()..pending = Completer<String?>();
+      r.onHistory = (_) async =>
+          const HistoryExportValue(DiagnosticSummaryPage(json: original));
+      final out = ExportCoordinator(r, platform: panel, files: Files());
+      final q = DraftQuitCoordinator(r, output: out);
+      addTearDown(r.states.close);
+      addTearDown(q.disposeEditors);
+      final work = out.start(const HistorySelection());
+      await turn();
+      expect(panel.panels, 1);
+
+      Future<bool>? reentrant;
+      out.addListener(() {
+        if (out.job!.canceled) reentrant ??= q.requestQuit();
+      });
+      final quit = q.requestQuit();
+      final concurrentQuit = reentrant;
+      expect(await quit, true);
+      await work;
+      expect(concurrentQuit, same(quit));
+      expect(r.begins, 1);
+      expect(r.shutdowns, 1);
+      expect(panel.cancels, 1);
+    },
+  );
+  test(
+    'History observers can start exports again only after Quit is canceled',
+    () async {
+      final r = DraftRuntime();
+      final out = ExportCoordinator(r, platform: Panel(), files: Files());
+      final q = DraftQuitCoordinator(r, output: out);
+      addTearDown(r.states.close);
+      addTearDown(q.disposeEditors);
+      await q.editor.newDraft(
+        ({required unknown}) async => LeaveChoice.discard,
+      );
+      q.editor.body.text = 'dirty';
+      q.prompt = ({required unknown}) async => LeaveChoice.continueEditing;
+
+      var requests = 0;
+      r.onHistory = (_) async {
+        requests++;
+        return const HistoryExportValue(DiagnosticSummaryPage(json: original));
+      };
+      Future<void>? duringQuit, afterCancel;
+      q.history.addListener(() {
+        if (q.history.blocked) {
+          duringQuit ??= out.start(const HistorySelection());
+        } else if (duringQuit != null) {
+          afterCancel ??= out.start(const HistorySelection());
+        }
+      });
+
+      expect(await q.requestQuit(), false);
+      expect(duringQuit, isNotNull);
+      expect(afterCancel, isNotNull);
+      await afterCancel;
+      expect(requests, 1);
+      expect(out.job?.published, isTrue);
+    },
+  );
   test(
     'Quit cancels summary; Continue never regenerates or reopens panel',
     () async {

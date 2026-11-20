@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Archive a pretested complete local product candidate and verify extraction."""
+"""Reproduce the historical dev.2 archive. Current packaging uses package_release.py."""
 import argparse
 import datetime
 import hashlib

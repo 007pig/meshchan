@@ -32,6 +32,15 @@ class SerialPortFailure implements Exception {
   String toString() => message;
 }
 
+/// Internal evidence that native open and its one recovery close both failed.
+final class NativeOpenCleanupFailure extends SerialPortFailure {
+  NativeOpenCleanupFailure(this.openError, this.cleanupError)
+    : super('$openError; cleanup failed: $cleanupError');
+
+  final Object openError;
+  final Object cleanupError;
+}
+
 /// Synchronous diagnostics. Constructing this service does not access hardware.
 class SerialPorts {
   SerialPorts({
@@ -51,53 +60,60 @@ class SerialPorts {
 
   SerialPortDescription _describe(String path) {
     try {
-      return _usingPort(path, (port) => port.getDescription(path));
+      final port = _createHandle(path);
+      return _withCleanup(() => port.getDescription(path), port.dispose);
     } on SerialPortFailure catch (failure) {
       return SerialPortDescription(path: path, warning: failure.message);
     }
   }
 
-  /// Opens only [path] for reading and writing, checks, closes, and disposes it.
-  /// No data or configuration is sent. Drivers may still reset some boards.
+  /// Opens and closes only [path]. No protocol data is sent. Native open can
+  /// apply terminal settings, and drivers may reset some boards.
   void checkPort(String path) {
-    _usingPort(path, (port) {
-      var opened = false;
-      _withCleanup(
-        () {
-          port.open();
-          opened = true;
-          // Ownership follows open(), even if the backend misreports fd 0.
-          if (!port.isOpen()) {
-            throw const SerialPortFailure('Port did not report an open state.');
-          }
-        },
-        () {
-          if (opened) {
-            port.close();
-            if (port.isOpen()) {
-              throw const SerialPortFailure(
-                'Port still reports an open state.',
-              );
-            }
-          }
-        },
+    if (path.trim().isEmpty || path.contains('\u0000')) {
+      throw const SerialPortFailure(
+        'Port path must be nonblank and contain no NUL.',
       );
-    });
-  }
-
-  T _usingPort<T>(String path, T Function(SerialPortHandle) action) {
+    }
     final port = _createHandle(path);
-    return _withCleanup(() => action(port), port.dispose);
+    var canDispose = true;
+    _withCleanup(
+      () {
+        try {
+          // Native open/close report their own failures. isOpen() in the
+          // pinned wrapper misclassifies the valid POSIX descriptor 0.
+          port.open();
+          canDispose = false;
+          port.close();
+          canDispose = true;
+        } on NativeOpenCleanupFailure catch (failure, stack) {
+          canDispose = false;
+          if (failure.openError is! SerialPortFailure) {
+            Error.throwWithStackTrace(failure.openError, stack);
+          }
+          rethrow;
+        }
+      },
+      () {
+        if (canDispose) {
+          port.dispose();
+        } else {
+          _unconfirmedPortHandles.add(port);
+        }
+      },
+    );
   }
 }
+
+// Keep native handles alive following an unconfirmed close.
+final _unconfirmedPortHandles = Set<SerialPortHandle>.identity();
 
 /// Small internal adapter seam for hardware-free lifecycle tests.
 abstract interface class SerialPortHandle {
   SerialPortDescription getDescription(String path);
 
-  /// On failure, implementations must release any partial native acquisition.
+  /// On failure, recover partial acquisition or throw [NativeOpenCleanupFailure].
   void open();
-  bool isOpen();
   void close();
   void dispose();
 }
@@ -120,9 +136,6 @@ class _NativeSerialPortHandle implements SerialPortHandle {
     () => _port.open(native.SerialPortMode.readWrite),
     _port.close,
   );
-
-  @override
-  bool isOpen() => _nativeCall(_port.isOpen);
 
   @override
   void close() => _nativeCall(_port.close);
@@ -183,14 +196,10 @@ SerialPortDescription readSerialPortDescription(
 /// Internal adapter helper: sp_open() can acquire a descriptor before failing.
 /// Recovery uses close(), not isOpen(), because the pinned wrapper misses fd 0.
 void openNativePort(void Function() open, void Function() close) {
-  var succeeded = false;
-  _withCleanup(
-    () {
-      _nativeCall(open);
-      succeeded = true;
-    },
-    () {
-      if (succeeded) return;
+  try {
+    _nativeCall(open);
+  } catch (openError, stack) {
+    try {
       _nativeCall(() {
         try {
           close();
@@ -200,8 +209,14 @@ void openNativePort(void Function() open, void Function() close) {
           if (exception.code != -1) rethrow;
         }
       });
-    },
-  );
+    } catch (cleanupError) {
+      Error.throwWithStackTrace(
+        NativeOpenCleanupFailure(openError, cleanupError),
+        stack,
+      );
+    }
+    rethrow;
+  }
 }
 
 /// Projects upstream info into display data without exporting identifier fields.

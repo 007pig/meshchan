@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:meshcore_link/meshcore_link.dart';
+import 'package:meshcore_link/src/timer_delay.dart';
 import 'package:test/test.dart';
 
 import 'support/fake_companion_transport.dart';
@@ -11,6 +12,44 @@ import 'support/session_test_support.dart';
 const second = Duration(seconds: 1);
 
 void main() {
+  test('timer quantization preserves zero and never wraps long delays', () {
+    const large = Duration(microseconds: 0x7fffffffffffffff);
+    expect(timerDelay(Duration.zero), Duration.zero);
+    expect(timerDelay(large), large);
+    expect(
+      timerDelay(const Duration(microseconds: 1)),
+      const Duration(milliseconds: 1),
+    );
+  });
+
+  test('fractional startup delay and request timeout never fire early', () {
+    withMillisecondTimers((clock) {
+      const budget = Duration(microseconds: 1500);
+      const rounding = Duration(microseconds: 500);
+      final transport = FakeCompanionTransport();
+      final session = MeshCoreSession(
+        transport: transport,
+        startupDelay: budget,
+        requestTimeout: budget,
+      );
+      final connected = Outcome(session.connect());
+      clock.elapse(budget);
+      expect(transport.sent, isEmpty);
+      clock.elapse(rounding);
+      expect(transport.sent, hasLength(1));
+      clock.elapse(budget);
+      expect(connected.done, isFalse);
+      clock.elapse(rounding);
+      expect(
+        session.lastFailure?.kind,
+        MeshCoreSessionFailureKind.requestTimeout,
+      );
+      expect(connected.done, isTrue);
+      Outcome(session.close());
+      clock.flushMicrotasks();
+    });
+  });
+
   test(
     'sequential initialization owns one subscription and sends inner content',
     () {

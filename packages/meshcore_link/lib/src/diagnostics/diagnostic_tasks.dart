@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../protocol/companion_messages.dart';
 import '../session/meshcore_session.dart';
+import '../timer_delay.dart';
 import 'diagnostic_cache.dart';
 import 'diagnostic_results.dart';
 import 'ping_pong.dart';
@@ -66,14 +67,6 @@ final class DiagnosticTaskOptions {
 void _positive(Duration value, String name) {
   if (value <= Duration.zero) throw ArgumentError('$name must be positive.');
 }
-
-// VM timers truncate fractional milliseconds. Round positive scheduling delays
-// up so an early callback cannot consume the only deadline check. Absolute
-// elapsed deadlines retain their original precision for admission/commitment.
-Duration _timerDelay(Duration duration) => Duration(
-  milliseconds:
-      (duration.inMicroseconds - 1) ~/ Duration.microsecondsPerMillisecond + 1,
-);
 
 // These two tasks share ownership and settlement, not a general executor API.
 abstract class _DiagnosticTask<R extends DiagnosticTaskResult> {
@@ -154,7 +147,7 @@ abstract class _DiagnosticTask<R extends DiagnosticTaskResult> {
     _owned = true;
     _watch.start();
     _origin = _elapsed?.call() ?? Duration.zero;
-    _taskTimer = Timer(_timerDelay(options.taskTimeout), () => _check());
+    _taskTimer = Timer(timerDelay(options.taskTimeout), () => _check());
     _events = session.events.listen(
       (event) {
         if (!_terminal && event is MeshCoreSessionFailed) _check();
@@ -262,7 +255,7 @@ abstract class _DiagnosticTask<R extends DiagnosticTaskResult> {
     }
     _stage = DiagnosticTaskStage.receiving;
     final receiver = _receiver = session.createReception(
-      duration: _timerDelay(duration),
+      duration: duration,
       maxEntries: options.maxEntries,
       maxReadsPerBatch: options.maxReadsPerBatch,
     );

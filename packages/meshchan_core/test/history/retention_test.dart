@@ -85,6 +85,51 @@ void main() {
     );
   });
 
+  for (final corruptArchive in [false, true]) {
+    test(
+      'startup below the limit skips a second scan of settled rows (corrupt archive: $corruptArchive)',
+      () async {
+        final s = await f.open();
+        final archived = sample(
+          1,
+          state: DiagnosticRecordState.recoveredArchived,
+        );
+        await f.seed(s, [archived, for (var i = 2; i <= 300; i++) sample(i)]);
+        if (corruptArchive) {
+          await s.useDatabase(
+            (db) => db.customStatement(
+              'UPDATE stored_runs SET summary_format_version = 2 WHERE run_id = ?',
+              [archived.runId.value],
+            ),
+          );
+        }
+        await s.close();
+
+        final maintenanceRows = <String>[];
+        final control = HistoryControl()
+          ..selected = (sql, _, rows) async {
+            if (sql.startsWith('SELECT * FROM stored_runs')) {
+              maintenanceRows.addAll(
+                rows.map((row) => row['run_id'] as String),
+              );
+            }
+          };
+        final reopened = await f.open(control: control);
+        final report = await reopened.history.waitForMaintenance();
+        expect(maintenanceRows, [archived.runId.value]);
+        expect(report.deletedCount, 0);
+        expect(await f.count(reopened), 300);
+        if (corruptArchive) {
+          expect(report.state, HistoryMaintenanceState.failed);
+          expect(report.error, coreError(CoreErrorCode.storageReadFailed));
+          expect(reopened.history.unacknowledgedFailure, same(report));
+        } else {
+          expect(report.state, HistoryMaintenanceState.completed);
+        }
+      },
+    );
+  }
+
   test('settings save and restoreDefaults really prune without changing their return semantics', () async {
     final s = await f.open();
     await s.settings.save(AppSettings(diagnosticHistoryLimit: 100000));

@@ -21,6 +21,38 @@ Future<Map<String, Object?>> runPlatformProbe(ProbeRequest request) =>
       debugName: 'meshchan-platform-probe',
     );
 
+/// The worker's report settles the Quit barrier before potentially blocking I/O.
+Future<Map<String, Object?>> publishPlatformProbeReport(
+  Map<String, Object?> report, {
+  required void Function(bool) settleCleanup,
+  required Future<void> Function(String) writeLine,
+}) async {
+  final closes = report['closes'];
+  final failures = report['failures'];
+  final cleanupConfirmed =
+      closes is List &&
+      closes.every((state) => state == 'closed') &&
+      failures is List &&
+      failures.every(
+        (failure) => failure is Map && failure['cleanupUnconfirmed'] == false,
+      );
+  settleCleanup(cleanupConfirmed);
+  final result = !cleanupConfirmed && report['passed'] == true
+      ? {...report, 'passed': false, 'error': 'probe_cleanup_unconfirmed'}
+      : report;
+  try {
+    await writeLine(jsonEncode(result));
+    return result;
+  } catch (_) {
+    return {
+      ...result,
+      'passed': false,
+      (result['error'] == null ? 'error' : 'outputError'):
+          'probe_report_output_failed',
+    };
+  }
+}
+
 Future<Map<String, Object?>> executeFixtureProbe(
   ProbeRequest request, {
   Future<CoreStorage> Function(Directory)? openStorage,

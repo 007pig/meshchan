@@ -40,24 +40,6 @@ void cleanupIs(
   });
 }
 
-// Match the VM's Duration.inMilliseconds conversion while retaining the same
-// fake elapsed domain. FakeAsync itself otherwise preserves microseconds.
-void withMillisecondTimers(void Function(FakeAsync) body) {
-  fakeAsync((clock) {
-    runZoned(
-      () => body(clock),
-      zoneSpecification: ZoneSpecification(
-        createTimer: (_, parent, zone, duration, callback) =>
-            parent.createTimer(
-              zone,
-              Duration(milliseconds: duration.inMilliseconds),
-              callback,
-            ),
-      ),
-    );
-  });
-}
-
 const second = Duration(seconds: 1);
 DiagnosticTaskOptions options({
   Duration timeout = const Duration(seconds: 30),
@@ -768,6 +750,62 @@ void main() {
       }
     },
   );
+
+  for (final fromAcceptance in [false, true]) {
+    test(
+      'a response budget beyond the task cannot wrap (from acceptance: $fromAcceptance)',
+      () {
+        fakeAsync((clock) {
+          final h = Harness(clock);
+          final task = h.ping(
+            config: options(timeout: const Duration(seconds: 3)),
+            response: const Duration(microseconds: 0x7fffffffffffffff),
+            responseFromAcceptance: fromAcceptance,
+          );
+          final done = Outcome(task.done);
+          Outcome(task.start());
+          clock.elapse(const Duration(milliseconds: 1));
+          h.ready();
+          h.empty();
+          h.ok();
+
+          clock.elapse(second);
+          expect(done.done, isFalse);
+          h.transport.receive(frame(message()));
+          clock.flushMicrotasks();
+          expect(done.value!.roundTripSucceeded, isTrue);
+          expect(done.value!.applicationRtt, second);
+          expect(clock.pendingTimers, isEmpty);
+        });
+      },
+    );
+  }
+
+  test('a listen budget beyond the task cannot wrap', () {
+    fakeAsync((clock) {
+      final h = Harness(clock);
+      final task = h.responder(
+        config: options(timeout: const Duration(seconds: 3)),
+        listen: const Duration(microseconds: 0x7fffffffffffffff),
+      );
+      final done = Outcome(task.done);
+      Outcome(task.start());
+      clock.elapse(const Duration(milliseconds: 1));
+      h.ready();
+      clock.elapse(second);
+      h.transport.receive(frame(message(kind: DiagnosticKind.ping)));
+      clock.flushMicrotasks();
+      expect(h.transport.sent.map((frame) => frame[0]), [0x16, 1, 0x0a, 0x3e]);
+      h.ok();
+      expect(done.value!.reason, DiagnosticTaskReason.completed);
+      expect(
+        done.value!.listenStopReason,
+        DiagnosticListenStopReason.responseLimit,
+      );
+      expect(done.value!.localResponsesConfirmed, 1);
+      expect(clock.pendingTimers, isEmpty);
+    });
+  });
 
   test('queued send retains its own facts and the failing read root', () {
     fakeAsync((clock) {

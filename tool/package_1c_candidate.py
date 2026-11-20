@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package one explicitly selected dev.3 software gate and verify final archive bytes."""
+"""Reproduce a historical dev.3 archive. Current packaging uses package_release.py."""
 import argparse
 import datetime
 import json

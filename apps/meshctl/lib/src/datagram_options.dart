@@ -5,6 +5,8 @@ import 'package:args/args.dart';
 import 'package:meshchan_core/meshchan_core.dart';
 import 'package:meshcore_link/meshcore_link.dart';
 
+import 'business_input.dart';
+
 ArgParser datagramParser() {
   final group = ArgParser()
     ..addFlag('help', abbr: 'h', negatable: false, help: 'Show group usage.');
@@ -23,7 +25,7 @@ ArgParser datagramParser() {
         'json',
         negatable: false,
         help:
-            'Write ${operation == 'listen' ? 'NDJSON events and end' : 'one final JSON object'}.',
+            'Write ${operation == 'listen' ? 'NDJSON events and end, or only end with --record' : 'one final JSON object'}.',
       )
       ..addFlag(
         'verbose',
@@ -53,7 +55,7 @@ ArgParser datagramParser() {
       )
       ..addOption(
         'task-timeout',
-        help: 'Required overall application budget, seconds (1..86400); excludes cleanup/output.',
+        help: 'Overall application budget, seconds (1..86400). Required unless supplied by a profile. Excludes cleanup/output.',
       );
     leaf
       ..addOption(
@@ -162,7 +164,7 @@ String datagramHelp(ArgParser group, [String? operation]) => operation == null
           'Initializes with DEVICE_QUERY then APP_START; opening may reset boards. No retry.\n'
           'Protocol integers accept strict decimal or 0x/0X HEX; times/counts are decimal only.\n'
           'Route/path validity and the full encoded byte budget are checked before I/O.\n'
-          'Explicit values override the selected/default profile, then program defaults.\n'
+          'Values resolve from explicit options, then the selected/default profile, then program defaults.\n'
           'Every invocation opens business storage, even without --record.\n'
           '--port and send/ping content must be supplied on this invocation.\n'
           '--record listen emits one final summary end, without per-datagram events.\n'
@@ -175,10 +177,7 @@ final class DatagramOptions {
     : operation = args.name!,
       json = args.flag('json'),
       verbose = args.flag('verbose') {
-    port = args.option('port') ?? '';
-    if (port.trim().isEmpty) {
-      throw const FormatException('--port must be nonempty.');
-    }
+    port = requiredPortOption(args);
     requestTimeout = Duration(seconds: _integer(args, 'timeout', 1, 86400)!);
     initializationTimeout = Duration(
       seconds: _integer(args, 'init-timeout', 1, 86400)!,
@@ -618,12 +617,7 @@ final class DatagramInput {
       json = args.flag('json'),
       verbose = args.flag('verbose'),
       record = args.flag('record') {
-    port = args.option('port') ?? '';
-    if (!args.wasParsed('port') || port.trim().isEmpty) {
-      throw const FormatException(
-        '--port must be nonempty and explicitly supplied.',
-      );
-    }
+    port = requiredPortOption(args);
     parameters = ParameterInput(args, operation);
     if (args.wasParsed('profile')) profileId = LocalId(args.option('profile')!);
     if (operation == 'send' || operation == 'ping') {

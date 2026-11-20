@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Archive updated acceptance metadata around an unchanged, tested native bundle."""
+"""Revise historical dev.2 acceptance metadata around its unchanged native bundle."""
 import argparse
 from contextlib import contextmanager
 import datetime

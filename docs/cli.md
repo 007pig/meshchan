@@ -36,7 +36,9 @@ may emit native build-hook diagnostics before the application starts.
 The product CLI now imports `meshchan_core` through its public entry. These
 commands and opt-in recording blocks extend CLI `schemaVersion: 1`. Database
 schema/snapshot 1 and `diagnosticSummaryFormatVersion: 1` are independent and
-unchanged. The current `0.1.0-dev.3` local candidate is described in the [1C delivery record](releases/phase-1c-dev3.md).
+unchanged. The [1C delivery record](releases/phase-1c-dev3.md) documents the
+historical `0.1.0-dev.3` introduction of these commands. The current Release
+candidate is `0.1.0-rc.1`. See the [engineering package validation](validation/phase-1e5-package.md).
 
 Put the global directory option before the command:
 
@@ -55,10 +57,11 @@ never depend on cwd, source location, executable location or the bundle:
 | Linux | Absolute, nonblank `$XDG_DATA_HOME/meshchan`, otherwise `$HOME/.local/share/meshchan` |
 | Windows | Absolute `%LOCALAPPDATA%\meshchan` |
 
-Home/base must be usable and absolute; unavailable bases or other platforms
-require `--data-dir`. These are directory policies, not new platform/native
-support claims. Existing serial enumeration/Windows safety guards still apply.
-Only macOS arm64 source/AOT business execution was validated for this step.
+The home or base directory must be usable and absolute. If a supported host has
+no usable default, supply `--data-dir`. The storage implementation accepts arm64
+and x64 on macOS and Linux. The Windows directory rule is present in the CLI,
+while the storage implementation refuses to open on Windows. The 1C delivery
+record validates source/AOT business execution on macOS arm64.
 
 Each business invocation, including history reads/export and **all four datagram
 operations without `--record`**, owns at most one `CoreStorage`. Open acquires
@@ -416,7 +419,7 @@ Put options after their subcommand:
 
 | Option | Commands | Default and input policy |
 | --- | --- | --- |
-| `--port <path>` | port-check, info, watch | Required, explicitly selected path. Reject only missing/whitespace-only values; forward any nonblank path unchanged. No enumeration, history, environment lookup, or fallback selects it. |
+| `--port <path>` | port-check, info, watch | Required, explicitly selected nonblank path without NUL. Forward the exact path unchanged. |
 | `--json` | All four | Off. One JSON object for ports, port-check, info; NDJSON for watch. |
 | `--verbose`, `-v` | info, watch | Off. Structural diagnostics on stderr; no raw logging. |
 | `--timeout <seconds>` | info, watch | 5; decimal integer 1..86400, per initialization request. |
@@ -590,7 +593,7 @@ semantic validation runs while signals are owned, before transport construction.
 | Operation | Behavior | `--json` stdout |
 | --- | --- | --- |
 | `send` | Initialize, send one raw payload, close | One final object, including expected failure/signal outcomes |
-| `listen` | Initialize, consume one finite reception, summarize matching datagrams, close | NDJSON `datagram`, optional primary `failure`, and one final `end` |
+| `listen` | Initialize, consume one finite reception, summarize matching datagrams, close | NDJSON `datagram`, optional primary `failure`, and one final `end`. With `--record`, only the final `end` is emitted. |
 | `ping` | Run `MeshchanPingTask` once; exact diagnostic PONG validation | One final object, including expected failure/signal outcomes |
 | `respond` | Run `MeshchanResponderTask` for a finite window/attempt limit | One final summary object, including expected failure/signal outcomes |
 
@@ -603,11 +606,14 @@ establishes no wireless validation. Task start acceptance is not readiness.
 
 ### Inputs and budgets
 
-These common options apply to all four new leaves:
+These common options apply to all four leaves. Except for the explicit port and
+send/ping payload, the tables describe resolved values. A `Required` field can
+come from the selected or default profile. Listed defaults apply after explicit
+values and profile values. See [profile precedence and recording](#profiles-on-finite-datagrams-and-opt-in-recording).
 
 | Option | Policy |
 | --- | --- |
-| `--port` | Required, nonblank exact path; forwarded unchanged, including leading/trailing whitespace in a nonblank value. No discovery or fallback. |
+| `--port` | Explicit nonblank path without NUL. Forwarded unchanged, including leading/trailing whitespace in a nonblank value. |
 | `--json` | Off by default; output types above. |
 | `--verbose`, `-v` | Off; safe structural stderr diagnostics, same stdout schema. |
 | `--timeout` | Default 5 seconds; decimal 1..86400 for each initialization **and ready-state send/read** command. |
@@ -625,7 +631,7 @@ timeout behavior remains as documented above.
 | --- | --- | --- | --- | --- |
 | `--send-channel` | Required | Rejected | Required | Required |
 | `--receive-channel` | Rejected | Required | Required | Required |
-| `--data-type` | Required 1..65535 | Optional filter 0..65535; omitted means all | Rejected; fixed diagnostic type | Rejected; fixed diagnostic type |
+| `--data-type` | Required 1..65535 | Optional filter 0..65535. Without an explicit or profile filter, accept all types. | Rejected; fixed diagnostic type | Rejected; fixed diagnostic type |
 | `--route-descriptor` | Required | Rejected | Required | Required local return route |
 | `--path-hex` | Default empty | Rejected | Default empty | Default empty |
 | `--local-id`, `--peer-id` | Rejected | Rejected | Both required | Both required |

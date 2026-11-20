@@ -1,12 +1,86 @@
 # Phase 1E.4 local Release build validation
 
-## 1E.5 handoff pending
+## Recipe 55 handoff
 
-The updated build recipe is awaiting pre-PR validation. Create the candidate
-from the final frozen source commit and complete the independent build check
-and strict candidate-specific materials verification. Record the new run,
-product paths, and evidence hashes here before 1E.5 stages a candidate.
-The prior handoff runs and commands below are historical evidence.
+On November 20, 2026, two independent Release builds used frozen source commit
+`a29430b608658a8b56d619f641dc8600346b6d27`, based on the merge of PR #41 at
+`583dc5f7ee9d5d173237e8eb60b06dd388304b80`. The bundle identity is App
+`0.1.0-rc.1+8`, Apple version `0.1.0`, build string `8`, bundle ID
+`org.meshchan.meshchan`, and CLI `0.1.0-rc.1`. The actual builder was macOS
+27.2.1 arm64 with `/opt/homebrew/bin/python3` 3.15.2, Flutter 3.50.0, its
+bundled Dart 3.14.0, Xcode 27.2 (27B52), Apple Clang 21, and macOS SDK 27.2.
+
+**1E.5 reference** `build/phase-1e4/frozen-recipe-55/build/phase-1e4/run-001/`.
+Consume the existing `app-derived/Build/Products/Release/Meshchan.app` and
+`cli/bundle/` under that run, with the materials in `materials/`. The comparison
+candidate is `run-002/` in the same frozen checkout. Its independent check
+passed with materials status `NOT_RUN`.
+
+| Reference evidence | SHA-256 |
+| --- | --- |
+| `build-info.json` | `e9e2eb640af06cdf8e70696a82cf45ce124e1682784b364698d4a9d73c3c56ef` |
+| `evidence/compilation-input-hashes.json` | `f6adf08d910ef52cfa8031eb207f1adc51e7056cd8efc1a7bea9f34fa9c03fdb` |
+| `evidence/build-receipt.json` | `5b99f6daf49b0af123e66641ba16ae20939a5b8fa6d2cda2dc941bee1a5d458a` |
+| `evidence/candidate-checksums.txt` | `e69f1feb8125a1200778950a1bef292a61da9aef4ce533d55ceb8b1b897ae779` |
+| `evidence/candidate-inventories.json` | `5261f1f685d9b63e0d6003fbc722ce866789cfa7cdfdfefadc54a4292eabfcaa` |
+| `evidence/product-checks.json` | `94812a09ba168222f8775f017e57f297e7606b424f5944a619efbd4c4e034c29` |
+| `materials/materials-manifest.json` | `335519433a4e48d2e683563d7104b2b84ff35f274a5895bb7f8329a1cd909733` |
+
+From the retained frozen checkout, the recorded commands were:
+
+```sh
+/opt/homebrew/bin/python3 tool/build_release.py build --flutter /opt/homebrew/share/flutter --output build/phase-1e4/run-001
+/opt/homebrew/bin/python3 tool/build_release.py build --flutter /opt/homebrew/share/flutter --output build/phase-1e4/run-002
+/opt/homebrew/bin/python3 tool/build_release.py check --output build/phase-1e4/run-002
+/opt/homebrew/bin/python3 tool/build_release.py materials --output build/phase-1e4/run-001 --downloads "$MESHCHAN_MAIN/build/phase-1e3/downloads" --probe build/phase-1e4/run-001/validation/serial-rebuild.json --sdk-source-workspace "$MESHCHAN_MAIN/build/phase-1e3-source"
+/opt/homebrew/bin/python3 tool/build_release.py check --output build/phase-1e4/run-001 --require-frozen
+```
+
+`MESHCHAN_MAIN` denotes the primary checkout used for the verified caches. Each
+before/after map contained 137 identical inputs. The source, graph,
+lock, toolchain, normalized recipe, configuration, external sources, product
+composition, and loader checks matched across the runs. Each App inventory
+contains 74 entries and each CLI inventory contains six. The comparison report
+records all product differences. File-backed Mach-O sections and embedded CLI AOT
+sections matched for the differing executables.
+
+| Product file | `run-001` SHA-256 | `run-002` SHA-256 |
+| --- | --- | --- |
+| App Info.plist | `b5e2ae7b451eaa621906efa49789f42fe57c0469942ac62587307623876a638e` | `b5e2ae7b451eaa621906efa49789f42fe57c0469942ac62587307623876a638e` |
+| App runner | `e088a994fccc9f04c7d64490d41e839c18f459f773de3b9c510f48851c04d37f` | `5040ee83caaf1119da19b844f41837f2edc09f2eb4684016ff509ee99384b3f2` |
+| App AOT payload | `e433d70fe3b4c174e9932dc6beac3b448c714963a88c7a751fd957ae3394b84d` | `e433d70fe3b4c174e9932dc6beac3b448c714963a88c7a751fd957ae3394b84d` |
+| CLI executable | `52620b3c4c8ef5a6f51ff292e96747de8320b4cdeb5eb66120387ce52f6c62ed` | `0ae5e860924e7d348f5f2c3b6b18327c5bb8d4dca727330a4afdce08ee9ee7c8` |
+
+- App `Contents/MacOS/Meshchan` differs in 64 code signature bytes and 14 symbol string table bytes.
+- CLI `bin/meshctl` differs in 96 code signature bytes and six symbol string table bytes.
+
+The reference CLI passed eight offline storage checks and loaded the bundled
+SQLite after relocation. The original App completed VM write, read and relocated
+read with SQLite loaded from each respective bundle, successful exit and absent
+PIDs. The isolated CLI and App serial replacement copies used the synthetic
+empty-port library. The VM App quit normally. No physical devices were used.
+
+Material collection and independent strict verification passed with
+331 listed files and no open gates. The collector verified the receipt,
+independently derived the SDK GN source closure, and delivered the
+corresponding-source archive with the Release entry, guide and VM harness. The
+final frozen check repeated strict verification. Comparison and operation logs
+are in the retained checkout under `build/phase-1e4/pre-pr-validation/`.
+
+Local pre-PR tests passed for 334 Python tool tests, 262 Flutter App tests,
+362 shared core tests, 207 protocol tests and 287 CLI tests. Workspace analysis
+and five diagnostic process scenarios passed. The initial diagnostic process
+attempt selected Homebrew Clang and failed to link `System`. The same tests
+passed in a fresh fixture with Apple Clang first on the child `PATH`. The frozen
+Release builder independently recorded its controlled Apple toolchain. The
+[branch CI run](https://github.com/007pig/meshchan/actions/runs/44747988036)
+passed its Linux and macOS jobs on the frozen source commit.
+
+These files are local ad hoc build products. Preserve their recorded bytes for
+1E.5 staging. Rebind the final package, signatures and materials to the staged
+artifacts when later steps change those bytes. Formal distribution signing,
+DMG installation and upgrade, older macOS and Intel runtime, and hardware
+validation remain separate release steps.
 
 ## Historical recipe 22 handoff
 

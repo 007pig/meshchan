@@ -8,14 +8,18 @@ This checks source/build-input coverage, not a bit-identical engine rebuild.
 import argparse
 import ast
 import base64
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -118,26 +122,57 @@ def archive_inventory(path, gitlinks=None):
 
 
 def command(argv, cwd=None):
-    result = subprocess.run([str(v) for v in argv], cwd=cwd, capture_output=True, text=True)
+    with tempfile.TemporaryDirectory(prefix='meshchan-sdk-python-') as pycache:
+        result = subprocess.run([str(v) for v in argv], cwd=cwd, capture_output=True, text=True,
+                                env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1',
+                                     'PYTHONPYCACHEPREFIX': pycache})
     if result.returncode:
         raise ValueError('Source command failed: ' + shlex.join([str(v) for v in argv])
                          + '\n' + result.stdout + result.stderr)
     return result.stdout
 
 
+def cached_source_file(path):
+    """Distinguish a missing entry from a special file or file-level alias."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(mode):
+        raise ValueError('Source cache entry must be a regular file: '+str(path))
+    return True
+
+
+@contextmanager
+def source_cache_destination(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=path.parent, prefix='.download-') as directory:
+        temporary = Path(directory)/'archive'
+        yield temporary
+        temporary.replace(path)
+
+
+def publish_verified_download(path, argv, expected, mismatch, *, decode_base64=False):
+    """Publish only pinned bytes and never open an existing partial pathname."""
+    with source_cache_destination(path) as temporary:
+        # Curl can truncate its own output file before retrying a partial transfer.
+        subprocess.run([*argv, '--output', str(temporary)], check=True)
+        if decode_base64:
+            temporary.write_bytes(base64.b64decode(temporary.read_bytes()))
+        if digest(temporary) != expected:
+            raise ValueError(mismatch)
+
+
 def fetch(item, downloads, offline=False):
     path = downloads / safe(item['archive'])
-    if not path.exists():
+    mismatch = 'SDK source hash mismatch: ' + str(path)
+    if not cached_source_file(path):
         if offline:
             raise ValueError('Missing SDK source material: ' + str(path))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + '.partial')
-        command(['curl', '-fLsS', '--retry', '3', '--max-time', '600', item['url'], '-o', temporary])
-        if item.get('encoding') == 'base64':
-            temporary.write_bytes(base64.b64decode(temporary.read_bytes()))
-        temporary.replace(path)
-    if digest(path) != item['sha256']:
-        raise ValueError('SDK source hash mismatch: ' + str(path))
+        publish_verified_download(path, ['curl', '-fLsS', '--retry', '3', '--max-time', '600', item['url']],
+                                  item['sha256'], mismatch, decode_base64=item.get('encoding') == 'base64')
+    elif digest(path) != item['sha256']:
+        raise ValueError(mismatch)
     return path
 
 
@@ -145,20 +180,45 @@ def load_upstream(path, name):
     loader = importlib.machinery.SourceFileLoader(name, str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
+    previous = sys.dont_write_bytecode, sys.pycache_prefix
+    with tempfile.TemporaryDirectory(prefix='meshchan-sdk-python-') as pycache:
+        try:
+            sys.dont_write_bytecode = True
+            sys.pycache_prefix = pycache
+            # Compile the verified source even if the kit has stale bytecode.
+            exec(loader.source_to_code(path.read_bytes(), str(path)), module.__dict__)
+        finally:
+            sys.dont_write_bytecode, sys.pycache_prefix = previous
     return module
 
 
-def source_identity(spec, flutter):
-    identity = json.loads((flutter / 'bin/cache/flutter.version.json').read_text())
+def dart_sdk_metadata_file(flutter, name):
+    return require_sdk_metadata_file(flutter/'bin/cache/dart-sdk'/name, 'Dart')
+
+
+def flutter_cache_metadata_file(flutter, name):
+    return require_sdk_metadata_file(flutter/'bin/cache'/name, 'Flutter')
+
+
+def require_sdk_metadata_file(path, sdk):
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError(f'{sdk} SDK metadata must be a regular file: {path}')
+    return path
+
+
+def source_identity(spec, flutter, read_source_tree=None):
+    identity = json.loads(flutter_cache_metadata_file(flutter, 'flutter.version.json').read_text())
     for field in ('frameworkRevision', 'engineRevision', 'engineContentHash'):
         if identity[field] != spec[field]:
             raise ValueError('SDK source identity drift: ' + field)
-    if (flutter / 'bin/cache/dart-sdk/revision').read_text().strip() != spec['dartRevision']:
+    if dart_sdk_metadata_file(flutter, 'revision').read_text().strip() != spec['dartRevision']:
         raise ValueError('SDK source identity drift: dartRevision')
     # The framework and engine commits are distinct; prove equality of this tree.
-    trees = {r: command(['git', 'rev-parse', r + ':engine/src'], flutter).strip()
-             for r in (spec['engineRevision'], spec['frameworkRevision'])}
+    if read_source_tree is None:
+        def read_source_tree(revision):
+            return command(['git', '--no-replace-objects', 'rev-parse', revision + ':engine/src'], flutter).strip()
+    trees = {revision: read_source_tree(revision)
+             for revision in (spec['engineRevision'], spec['frameworkRevision'])}
     if set(trees.values()) != {spec['engineSourceTree']}:
         raise ValueError('Engine revision/source tree mismatch')
     return trees
@@ -167,6 +227,7 @@ def source_identity(spec, flutter):
 def source_inputs(spec, workspace, flutter, prepare=False):
     """Verify all original bytes against reviewed pins and their DEPS identities."""
     downloads, checkout = workspace / 'downloads', workspace / 'checkout'
+    validate_workspace_write_paths(workspace, directories=('downloads', 'checkout'))
     if prepare:
         downloads.mkdir(parents=True, exist_ok=True)
         checkout.mkdir(parents=True, exist_ok=True)
@@ -189,10 +250,14 @@ def source_inputs(spec, workspace, flutter, prepare=False):
                     raise ValueError('SDK runtime differs from exact official artifact: ' + member)
     base = spec['engineArchive']
     original = downloads / base['archive']
-    if prepare and not original.exists():
-        with original.open('wb') as stream:
-            subprocess.run(['git', 'archive', '--format=tar', spec['engineRevision'],
-                            *base['paths']], cwd=flutter, stdout=stream, check=True)
+    if prepare and not cached_source_file(original):
+        with source_cache_destination(original) as temporary:
+            subprocess.run(['git', '--no-replace-objects', 'archive', '--format=tar',
+                            '--output='+str(temporary), spec['engineRevision'], *base['paths']],
+                           cwd=flutter, check=True)
+            if digest(temporary) != base['sha256']:
+                raise ValueError('Engine source archive mismatch')
+    cached_source_file(original)
     if digest(original) != base['sha256']:
         raise ValueError('Engine source archive mismatch')
     items = [(base, original)]
@@ -226,7 +291,10 @@ def source_inputs(spec, workspace, flutter, prepare=False):
         originals[item['path']] = {'sha256': item['sha256'], 'mode': '100644'}
     for package in spec['toolPackages']:
         selected = downloads / 'package-files'
-        supplied = all((selected / info['path']).is_file() for info in package['files'].values())
+        validate_workspace_write_paths(workspace, directories=[
+            (Path('downloads/package-files')/safe(info['path'])).parent.as_posix()
+            for info in package['files'].values()])
+        supplied = all(cached_source_file(selected / safe(info['path'])) for info in package['files'].values())
         if supplied:
             members = {name: (selected / info['path']).read_bytes() for name, info in package['files'].items()}
         else:
@@ -366,7 +434,42 @@ def normalized(value, checkout, alias=None):
     return value
 
 
+def validate_probe_write_paths(workspace, spec=None):
+    """Check path ownership and file types before writing GN outputs."""
+    spec = json.loads(SPEC.read_text()) if spec is None else spec
+    files = ['bin/gn', 'evidence/sdk-source-report.json']
+    for target in ('app-arm64', 'app-x64', 'cli-arm64'):
+        files.extend((f'evidence/{target}-gn.log', f'evidence/{target}-graph.json'))
+    files.extend('checkout/'+safe(name) for name in spec['generatedConfiguration'])
+    directories = ['checkout/engine/src/out', f'checkout/{DART}/out', f'checkout/{DART}/.git']
+    directories.extend('checkout/engine/src/flutter/prebuilts/'+name
+                       for name in ('macos-arm64', 'macos-x64', 'SDKs', 'Platforms'))
+    validate_workspace_write_paths(workspace, files=files, directories=directories)
+
+
+def validate_workspace_write_paths(workspace, *, files=(), directories=()):
+    for name in (*files, *directories):
+        path = workspace/name
+        for part in (*reversed(path.parents), path):
+            if not part.is_relative_to(workspace):
+                continue
+            try:
+                metadata = part.lstat()
+            except FileNotFoundError:
+                break  # A missing branch can be created under real parents.
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError('SDK probe write path uses a symlink: '+str(part))
+            if name in files and part == path:
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise ValueError('SDK probe write file must be a regular file: '+str(part))
+                if metadata.st_nlink != 1:
+                    raise ValueError('SDK probe write file has multiple hard links: '+str(part))
+            elif not stat.S_ISDIR(metadata.st_mode):
+                raise ValueError('SDK probe write directory must be a real directory: '+str(part))
+
+
 def probe(spec, workspace, flutter, originals):
+    validate_probe_write_paths(workspace, spec)
     checkout, evidence = workspace / 'checkout', workspace / 'evidence'
     evidence.mkdir(exist_ok=True)
     gn_zip = fetch(spec['gn'], workspace / 'downloads', offline=True)
@@ -399,14 +502,20 @@ def probe(spec, workspace, flutter, originals):
         (engine / 'flutter/prebuilts' / name).mkdir(exist_ok=True)
     upstream = load_upstream(engine / 'flutter/tools/gn', 'meshchan_engine_gn')
     upstream.setup_git_versions = lambda: dict(spec['gitVersionArgs'])
+    previous_utils = sys.modules.get('utils')
     sys.path.insert(0, str(dart / 'tools'))
     try:
+        sys.modules['utils'] = load_upstream(dart / 'tools/utils.py', 'utils')
         dart_gn = load_upstream(dart / 'tools/gn.py', 'meshchan_dart_gn')
         dart_gn.DART_ROOT = str(dart)
         options = dart_gn.parse_args(['gn.py', '--mode=release', '--arch=arm64', '--os=host', '--no-rbe'])
         dart_args = dart_gn.ToGnArgs(options, 'release', 'arm64', 'host', 'none', True, True)
     finally:
         sys.path.pop(0)
+        if previous_utils is None:
+            sys.modules.pop('utils', None)
+        else:
+            sys.modules['utils'] = previous_utils
     configs = []
     for cpu in ('arm64', 'x64'):
         args = upstream.to_gn_args(upstream.parse_args(spec['engineArgv'] + ['--mac-cpu', cpu]))
@@ -501,54 +610,117 @@ def verify_stale_headers(spec, checkout, originals):
 def restore_materials(materials, workspace):
     """Restore original sources offline; compiler/GN executables remain tools."""
     source = materials / 'source-materials/sdk'
-    if (source / 'source-inputs.json').read_bytes() != SPEC.read_bytes():
+    rules = source/'source-inputs.json'
+    if not cached_source_file(rules) or rules.read_bytes() != SPEC.read_bytes():
         raise ValueError('Delivered SDK source rules differ from the reviewed specification')
     dest = workspace / 'downloads'
+    validate_workspace_write_paths(workspace, directories=('downloads',))
     dest.mkdir(parents=True, exist_ok=True)
+
+    def restore(path, target, expected):
+        relative_parent = target.parent.relative_to(workspace).as_posix()
+        validate_workspace_write_paths(workspace, directories=(relative_parent,))
+        if cached_source_file(target):
+            if digest(target) != expected:
+                raise ValueError('Conflicting restored SDK source input: '+str(target))
+            return
+        with source_cache_destination(target) as temporary:
+            shutil.copyfile(path, temporary)
+            if digest(temporary) != expected:
+                raise ValueError('Invalid delivered SDK source input: '+str(path))
+
     for path in sorted((source / 'archives').iterdir()):
         if not path.is_file() or path.is_symlink():
             raise ValueError('Invalid delivered SDK source archive')
-        target = dest / path.name
-        if target.exists() and digest(target) != digest(path):
-            raise ValueError('Conflicting restored SDK source input')
-        if not target.exists():
-            shutil.copyfile(path, target)
+        restore(path, dest / path.name, digest(path))
     spec = json.loads(SPEC.read_text())
     for package in spec['toolPackages']:
         for info in package['files'].values():
             path = source / safe(info['path'])
-            if digest(path) != info['sha256']:
+            if not cached_source_file(path) or digest(path) != info['sha256']:
                 raise ValueError('Delivered compiler configuration hash mismatch')
-            target = dest / 'package-files' / info['path']
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, target)
+            restore(path, dest / 'package-files' / info['path'], info['sha256'])
+
+
+def validate_compiler_destination(workspace, compiler, content):
+    """Check every destination of the pinned compiler ZIP before extraction."""
+    files, directories, links = set(), {compiler.relative_to(workspace).as_posix()}, {}
+    members = {safe(info.filename.rstrip('/')): info for info in content.infolist()}
+    if len(members) != len(content.infolist()):
+        raise ValueError('Duplicate compiler archive paths')
+    for name, info in members.items():
+        path = compiler/name
+        relative = path.relative_to(workspace).as_posix()
+        if info.is_dir():
+            directories.add(relative)
+        elif stat.S_ISLNK(info.external_attr >> 16):
+            target = safe(os.fsdecode(content.read(info)))
+            # The reviewed archives link tool and runtime aliases to siblings.
+            if '/' in target or (Path(name).parent/target).as_posix() not in members:
+                raise ValueError('Unexpected compiler archive symlink target: '+name)
+            directories.add(path.parent.relative_to(workspace).as_posix())
+            links[path] = target
+        else:
+            files.add(relative)
+    validate_workspace_write_paths(workspace, files=tuple(sorted(files)), directories=tuple(sorted(directories)))
+    for path, target in links.items():
+        if os.path.lexists(path) and (not path.is_symlink() or os.readlink(path) != target):
+            raise ValueError('SDK compiler write path differs from the pinned symlink: '+str(path))
+
+
+def validate_configure_output(workspace, output, developer, product):
+    """Keep GN overwrites inside its persistent output directory."""
+    validate_workspace_write_paths(workspace, directories=(output.relative_to(workspace).as_posix(),))
+    if not output.exists():
+        return
+
+    def fail_scan(error):
+        raise error
+
+    for directory, dirs, files in output.walk(on_error=fail_scan):
+        for name in sorted(dirs + files):
+            path = directory/name
+            entry = path.lstat()
+            if stat.S_ISDIR(entry.st_mode) or (stat.S_ISREG(entry.st_mode) and entry.st_nlink == 1):
+                continue
+            # The pinned Dart GN setup creates leaf links to selected Xcode
+            # SDKs. It replaces those directory entries without traversing them.
+            sdk = re.fullmatch(r'(MacOSX|iPhoneOS)\d+\.\d+\.sdk', name)
+            if (product == 'cli' and directory == output/'sdk/xcode_links' and sdk
+                    and stat.S_ISLNK(entry.st_mode)):
+                target = developer/'Platforms'/f'{sdk[1]}.platform/Developer/SDKs'/name
+                if os.readlink(path) == str(target):
+                    continue
+            raise ValueError('SDK configure write path is not an owned entry: '+str(path))
 
 
 def configure_build(spec, workspace, report, targets):
     """Install pinned unmodified compiler tools only into the owned checkout."""
     checkout = workspace / 'checkout'
+    report_name = 'evidence/build-configuration.json'
+    validate_workspace_write_paths(workspace, files=(report_name,))
     sdk = command(['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path']).strip()
     platform = command(['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-platform-path']).strip()
-    developer = command(['/usr/bin/xcode-select', '-p']).strip()
+    developer = Path(command(['/usr/bin/xcode-select', '-p']).strip())
     result = {}
     for name in targets:
         product = 'app' if name.startswith('app-') else 'cli'
+        root = checkout / ('engine/src' if product == 'app' else DART)
+        out = root / 'out' / ('rebuild-' + name)
+        validate_configure_output(workspace, out, developer, product)
         package = next(p for p in spec['toolPackages'] if p['product'] == product)
         archive = fetch(package, workspace / 'downloads')
-        root = checkout / ('engine/src' if product == 'app' else DART)
         compiler = root / ('flutter/buildtools/mac-arm64/clang' if product == 'app' else 'buildtools/mac-arm64/clang')
-        compiler.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(archive) as content:
-            for member in content.namelist():
-                safe(member.rstrip('/'))
+            validate_compiler_destination(workspace, compiler, content)
+        compiler.mkdir(parents=True, exist_ok=True)
         command(['/usr/bin/unzip', '-qo', archive, '-d', compiler])
         args = json.loads(json.dumps(report['targets'][name]['gnArgs']).replace('@CHECKOUT@', str(checkout)))
         if product == 'app':
             args.update(mac_sdk_path=sdk, mac_platform_path=platform,
-                        mac_host_toolchain_path=developer + '/Toolchains/XcodeDefault.xctoolchain')
+                        mac_host_toolchain_path=str(developer/'Toolchains/XcodeDefault.xctoolchain'))
         values = [k + '=' + json.dumps(v).lower() if isinstance(v, bool)
                   else k + '=' + json.dumps(v) for k, v in args.items()]
-        out = root / 'out' / ('rebuild-' + name)
         target = FRAMEWORK_TARGET if product == 'app' else RUNTIME_TARGET
         command([workspace / 'bin/gn', 'gen', out, '--root=' + str(root),
                  '--root-target=' + target, '--script-executable=' + sys.executable,
@@ -556,11 +728,34 @@ def configure_build(spec, workspace, report, targets):
         ninja_target = target[2:] if product == 'app' else 'dartaotruntime'
         result[name] = {'output': str(out), 'ninjaArgv': ['ninja', '-C', str(out), ninja_target],
                         'compilerArchiveSha256': package['sha256'], 'macosSdk': sdk}
-    (workspace / 'evidence/build-configuration.json').write_bytes(encoded(result))
+    validate_workspace_write_paths(workspace, files=(report_name,))
+    (workspace / report_name).write_bytes(encoded(result))
     return result
 
 
+@contextmanager
+def sdk_workspace_lock(workspace, create=False):
+    """Serialize verification and evidence readers across release checkouts."""
+    if create:
+        workspace.mkdir(parents=True, exist_ok=True)
+    directory = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        lock = os.open('.meshchan-sdk-sources.lock',
+                       os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o666, dir_fd=directory)
+        try:
+            record = os.fstat(lock)
+            if not stat.S_ISREG(record.st_mode) or record.st_nlink != 1:
+                raise ValueError('SDK source lock must be a single-link regular file')
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(lock)
+    finally:
+        os.close(directory)
+
+
 def verify(workspace, flutter, prepare=False, materials=None):
+    """Verify in a workspace held by sdk_workspace_lock."""
     spec = json.loads(SPEC.read_text())
     if prepare and (workspace / 'checkout').exists():
         raise ValueError('Preserve existing source kit; choose a new workspace')
@@ -584,14 +779,16 @@ def main():
                         help='Native target for configure-build; may be repeated')
     args = parser.parse_args()
     try:
-        result = verify(args.workspace.resolve(), args.flutter.resolve(), args.command == 'prepare',
-                        args.materials.resolve() if args.materials else None)
-        if args.command == 'configure-build':
-            if not args.target:
-                raise ValueError('configure-build requires at least one --target')
-            print(json.dumps(configure_build(json.loads(SPEC.read_text()), args.workspace.resolve(), result,
-                                             sorted(set(args.target))), indent=2))
-            return 0
+        workspace = args.workspace.resolve()
+        prepare = args.command == 'prepare'
+        with sdk_workspace_lock(workspace, create=prepare):
+            result = verify(workspace, args.flutter.resolve(), prepare, args.materials.resolve() if args.materials else None)
+            if args.command == 'configure-build':
+                if not args.target:
+                    raise ValueError('configure-build requires at least one --target')
+                print(json.dumps(configure_build(json.loads(SPEC.read_text()), workspace, result,
+                                                 sorted(set(args.target))), indent=2))
+                return 0
         print(json.dumps({'status': 'PASS', 'sourceSpecSha256': result['sourceSpecSha256'],
                           'targets': {k: {'targets': len(v['targets']), 'inputs': len(v['inputHashes']),
                                          'buildDefinitions': len(v['buildDefinitionHashes'])}

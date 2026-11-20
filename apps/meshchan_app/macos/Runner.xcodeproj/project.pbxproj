@@ -317,7 +317,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nif [ -x /opt/homebrew/bin/python3 ]; then meshchan_python=/opt/homebrew/bin/python3; else meshchan_python=python3; fi\n\"$meshchan_python\" \"$PROJECT_DIR/../../../tool/check_product_version.py\" --xcode-environment\necho \"$PRODUCT_NAME.app\" > \"$PROJECT_DIR\"/Flutter/ephemeral/.app_filename && \"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh embed\n";
+			shellScript = "set -e\nmeshchan_python=${MESHCHAN_BUILD_PYTHON:-}\nif [ -z \"$meshchan_python\" ]; then\n  if [ -x /opt/homebrew/bin/python3 ]; then meshchan_python=/opt/homebrew/bin/python3; else meshchan_python=python3; fi\nfi\n\"$meshchan_python\" \"$PROJECT_DIR/../../../tool/check_product_version.py\" --xcode-environment\necho \"$PRODUCT_NAME.app\" > \"$PROJECT_DIR\"/Flutter/ephemeral/.app_filename && \"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh embed\n";
 		};
 		33CC111E2044C6BF0003C045 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -338,7 +338,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nif [ -x /opt/homebrew/bin/python3 ]; then meshchan_python=/opt/homebrew/bin/python3; else meshchan_python=python3; fi\n\"$meshchan_python\" \"$PROJECT_DIR/../../../tool/check_product_version.py\" --xcode-environment\n\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
+			shellScript = "set -e\nmeshchan_python=${MESHCHAN_BUILD_PYTHON:-}\nif [ -z \"$meshchan_python\" ]; then\n  if [ -x /opt/homebrew/bin/python3 ]; then meshchan_python=/opt/homebrew/bin/python3; else meshchan_python=python3; fi\nfi\n\"$meshchan_python\" \"$PROJECT_DIR/../../../tool/check_product_version.py\" --xcode-environment\n\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
 		};
 /* End PBXShellScriptBuildPhase section */
 

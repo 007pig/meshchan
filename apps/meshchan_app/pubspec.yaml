@@ -1,7 +1,7 @@
 name: meshchan_app
 description: macOS Flutter host for Meshchan.
 publish_to: 'none'
-version: 0.1.0-rc.1+7
+version: 0.1.0-rc.1+8
 resolution: workspace
 
 environment:

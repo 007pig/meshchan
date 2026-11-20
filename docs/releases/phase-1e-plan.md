@@ -255,3 +255,14 @@ material integration. [Its validation record](../validation/phase-1e4-build.md)
 reports handoff status and identifies the exact products once accepted for 1E.5.
 Later steps consume those bytes and rebind them after signing and packaging.
 Final release acceptance follows the remaining gates in this contract.
+
+## 1E.5 engineering packaging
+
+The [package entry](phase-1e5-package.md) carries the complete accepted App,
+CLI, and materials through staging and actual extraction. The
+[package validation record](../validation/phase-1e5-package.md) identifies the
+staging paths, immutable package evidence, and runtime acceptance for 1E.6.
+The selected staging root is
+`build/phase-1e5/run-002/stage/Meshchan-0.1.0-rc.1-macos-arm64/`.
+Use an owned copy for Developer ID signing and bind the resulting bytes in a
+new receipt.

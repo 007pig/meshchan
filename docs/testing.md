@@ -46,6 +46,12 @@ tests, and strict materials. For documentation or skill changes, check the
 affected Markdown, links, and skill format. Existing CI, release acceptance,
 and explicit authorization for real hardware testing follow their own rules.
 
+For changes to engineering packaging, start with
+`/opt/homebrew/bin/python3 -m unittest discover -s tool -p 'package_release_test.py'`.
+Before handoff, follow the [Phase 1E.5 package guide](releases/phase-1e5-package.md)
+to verify the accepted inputs, actual extraction, and offline CLI and VM App
+runtime. Reuse the accepted Release build for packaging-only changes.
+
 ## Four-member sequential regression (1D.10)
 
 For the current beta candidate, explicitly validate the release decision and

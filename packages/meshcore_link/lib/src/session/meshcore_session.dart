@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:typed_data';
 
 import '../protocol/companion_messages.dart';
+import '../timer_delay.dart';
 import '../transport/companion_transport.dart';
 
 part 'meshcore_reception.dart';
@@ -385,7 +386,7 @@ final class MeshCoreSession {
             _fail(_failure(MeshCoreSessionFailureKind.transport, error, stack)),
         onDone: () => _fail(_failure(MeshCoreSessionFailureKind.disconnected)),
       );
-      _initializationTimer = Timer(initializationTimeout, () {
+      _initializationTimer = Timer(timerDelay(initializationTimeout), () {
         _fail(_failure(MeshCoreSessionFailureKind.initializationTimeout));
       });
       // Future.sync observes both synchronous throws and eventual async errors.
@@ -409,7 +410,7 @@ final class MeshCoreSession {
     if (startupDelay == Duration.zero) {
       _send(_deviceQuery, _RequestKind.deviceQuery);
     } else {
-      _startupTimer = Timer(startupDelay, () {
+      _startupTimer = Timer(timerDelay(startupDelay), () {
         if (_state == MeshCoreSessionState.initializing) {
           _send(_deviceQuery, _RequestKind.deviceQuery);
         }
@@ -424,7 +425,7 @@ final class MeshCoreSession {
     final timeout = kind == _RequestKind.sendChannelData
         ? sendTimeout
         : requestTimeout;
-    pending.timer = Timer(timeout, () {
+    pending.timer = Timer(timerDelay(timeout), () {
       if (_isCurrent(pending)) {
         _fail(_failure(MeshCoreSessionFailureKind.requestTimeout));
       }

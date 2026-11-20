@@ -66,8 +66,15 @@ final class DraftQuitCoordinator {
   Future<bool>? _attempt;
   bool _closing = false;
 
-  Future<bool> requestQuit() =>
-      _attempt ??= _quit().whenComplete(() => _attempt = null);
+  Future<bool> requestQuit() {
+    if (_attempt case final attempt?) return attempt;
+    // Publish the shared attempt before _quit notifies listeners.
+    final completion = Completer<bool>();
+    final attempt = _attempt = completion.future;
+    completion.complete(_quit().whenComplete(() => _attempt = null));
+    return attempt;
+  }
+
   Future<bool> _quit() async {
     if (_closing) {
       final result = await runtime.shutdown();
@@ -93,8 +100,8 @@ final class DraftQuitCoordinator {
     }
     if (editor.deferDepartureForComposition()) return false;
     // Composition/preflight veto has no export cancellation side effects.
-    history.setBlocked(true);
     output.paused = true;
+    history.setBlocked(true);
     output.cancel();
     editor.setQuitting(true);
     profiles.setQuitting(true);
@@ -148,8 +155,8 @@ final class DraftQuitCoordinator {
       }
       editor.setQuitting(_closing);
       profiles.setQuitting(_closing);
-      history.setBlocked(_closing);
       if (!_closing) output.paused = false;
+      history.setBlocked(_closing);
       if (!_closing &&
           !allowed &&
           runtime.snapshot.phase == RuntimePhase.ready &&

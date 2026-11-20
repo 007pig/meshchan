@@ -8,7 +8,7 @@ import '../serial_ports.dart';
 /// Internal boundary, not exported by meshcore_link.dart. No native objects
 /// escape this adapter. Tests replace only this connection, not the codec.
 abstract interface class NativeSerialConnection {
-  /// Failure must recover any partial open, as openNativePort does.
+  /// On failure, recover partial acquisition or throw [NativeOpenCleanupFailure].
   FutureOr<void> open();
   FutureOr<void> configure(int baudRate);
   void startReader({

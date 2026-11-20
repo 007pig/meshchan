@@ -278,9 +278,11 @@ void main(List<String> arguments) {
 
 Future<Map<String, Object?>> _probe(ProbeRequest request) async {
   Map<String, Object?> result;
+  var workerInvoked = false;
   try {
     final facts = await const MethodChannel('org.meshchan.host/platform')
         .invokeMapMethod<String, Object?>('directoryFacts');
+    workerInvoked = true;
     result = {
       ...await runPlatformProbe(request),
       'platformDirectories': facts,
@@ -296,22 +298,27 @@ Future<Map<String, Object?>> _probe(ProbeRequest request) async {
       'probe': 'meshchan.macos.1d2',
       'passed': false,
       'error': 'platform_probe_failed',
+      'closes': const <String>[],
+      'failures': [
+        {
+          'stage': workerInvoked ? 'worker' : 'directory_facts',
+          'code': 'probe_failed',
+          'cleanupUnconfirmed': workerInvoked,
+        },
+      ],
     };
   }
-  stdout.writeln(jsonEncode(result));
-  await stdout.flush();
-  final closes = result['closes'];
-  final failures = result['failures'];
-  _probeCompletion.complete(
-    (closes is! List || closes.every((state) => state == 'closed')) &&
-        (failures is! List ||
-            failures.every(
-              (failure) =>
-                  failure is Map && failure['cleanupUnconfirmed'] != true,
-            )),
+  result = await publishPlatformProbeReport(
+    result,
+    settleCleanup: _probeCompletion.complete,
+    writeLine: (line) async {
+      stdout.done.ignore();
+      stdout.writeln(line);
+      await stdout.flush();
+    },
   );
-  // Probe-only exit follows the worker's actual finalization report. Failure
-  // does not imply cleanup. Full desktop quit interaction remains 1D.9.
+  // The explicit one-shot process exit uses the published result's status.
+  // Normal Quit uses the separate cleanup decision above.
   if (request.exitWhenDone) exit(result['passed'] == true ? 0 : 1);
   return result;
 }

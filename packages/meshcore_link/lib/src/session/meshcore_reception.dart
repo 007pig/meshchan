@@ -132,7 +132,7 @@ final class MeshCoreReception {
     // scheduling the sole initial check. A paused listener still consumes time.
     _session._reception = this;
     _state = _ReceptionState.running;
-    _deadline = Timer(duration, () {
+    _deadline = Timer(timerDelay(duration), () {
       _stop(MeshCoreReceptionStopReason.durationElapsed);
     });
     _demand = true;

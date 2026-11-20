@@ -115,6 +115,9 @@ final class SerialTransport implements CompanionTransport {
       if (portPath.trim().isEmpty) {
         throw ArgumentError.value(portPath, 'portPath', 'Must not be blank.');
       }
+      if (portPath.contains('\u0000')) {
+        throw ArgumentError('Port path must not contain NUL.', 'portPath');
+      }
       if (baudRate <= 0) throw ArgumentError.value(baudRate, 'baudRate');
       if (writeTimeout <= Duration.zero) {
         throw ArgumentError.value(writeTimeout, 'writeTimeout');
@@ -302,23 +305,25 @@ final class SerialTransport implements CompanionTransport {
     try {
       await _openingDone?.future;
       final connection = _connection;
-      if (connection != null) {
-        var stopped = false;
+      if (_primary?.cause case NativeOpenCleanupFailure(:final cleanupError)
+          when connection != null) {
+        errors.add(cleanupError);
+        // The adapter already attempted recovery. Retain the connection and
+        // its uncertain descriptor instead of retrying close or freeing it.
+        _unconfirmedConnections.add(connection);
+      } else if (connection != null) {
+        var closed = false;
         try {
           await connection.stopReader();
-          stopped = true;
+          connection.closePort();
+          closed = true;
         } catch (error) {
           errors.add(error);
-          // Keep a strong reference even if the caller drops this transport:
-          // a native finalizer must not close a port still used by a reader.
+          // Retain the connection until exit when reader or descriptor
+          // release is uncertain.
           _unconfirmedConnections.add(connection);
         }
-        if (stopped) {
-          try {
-            connection.closePort();
-          } catch (error) {
-            errors.add(error);
-          }
+        if (closed) {
           try {
             connection.dispose();
           } catch (error) {
@@ -346,9 +351,8 @@ final class SerialTransport implements CompanionTransport {
   }
 }
 
-// Stop failures are exceptional. There is deliberately no forced free or
-// guessed shutdown timeout; retained resources remain valid until process exit.
-final _unconfirmedConnections = <NativeSerialConnection>{};
+// Retain connections when reader stop or descriptor release is unconfirmed.
+final _unconfirmedConnections = Set<NativeSerialConnection>.identity();
 
 /// Internal test seam: a monotonic elapsed clock and its matching delay.
 abstract interface class SerialWriteClock {

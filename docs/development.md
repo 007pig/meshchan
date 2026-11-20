@@ -7,6 +7,20 @@ validation for the final changes before opening a PR. In a full repository
 checkout, use the [testing guide](testing.md#review-fixes-and-pre-pr-validation)
 for test selection and reporting.
 
+## Release tooling
+
+For new candidates, use [`tool/build_release.py`](../tool/build_release.py) to
+build and verify the App and CLI, then
+[`tool/package_release.py`](../tool/package_release.py) to stage and verify the
+engineering package. Start with the [Release build guide](releases/phase-1e4-build.md)
+and [engineering packaging guide](releases/phase-1e5-package.md).
+
+The dev.2 tools `package_dev_candidate.py` and `revise_dev_candidate.py` and the
+dev.3 tools `validate_dev_candidate.py` and `package_1c_candidate.py` are kept
+for reproducing those releases and testing their archive and compatibility
+contracts. Use each historical checkout and its recorded inputs. See the
+[dev.2 record](releases/phase-1b-dev2.md) and [dev.3 record](releases/phase-1c-dev3.md).
+
 ## Current Flutter SDK
 
 The project uses **Flutter 3.50.0 stable and its bundled Dart 3.14.0**.
@@ -78,8 +92,8 @@ python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
-On this Mac invoke `/opt/homebrew/bin/python3` (3.15+) explicitly. Xcode phases
-prefer that installed path, otherwise `python3` on CI. Both native phases check
+On this Mac invoke `/opt/homebrew/bin/python3` (3.15+) explicitly. CI passes
+its selected `python3` path to Xcode via `MESHCHAN_BUILD_PYTHON`. Both native phases check
 source identity and raw inputs; the Runner phase also checks resolved identity
 settings. An explicit missing/incomplete App fails the static checker. Its JSON
 reports source templates and actual built metadata separately, for later 1E.4.
@@ -283,6 +297,11 @@ clang --version
 If SDK cache initialization or pub downloads are restricted by the execution environment, request the appropriate execution access. Do not use sudo or change global configuration to bypass restrictions. Even source help/version invocations can run build hooks before CLI argument handling; avoiding hardware access does not remove native build requirements.
 
 ## Local Python toolchain
+
+Both ordinary GitHub Actions jobs pin runner-published CPython 3.15.2 and log
+its executable and version before the first Python gate. Local Release build
+and packaging require stable Python 3.15 or newer. See the
+[CI workflow](../.github/workflows/ci.yml).
 
 Use the latest installed stable **Python 3.15 or newer** for subsequent local
 project scripts and tests. On November 11, 2026, `/opt/homebrew/bin/python3`
@@ -1041,13 +1060,19 @@ The successful relocation check above was performed on macOS. On Linux, use a te
 
 On November 8, 2026, the user explicitly selected `/dev/cu.usbmodem211101`. Two source CLI checks, separated by a stabilization interval, and one bundle check with approved device access all returned `0`. The first bundle attempt in the restricted sandbox reported `Operation not permitted`; rerunning with the same execution access as the successful source checks passed. See the [validation record and hardware checklist](hardware-validation.md) for the exact commands and limits. Select a target explicitly before each new device test.
 
-`port-check` performs one read/write open, state check, close, closed-state check, and disposal. It does not enumerate candidates, retry opening, read/write data, flush input, or configure baud rate, flow control, DTR/RTS, reset, or bootloader state. Cleanup still runs after failures; cleanup errors are appended to an expected primary error, and failure is never reported as success.
+`port-check` performs one read/write open and close on the selected port. It
+disposes the native handle once release is confirmed. It sends no MeshCore
+commands. The pinned native library applies its normal terminal settings during
+open. A failed open triggers partial-acquisition cleanup. A failed close leaves
+the handle retained until process exit.
 
-The pinned wrapper's `isOpen()` reports a valid POSIX descriptor `0` as closed. The check still reports that validation failure, but successful-open ownership is retained so `close()` runs before disposal and detaches the wrapper's finalizer. The bundled POSIX `sp_open()` can also acquire a descriptor before a lock/exclusivity failure. The native adapter attempts `close()` once on an open failure without relying on `isOpen()`. For its valid, undisposed native object, it tolerates only `SP_ERR_ARG` (`-1`) from this recovery close, which indicates no open handle, including when upstream already closed it. Other cleanup errors remain attached to the primary error. No new FFI or dependency patch is used.
+The pinned wrapper's `isOpen()` reports a valid POSIX descriptor `0` as closed. `port-check` uses the return status of native open and close so descriptor `0` follows the same path as other valid descriptors. A successful open is followed by `close()` before disposal. The bundled POSIX `sp_open()` can also acquire a descriptor before a lock/exclusivity failure. The native adapter attempts `close()` once on an open failure. It treats `SP_ERR_ARG` (`-1`) on its valid, undisposed native object as confirmation that no handle is open. Other cleanup errors remain attached to the primary error.
 
 Opening/closing can trigger board resets through driver or control-line behavior; this is not guaranteed to be side-effect-free. See [Espressif's control-line guidance](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html). Do not toggle lines to test reset behavior.
 
-Successful open/close does not identify a MeshCore device or establish protocol support, firmware identity, a session, or LoRa communication. Step 3 added in-memory framing; Step 4 adds the reader/writer adapter described above. Step 5 provides the codecs. Step 6 adds callable session initialization over a supplied transport; its hardware validation remains pending. Reconnection, radio tests, database, and UI remain unimplemented.
+Successful `port-check` establishes that the selected OS port could be opened
+and closed. Use the [CLI guide](cli.md#commands-and-options) for the separate
+session initialization and diagnostic commands.
 
 ## CI and SDK updates
 

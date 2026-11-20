@@ -5,6 +5,15 @@ import 'package:meshcore_link/src/serial_ports.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('invalid check paths never create a native handle', () {
+    final ports = SerialPorts(
+      createHandle: (_) => throw StateError('Must not create a handle'),
+    );
+    for (final path in [' ', '/dev/test\u0000suffix']) {
+      expect(() => ports.checkPort(path), throwsA(isA<SerialPortFailure>()));
+    }
+  });
+
   test('unsafe platform guards run before native enumeration or creation', () {
     for (final (platform, enumerating, blocked) in [
       ('linux', true, true),
@@ -103,7 +112,7 @@ void main() {
     },
   );
 
-  test('check opens once, verifies both states, closes, and disposes', () {
+  test('check uses native open and close results, then disposes', () {
     final handle = FakeHandle();
     final paths = <String>[];
     final ports = SerialPorts(
@@ -115,14 +124,14 @@ void main() {
     );
     ports.checkPort('/dev/selected');
     expect(paths, ['/dev/selected']);
-    expect(handle.calls, ['open', 'isOpen', 'close', 'isOpen', 'dispose']);
+    expect(handle.calls, ['open', 'close', 'dispose']);
     expect(handle.opened, isFalse);
   });
 
   test(
-    'check failures still release resources and preserve the primary error',
+    'check preserves primary failures and only disposes confirmed handles',
     () {
-      for (final stage in ['open', 'isOpen', 'close', 'dispose']) {
+      for (final stage in ['open', 'close', 'dispose']) {
         final handle = FakeHandle(failAt: stage, failDispose: true);
         final ports = SerialPorts(createHandle: (_) => handle);
         expect(
@@ -136,30 +145,34 @@ void main() {
           ),
           reason: stage,
         );
-        expect(handle.calls.last, 'dispose');
-        expect(handle.calls.where((call) => call == 'open'), hasLength(1));
-        if (stage == 'open') {
-          expect(handle.calls, ['open', 'dispose']);
-        } else {
-          expect(handle.calls.where((call) => call == 'close'), hasLength(1));
-        }
+        expect(handle.calls, switch (stage) {
+          'open' => ['open', 'dispose'],
+          'close' => ['open', 'close'],
+          _ => ['open', 'close', 'dispose'],
+        });
       }
     },
   );
 
-  test('unexpected open and closed states cannot report success', () {
-    for (final state in [false, true]) {
-      final handle = FakeHandle(reportedState: state);
+  test(
+    'check retains the handle when partial-open recovery cannot close it',
+    () {
+      final cleanup = const SerialPortFailure('recovery close failed');
+      final handle = FakeHandle(openCleanupError: cleanup);
+      final ports = SerialPorts(createHandle: (_) => handle);
       expect(
-        () =>
-            SerialPorts(createHandle: (_) => handle).checkPort('/dev/selected'),
-        throwsA(isA<SerialPortFailure>()),
+        () => ports.checkPort('/dev/test'),
+        throwsA(
+          isA<NativeOpenCleanupFailure>().having(
+            (failure) => failure.cleanupError,
+            'recovery close error',
+            same(cleanup),
+          ),
+        ),
       );
-      expect(handle.calls.last, 'dispose');
-      expect(handle.calls.where((call) => call == 'close'), hasLength(1));
-      expect(handle.opened, isFalse);
-    }
-  });
+      expect(handle.calls, ['open']);
+    },
+  );
 
   test(
     'native open recovery closes partial acquisitions and keeps the error',
@@ -199,6 +212,11 @@ void main() {
                 .having(
                   (failure) => failure.message.contains('cleanup failed:'),
                   'cleanup diagnostic',
+                  failClose,
+                )
+                .having(
+                  (failure) => failure is NativeOpenCleanupFailure,
+                  'unconfirmed recovery',
                   failClose,
                 ),
           ),
@@ -277,14 +295,14 @@ class FakeHandle implements SerialPortHandle {
   FakeHandle({
     this.failAt,
     this.failDispose = false,
-    this.reportedState,
     this.getInfo,
+    this.openCleanupError,
   });
 
   final String? failAt;
   final bool failDispose;
-  final bool? reportedState;
   final native.SerialPortInfo Function()? getInfo;
+  final SerialPortFailure? openCleanupError;
   final calls = <String>[];
   bool opened = false;
 
@@ -307,12 +325,12 @@ class FakeHandle implements SerialPortHandle {
   void open() {
     record('open');
     opened = true;
-  }
-
-  @override
-  bool isOpen() {
-    record('isOpen');
-    return reportedState ?? opened;
+    if (openCleanupError case final error?) {
+      throw NativeOpenCleanupFailure(
+        const SerialPortFailure('open failed'),
+        error,
+      );
+    }
   }
 
   @override

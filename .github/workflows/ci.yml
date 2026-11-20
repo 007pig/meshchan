@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  MESHCHAN_CI_PYTHON_VERSION: '3.15.2'
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -24,11 +27,18 @@ jobs:
           channel: stable
           flutter-version: '3.50.0'
 
+      - name: Set up CPython
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.MESHCHAN_CI_PYTHON_VERSION }}
+
       - name: Print SDK versions
         run: |
           uname -m
           flutter --version --machine
           dart --version
+          python3 --version
+          command -v python3
 
       - name: Get locked workspace dependencies
         run: flutter pub get --enforce-lockfile
@@ -106,7 +116,6 @@ jobs:
 
       - name: Verify source and native entry points without hardware
         run: |
-          python3 --version
           python3 tool/smoke_cli.py --expected-version 0.1.0-rc.1 \
             --dart "$(command -v dart)" \
             --cli-bundle apps/meshctl/build/dist/bundle \
@@ -129,6 +138,10 @@ jobs:
         with:
           channel: stable
           flutter-version: '3.50.0'
+      - name: Set up CPython
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.MESHCHAN_CI_PYTHON_VERSION }}
       - name: Record actual runner architecture and toolchain
         run: |
           uname -m
@@ -137,6 +150,10 @@ jobs:
           xcode-select -p
           xcrun --show-sdk-version
           xcrun clang --version
+          python3 --version
+          python_path=$(command -v python3)
+          printf '%s\n' "$python_path"
+          printf 'MESHCHAN_BUILD_PYTHON=%s\n' "$python_path" >> "$GITHUB_ENV"
       - name: Get locked workspace dependencies
         run: flutter pub get --enforce-lockfile
       - name: Check candidate source identity

@@ -5,8 +5,16 @@ The current Release build candidate is **0.1.0-rc.1** (app build **8**).
 retains engineering build `6`; the [1E.3 candidate evidence](docs/validation/phase-1e3-materials.md)
 uses build `7` for updated automatic notices. Build `8` updates the embedded
 Flutter engine runpath and uses Apple numeric version `0.1.0`.
-Final packaging, signing, notarization, installation and publication gates remain
-pending under the [1E release contract](docs/releases/phase-1e-plan.md).
+The 1E.5 engineering package from frozen product commit `a29430b6` passed
+extraction and offline App and CLI runtime checks. The
+[1E.5 validation record](docs/validation/phase-1e5-package.md#selected-package-and-1e6-handoff)
+identifies the exact package selected for 1E.6 signing. Including later code
+changes requires a new frozen build and package validation. Signing,
+notarization, final DMG packaging, installation and publication remain pending
+under the [1E release contract](docs/releases/phase-1e-plan.md).
+
+For current build and packaging commands, start with the
+[Release tooling guide](docs/development.md#release-tooling).
 
 The historical **0.1.0-beta.1** (app build **5**) remains the accepted 1D Beta.
 **Local beta accepted with documented limits** for macOS arm64 and the selected
@@ -28,7 +36,7 @@ History, safe export and the first normal Quit/independent read passed.
 Build 4 retains its own receiving-stage Cancel, active native Quit and exact
 Chinese/emoji Save/reopen evidence. The earlier [reviewed v2 continuation](docs/validation/phase-1d11-v2-hardware-continuation.md)
 recorded one locally accepted GUI Responder reply, but B did not obtain exact
-PONG. RF stopped; current exact PONG and physical unplug/replug remain unestablished.
+PONG. RF stopped at that stage, before the later bidirectional and unplug/replug checks.
 The later [B acknowledgment investigation](docs/validation/phase-1d11-openhop-ok-investigation.md)
 reproduced a server duty-cycle deferral longer than the finite client budget.
 The upstream modification proposal was withdrawn. Meshchan's source-only peer
@@ -44,7 +52,7 @@ and [current validation](docs/validation/phase-1d11-hardware-beta.md).
 Developer ID, notarization, installers and public distribution belong to 1E.
 
 
-Meshchan is an open-source decentralized content application based on MeshCore. Its long-term direction is Flutter and Dart, with a reusable communication core that stays independent of Flutter. Development starts with a command-line diagnostic tool before adding a user interface.
+Meshchan is an open-source decentralized content application based on MeshCore. It includes a Flutter macOS app and a Dart command-line diagnostic tool built on a reusable, Flutter-independent communication core.
 
 The offline business core and product CLI now cover **Phase 1 / 1C / Step 9**:
 persistent drafts, complete operation presets, typed settings, default/explicit

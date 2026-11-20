@@ -63,12 +63,8 @@ final class MeshchanPingTask extends _DiagnosticTask<DiagnosticPingResult> {
   @override
   DiagnosticTaskReason? _expired(Duration now) {
     final remote = _responseDeadline;
-    // Equal deadlines consistently favor the whole-task budget. An observed
-    // PONG retires the remote deadline, including during local send settlement.
-    if (_firstPong == null &&
-        remote != null &&
-        now >= remote &&
-        remote < options.taskTimeout) {
+    // An observed PONG retires the deadline during local send settlement too.
+    if (_firstPong == null && remote != null && now >= remote) {
       return DiagnosticTaskReason.responseTimeout;
     }
     return super._expired(now);
@@ -92,8 +88,11 @@ final class MeshchanPingTask extends _DiagnosticTask<DiagnosticPingResult> {
   }
 
   void _startResponseTimer(Duration origin) {
+    // Compare before adding so a long response window cannot wrap the clock.
+    // The whole-task budget already owns this deadline or an earlier one.
+    if (responseTimeout >= options.taskTimeout - origin) return;
     _responseDeadline = origin + responseTimeout;
-    _responseTimer = Timer(_timerDelay(responseTimeout), () => _check());
+    _responseTimer = Timer(timerDelay(responseTimeout), () => _check());
   }
 
   @override

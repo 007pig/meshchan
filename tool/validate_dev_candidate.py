@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record the sequential Phase 1C software/native gate in a new build directory."""
+"""Reproduce the historical dev.3 software/native gate. Current builds use build_release.py."""
 import argparse
 import datetime
 import json

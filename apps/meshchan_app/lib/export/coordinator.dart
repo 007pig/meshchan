@@ -116,10 +116,10 @@ final class ExportJob {
       canceled = false,
       writerAdmitted = false,
       published = false;
-  bool cleanupComplete = false, cleanupWarning = false, panelCanceled = false;
+  bool cleanupComplete = false, cleanupWarning = false;
   int? count;
   bool? more;
-  String? json, target;
+  String? target;
   RuntimeFault? generationError;
   ExportFailure? failure;
   bool get settled => phase == ExportPhase.settled;
@@ -151,8 +151,8 @@ final class ExportCoordinator extends ChangeNotifier {
   final _panelWork = <Future<void>>{};
   int _next = 0;
   bool paused = false, _stopped = false, _disposed = false;
-  bool get busy => _work != null;
-  bool get settled => !busy && _panelWork.isEmpty;
+  bool get busy => _work != null || _panelWork.isNotEmpty;
+  bool get settled => !busy;
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -176,10 +176,14 @@ final class ExportCoordinator extends ChangeNotifier {
 
   void cancel() {
     final current = job;
-    if (current == null || current.settled || current.writerAdmitted) return;
+    if (current == null ||
+        current.canceled ||
+        current.settled ||
+        current.writerAdmitted) {
+      return;
+    }
     current.canceled = true;
-    if (current.phase == ExportPhase.choosing && !current.panelCanceled) {
-      current.panelCanceled = true;
+    if (current.phase == ExportPhase.choosing) {
       final work = _cancelPanel(current);
       _panelWork.add(work);
       unawaited(
@@ -213,9 +217,16 @@ final class ExportCoordinator extends ChangeNotifier {
     }
   }
 
+  bool _canProceed(ExportJob current) {
+    if (!current.canceled && _allowed) return true;
+    current.canceled = true;
+    return false;
+  }
+
   Future<void> _run(ExportJob current) async {
     ExportStaging? staging;
     try {
+      if (!_canProceed(current)) return;
       DiagnosticSummaryPage summary;
       try {
         summary = (await runtime.historyRequest(
@@ -227,7 +238,6 @@ final class ExportCoordinator extends ChangeNotifier {
         return;
       }
       current.generated = true;
-      current.json = summary.json;
       try {
         final data = jsonDecode(summary.json) as Map<String, dynamic>;
         current.count = (data['runs'] as List).length;
@@ -236,31 +246,30 @@ final class ExportCoordinator extends ChangeNotifier {
         current.failure = ExportFailure.invalidSummary;
         return;
       }
-      if (current.canceled || !_allowed) {
-        current.canceled = true;
-        return;
-      }
+      if (!_canProceed(current)) return;
       current.phase = ExportPhase.choosing;
-      _notify();
       final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
         RegExp(r'[:.]'),
         '-',
       );
-      current.target = await platform.choose(
+      final choosing = platform.choose(
         current.id,
         'meshchan-summary-$stamp.json',
       );
-      if (current.canceled || !_allowed || current.target == null) {
+      // A listener may cancel immediately. Submit choose before exposing the
+      // phase so the platform receives cancellation after the matching request.
+      _notify();
+      current.target = await choosing;
+      if (current.target == null) {
         current.canceled = true;
         return;
       }
+      if (!_canProceed(current)) return;
       current.phase = ExportPhase.staging;
       _notify();
+      if (!_canProceed(current)) return;
       staging = await files.create(current.target!);
-      if (current.canceled || !_allowed) {
-        current.canceled = true;
-        return;
-      }
+      if (!_canProceed(current)) return;
       // The last synchronous cancellation check and writer invocation have no
       // await between them. This is admission, not an OS first-byte claim.
       current.writerAdmitted = true;

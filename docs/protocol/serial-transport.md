@@ -130,6 +130,11 @@ closes the owned port, disposes it, and closes the public stream. All terminatio
 paths share one cleanup future. Cleanup never waits for a paused public listener's
 done delivery. Native ownership follows successful open, including descriptor 0;
 failed opens reuse Step 2's partial-acquisition recovery.
+If a native close fails, the transport and `port-check` keep the native handle
+until process exit. A second close could act on a descriptor whose release is
+uncertain. When the recovery close for a partial open fails,
+`SerialTransport.close()` reports the cleanup error alongside the original
+open error.
 
 No guessed sleep or shutdown timeout permits freeing a port still used by the
 reader. If stop fails or subscription setup cannot establish exit evidence, close

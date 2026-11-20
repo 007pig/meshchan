@@ -26,6 +26,7 @@ Future<List<DiagnosticRun>> selectRuns(
   HistoryQuery? filter,
   HistoryCursor? after,
   required int limit,
+  bool skipValidatedSettled = false,
 }) async {
   final conditions = <String>[];
   final variables = <Variable>[];
@@ -36,6 +37,10 @@ Future<List<DiagnosticRun>> selectRuns(
   if (filter?.recordState case final state?) {
     conditions.add('"record_state" = ?');
     variables.add(Variable(state.code));
+  }
+  if (skipValidatedSettled) {
+    conditions.add('"record_state" IS NOT ?');
+    variables.add(Variable(DiagnosticRecordState.settled.code));
   }
   if (filter?.preparedFromInclusive case final from?) {
     conditions.add('prepared_at_us >= ?');
@@ -105,11 +110,13 @@ Future<HistoryMaintenanceReport> pruneHistory(
   CoreDatabase db, {
   required bool Function(LocalId) isPinned,
   required int Function() revision,
+  bool afterStartupRecovery = false,
 }) async {
   var deleted = 0, retained = 0, deferred = 0;
   int? limit;
   var selection = -1;
   HistoryCursor? cursor;
+  var skipValidatedSettled = false;
   try {
     while (true) {
       final batch = await runWrite(
@@ -117,8 +124,20 @@ Future<HistoryMaintenanceReport> pruneHistory(
           final currentLimit = (await readStoredSettings(db))
               .diagnosticHistoryLimit;
           if (selection != revision() || limit != currentLimit) {
+            final canReuseRecovery = afterStartupRecovery && selection == -1;
             selection = revision();
             limit = currentLimit;
+            skipValidatedSettled = false;
+            if (canReuseRecovery) {
+              final count = await db
+                  .customSelect('SELECT COUNT(*) AS run_count FROM stored_runs')
+                  .getSingle();
+              // At this exclusive startup point, recovery validated settled
+              // rows. If all rows fit, no deletion needs the full rank. Read
+              // the other states to keep detecting damaged archived records.
+              skipValidatedSettled =
+                  count.read<int>('run_count') <= currentLimit;
+            }
             cursor = null;
             retained = 0;
             deferred = 0;
@@ -127,6 +146,7 @@ Future<HistoryMaintenanceReport> pruneHistory(
             db,
             after: cursor,
             limit: historyMaintenanceBatchSize,
+            skipValidatedSettled: skipValidatedSettled,
           );
           var removed = 0;
           for (final run in rows) {

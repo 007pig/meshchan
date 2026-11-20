@@ -136,7 +136,7 @@ Future<CoreStorage> openStorage(
     final handle = StorageHandle._(owner, db, hooks);
     // Recovery errors still fail open. Maintenance errors are independent safe
     // reports on an otherwise usable handle, including partial committed work.
-    await handle.requestHistoryMaintenance();
+    await handle.requestHistoryMaintenance(afterStartupRecovery: true);
     return handle;
   } catch (error) {
     final primary = classifyStorageError(
@@ -221,7 +221,9 @@ final class StorageHandle implements CoreStorage {
   /// Internal continuation of an existing admission (also used before open
   /// publishes the handle). Register synchronously, even while closing; never
   /// reenter useDatabase after the triggering admission has been released.
-  Future<HistoryMaintenanceReport> requestHistoryMaintenance() {
+  Future<HistoryMaintenanceReport> requestHistoryMaintenance({
+    bool afterStartupRecovery = false,
+  }) {
     if (_maintenance != null) {
       if (_maintenanceRevision != _historyRevision) {
         _maintenanceRequested = true;
@@ -232,12 +234,13 @@ final class StorageHandle implements CoreStorage {
     final completion = Completer<HistoryMaintenanceReport>();
     _maintenance = completion.future;
     _active++;
-    unawaited(_runMaintenance(completion));
+    unawaited(_runMaintenance(completion, afterStartupRecovery));
     return completion.future;
   }
 
   Future<void> _runMaintenance(
     Completer<HistoryMaintenanceReport> completion,
+    bool afterStartupRecovery,
   ) async {
     var deleted = 0;
     late HistoryMaintenanceReport report;
@@ -249,7 +252,9 @@ final class StorageHandle implements CoreStorage {
           _db,
           isPinned: isRunPinned,
           revision: () => _historyRevision,
+          afterStartupRecovery: afterStartupRecovery,
         );
+        afterStartupRecovery = false;
         deleted += pass.deletedCount;
         report = HistoryMaintenanceReport(
           state: pass.state,

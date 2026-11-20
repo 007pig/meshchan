@@ -1,6 +1,17 @@
 import 'package:args/args.dart';
 import 'package:meshchan_core/meshchan_core.dart';
 
+String requiredPortOption(ArgResults args) {
+  final port = args.option('port');
+  if (!args.wasParsed('port') ||
+      port == null ||
+      port.trim().isEmpty ||
+      port.contains('\u0000')) {
+    throw const FormatException('--port requires a nonblank path without NUL.');
+  }
+  return port;
+}
+
 int decimalOption(
   ArgResults args,
   String name,

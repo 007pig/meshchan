@@ -67,11 +67,11 @@ origin. Timer and elapsed must share a monotonic domain. A virtual Timer with a
 real Stopwatch is not a valid timing test. No wall clock is used for budgets,
 cache expiry, or RTT.
 
-Positive timer delays, including task-owned reception, are rounded up to whole
-milliseconds before scheduling so VM truncation cannot discard a fractional
-deadline's only wakeup or stop listening early. The absolute elapsed deadlines
-keep their original precision: rounding a wakeup does not extend admission or
-PONG acceptance. Timer delivery still depends on event-loop scheduling.
+Positive timer delays, including task-owned reception, round up to whole
+milliseconds when the rounded delay fits in a `Duration`. At the top of the
+representable range, timers receive the original delay. Absolute elapsed
+deadlines keep their original precision for admission and PONG acceptance.
+Timer delivery still depends on event-loop scheduling.
 
 | Budget | Origin and end |
 | --- | --- |
@@ -93,9 +93,10 @@ confirmation budget is present. No schema or wire format changes.
 
 Callbacks check absolute elapsed deadlines as well as timers. At a deadline or
 later, new corresponding observations/admissions are rejected. Earlier applicable
-upper-layer deadlines win; equal deadlines favor the overall budget. Input,
-OK/write completion, and duplicates never extend budgets. Timers cannot preempt
-a blocking native call or guarantee native cleanup duration.
+upper-layer deadlines win. If the response or listen window reaches or
+exceeds the remaining whole-task budget, the whole-task deadline applies.
+Input, OK/write completion, and duplicates never extend budgets. Timers cannot
+preempt a blocking native call or guarantee native cleanup duration.
 
 PING listens before reception activation and activates its correlation context
 before one send. Its entries listener is unpaused and synchronous. Only the

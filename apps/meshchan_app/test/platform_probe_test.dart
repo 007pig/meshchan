@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,6 +15,103 @@ void main() {
     fixture = '${parent.resolveSymbolicLinksSync()}/meshchan-1d2-fake';
   });
   tearDown(() => parent.deleteSync(recursive: true));
+
+  for (final cleanupConfirmed in [true, false]) {
+    test(
+      'probe Quit settles before a failed report flush (cleanup confirmed: $cleanupConfirmed)',
+      () async {
+        final cleanup = Completer<bool>();
+        final flush = Completer<void>();
+        String? written;
+        final output = publishPlatformProbeReport(
+          {
+            'passed': cleanupConfirmed,
+            'closes': cleanupConfirmed ? ['closed'] : [],
+            'failures': [
+              if (!cleanupConfirmed) {'cleanupUnconfirmed': true},
+            ],
+          },
+          settleCleanup: cleanup.complete,
+          writeLine: (line) {
+            written = line;
+            return flush.future;
+          },
+        );
+        expect(cleanup.isCompleted, isTrue);
+        expect(await cleanup.future, cleanupConfirmed);
+        expect(jsonDecode(written!)['passed'], cleanupConfirmed);
+        flush.completeError(const FileSystemException('broken stdout'));
+        final report = await output;
+        expect(report['passed'], isFalse);
+        expect(report['error'], 'probe_report_output_failed');
+        expect(report['closes'], cleanupConfirmed ? ['closed'] : []);
+      },
+    );
+  }
+
+  test(
+    'probe needs explicit cleanup evidence to report success or allow Quit',
+    () async {
+      for (final evidence in <Map<String, Object?>>[
+        {},
+        {'closes': [], 'failures': 'unavailable'},
+        {'closes': 'closed', 'failures': []},
+        {
+          'closes': ['closed'],
+          'failures': [{}],
+        },
+        {
+          'closes': [],
+          'failures': [
+            {'cleanupUnconfirmed': true},
+          ],
+        },
+        {
+          'closes': ['closeUnconfirmed'],
+          'failures': [],
+        },
+      ]) {
+        final cleanup = Completer<bool>();
+        final output = await publishPlatformProbeReport(
+          {'passed': true, ...evidence},
+          settleCleanup: cleanup.complete,
+          writeLine: (line) async {
+            final report = jsonDecode(line) as Map<String, dynamic>;
+            expect(report['passed'], isFalse);
+            expect(report['error'], 'probe_cleanup_unconfirmed');
+          },
+        );
+        expect(await cleanup.future, isFalse);
+        expect(output['passed'], isFalse);
+        expect(output['error'], 'probe_cleanup_unconfirmed');
+        expect(output.containsKey('outputError'), isFalse);
+      }
+    },
+  );
+
+  test(
+    'probe reports output failure without losing the original failure',
+    () async {
+      final cleanup = Completer<bool>();
+      final output = await publishPlatformProbeReport(
+        {
+          'passed': false,
+          'error': 'platform_probe_failed',
+          'closes': [],
+          'failures': [
+            {'stage': 'directory_facts', 'cleanupUnconfirmed': false},
+          ],
+        },
+        settleCleanup: cleanup.complete,
+        writeLine: (_) async =>
+            throw const FileSystemException('broken stdout'),
+      );
+      expect(await cleanup.future, isTrue);
+      expect(output['passed'], isFalse);
+      expect(output['error'], 'platform_probe_failed');
+      expect(output['outputError'], 'probe_report_output_failed');
+    },
+  );
 
   test(
     'unsafe existing or missing read fixture never opens storage or enumerates',

@@ -345,9 +345,9 @@ class HistoryView extends StatelessWidget {
                 const Text(
                   'Staging cleanup warning. A published target remains intact.',
                 ),
-              if (output.busy && !job.writerAdmitted)
+              if (!job.settled && !job.canceled && !job.writerAdmitted)
                 button('Cancel export', output.cancel),
-              if (output.busy && job.writerAdmitted)
+              if (!job.settled && job.writerAdmitted)
                 const Text(
                   'Waiting for write, flush/close, exclusive publish and staging cleanup. Quit waits for this host work.',
                 ),

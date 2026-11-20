@@ -12,6 +12,25 @@ const second = Duration(seconds: 1);
 const window = Duration(seconds: 30);
 
 void main() {
+  test('fractional reception windows do not stop at a truncated delay', () {
+    withMillisecondTimers((clock) {
+      final h = ReadyHarness(clock);
+      final receiver = h.session.createReception(
+        duration: const Duration(microseconds: 1500),
+      );
+      receiver.entries.listen((_) {});
+      final done = Outcome(receiver.done);
+      Outcome(receiver.start());
+      clock.flushMicrotasks();
+      h.transport.receive([0x0a]);
+      clock.elapse(const Duration(microseconds: 1500));
+      expect(done.done, isFalse);
+      clock.elapse(const Duration(microseconds: 500));
+      expect(done.value?.reason, MeshCoreReceptionStopReason.durationElapsed);
+      h.close();
+    });
+  });
+
   test('creation and subscription are inert and budgets must be positive', () {
     fakeAsync((clock) {
       final h = ReadyHarness(clock);

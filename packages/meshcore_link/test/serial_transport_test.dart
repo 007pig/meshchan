@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:fake_async/fake_async.dart';
 import 'package:libserialport_plus/libserialport_plus.dart' as native;
 import 'package:meshcore_link/meshcore_link.dart';
+import 'package:meshcore_link/src/serial_ports.dart'
+    show NativeOpenCleanupFailure;
 import 'package:meshcore_link/src/transport/native_serial_connection.dart';
 import 'package:meshcore_link/src/transport/serial_transport.dart';
 import 'package:test/test.dart';
@@ -14,6 +16,37 @@ Matcher failureKind(SerialTransportFailureKind kind) =>
     isA<SerialTransportFailure>().having((e) => e.kind, 'kind', kind);
 
 void main() {
+  for (final closeDuringOpen in [false, true]) {
+    test(
+      'partial-open recovery failure remains unconfirmed (close racing: $closeDuringOpen)',
+      () async {
+        final h = Harness();
+        final gate = h.connection.openGate = Completer<void>();
+        final opening = h.transport.open();
+        final closing = closeDuringOpen ? h.transport.close() : null;
+        final cleanup = const SerialPortFailure('recovery close failed');
+        final fault = NativeOpenCleanupFailure(
+          const SerialPortFailure('open failed'),
+          cleanup,
+        );
+        final expected = isA<SerialTransportFailure>()
+            .having((f) => f.kind, 'kind', SerialTransportFailureKind.io)
+            .having((f) => f.cause, 'open failure', same(fault))
+            .having((f) => f.cleanupErrors, 'cleanup errors', [same(cleanup)]);
+        final failedOpen = expectLater(opening, throwsA(expected));
+        final failedClose = closing == null
+            ? null
+            : expectLater(closing, throwsA(expected));
+        gate.completeError(fault);
+        await failedOpen;
+        await failedClose;
+        await expectLater(h.transport.close(), throwsA(expected));
+        expect(h.connection.calls, ['open']);
+        await h.subscription.cancel();
+      },
+    );
+  }
+
   test(
     'lazy access, listener/argument/platform guards precede acquisition',
     () async {
@@ -21,6 +54,7 @@ void main() {
         'lazy',
         'listener',
         'path',
+        'pathWithNul',
         'baud',
         'timeout',
         'windows',
@@ -29,7 +63,11 @@ void main() {
       ]) {
         var acquisitions = 0;
         final transport = serialTransportForTest(
-          portPath: scenario == 'path' ? ' \t' : '/dev/test',
+          portPath: switch (scenario) {
+            'path' => ' \t',
+            'pathWithNul' => '/dev/test\u0000suffix',
+            _ => '/dev/test',
+          },
           baudRate: scenario == 'baud' ? 0 : 115200,
           writeTimeout: scenario == 'timeout'
               ? Duration.zero
@@ -397,7 +435,7 @@ void main() {
           expect(h.connection.writes, hasLength(1));
           expect(
             h.connection.calls.where((call) => call == 'dispose'),
-            hasLength(1),
+            hasLength(cleanupFails ? 0 : 1),
           );
           expect(h.events.last, 'done');
         }
@@ -580,53 +618,61 @@ void main() {
     }
   });
 
-  test('cleanup failures preserve primary; unconfirmed stop never frees; instances stay separate', () async {
-    for (final stage in ['stop', 'close', 'dispose']) {
+  test(
+    'cleanup failures preserve primary and retain unconfirmed connections',
+    () async {
+      for (final stage in ['stop', 'close', 'dispose']) {
+        final h = Harness();
+        await h.transport.open();
+        h.connection.failAt.add(stage);
+        final cause = const SerialPortFailure('Primary read failure');
+        h.connection.onError(cause, StackTrace.current);
+        Object? closingError;
+        try {
+          await h.transport.close();
+        } catch (error) {
+          closingError = error;
+        }
+        await turn();
+        final primary = h.errors.single as SerialTransportFailure;
+        expect(closingError, same(primary));
+        expect(primary.cause, same(cause));
+        expect(primary.cleanupErrors, hasLength(1));
+        if (stage == 'stop') {
+          expect(h.connection.calls, isNot(contains('cancelReader')));
+          expect(h.connection.calls, isNot(contains('close')));
+        }
+        expect(h.connection.calls.contains('dispose'), stage == 'dispose');
+        await expectLater(h.transport.close(), throwsA(same(primary)));
+        await h.subscription.cancel();
+        final next = Harness();
+        await next.transport.open();
+        h.connection.data([0x3e, 1, 0, 1]);
+        h.connection.onDone();
+        await turn();
+        expect(next.events, isEmpty);
+        await next.finish();
+      }
       final h = Harness();
       await h.transport.open();
-      h.connection.failAt.add(stage);
-      final cause = const SerialPortFailure('Primary read failure');
-      h.connection.onError(cause, StackTrace.current);
-      Object? closingError;
-      try {
-        await h.transport.close();
-      } catch (error) {
-        closingError = error;
-      }
+      h.connection.failAt.addAll(['close', 'dispose']);
+      await expectLater(
+        h.transport.close(),
+        throwsA(failureKind(SerialTransportFailureKind.cleanup)),
+      );
       await turn();
-      final primary = h.errors.single as SerialTransportFailure;
-      expect(closingError, same(primary));
-      expect(primary.cause, same(cause));
-      expect(primary.cleanupErrors, hasLength(1));
-      if (stage == 'stop') {
-        expect(h.connection.calls, isNot(contains('cancelReader')));
-        expect(h.connection.calls, isNot(contains('close')));
-        expect(h.connection.calls, isNot(contains('dispose')));
-      }
-      await expectLater(h.transport.close(), throwsA(same(primary)));
+      expect((h.errors.single as SerialTransportFailure).cleanupErrors, [
+        isA<SerialPortFailure>().having(
+          (e) => e.message,
+          'cause',
+          'close failed',
+        ),
+      ]);
+      expect(h.connection.calls.where((call) => call == 'close'), hasLength(1));
+      expect(h.connection.calls, isNot(contains('dispose')));
       await h.subscription.cancel();
-      final next = Harness();
-      await next.transport.open();
-      h.connection.data([0x3e, 1, 0, 1]);
-      h.connection.onDone();
-      await turn();
-      expect(next.events, isEmpty);
-      await next.finish();
-    }
-    final h = Harness();
-    await h.transport.open();
-    h.connection.failAt.addAll(['close', 'dispose']);
-    await expectLater(
-      h.transport.close(),
-      throwsA(failureKind(SerialTransportFailureKind.cleanup)),
-    );
-    await turn();
-    expect(
-      (h.errors.single as SerialTransportFailure).cleanupErrors,
-      hasLength(2),
-    );
-    await h.subscription.cancel();
-  });
+    },
+  );
 }
 
 class Harness {

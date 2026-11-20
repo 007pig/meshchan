@@ -128,13 +128,21 @@ void main() {
   );
 
   test(
-    'missing and blank port values are usage errors without operations',
+    'missing, blank and NUL-containing port values are rejected before I/O',
     () async {
       for (final arguments in <List<String>>[
         ['port-check'],
         ['port-check', '--port'],
         ['port-check', '--port='],
         ['port-check', '--port', '   '],
+        for (final command in [
+          ['port-check'],
+          ['info'],
+          ['watch'],
+          for (final operation in ['send', 'listen', 'ping', 'respond'])
+            ['datagram', operation],
+        ])
+          [...command, '--port=/dev/test\u0000suffix'],
       ]) {
         final output = StringBuffer();
         final error = StringBuffer();
@@ -144,10 +152,16 @@ void main() {
           output: output,
           error: error,
           serialPorts: ports,
+          createTransport: (_) => throw StateError('Must not create transport'),
+          openStorage: (_) => throw StateError('Must not open storage'),
         );
         expect(code, 64, reason: '$arguments');
         expect(output.toString(), isEmpty);
         expect(error.toString(), contains('Error:'));
+        if (arguments.last.contains('\u0000')) {
+          expect(error.toString(), contains('--port'));
+          expect(error.toString(), isNot(contains('/dev/test')));
+        }
         expect(error.toString(), isNot(contains('#0')));
         expect(ports.listCalls, 0);
         expect(ports.checkedPaths, isEmpty);

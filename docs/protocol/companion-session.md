@@ -35,6 +35,9 @@ Construction validates the application name using `encodeAppStart`, positive
 timeouts, a nonnegative startup delay, and nonnegative queue capacity. Invalid
 local arguments throw `ArgumentError` or `RangeError` without I/O.
 Construction, getters, and event subscriptions never open the transport.
+Session and reception timers round fractional milliseconds up whenever the
+rounded delay fits in a `Duration`. At the top of the representable range,
+they pass the original value to the VM and use its millisecond resolution.
 
 An optional positive `sendTimeout` separates SEND_CHANNEL_DATA write/OK waiting
 from the ordinary `requestTimeout`. It defaults to `requestTimeout`, preserving

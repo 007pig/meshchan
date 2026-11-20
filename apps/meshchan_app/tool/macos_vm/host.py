@@ -67,8 +67,20 @@ class Product:
         # The queue is private to this explicit GUI-session executor run.
         self.vm.remote('set -e\ntest ! -f ' + q(run + '/exit-code') + '\ncat > ' + q(run + '/queue/' + job + '.tmp') + '\nmv ' + q(run + '/queue/' + job + '.tmp') + ' ' + q(run + '/queue/' + job + '.sh'), input='set -euo pipefail\n' + script + '\n', text=True, timeout=10)
         reply = run + '/replies/' + job
+        reply_exit = q(reply + '.exit')
         try:
-            result = self.vm.remote('for attempt in {1..200}; do\n if test -f ' + q(reply + '.exit') + '; then cat ' + q(reply + '.stdout') + '; cat ' + q(reply + '.stderr') + ' >&2; exit "$(cat ' + q(reply + '.exit') + ')"; fi\n sleep 0.1\ndone\necho "Job response pending; do not resend input" >&2\nexit 75', capture_output=True, text=True, timeout=25)
+            # The guest writes the receipt directly. Wait for a complete line.
+            result = self.vm.remote(f'''for attempt in {{1..200}}; do
+    if test -f {reply_exit} && IFS= read -r job_code < {reply_exit}; then
+        cat {q(reply + '.stdout')}
+        cat {q(reply + '.stderr')} >&2
+        exit "$job_code"
+    fi
+    sleep 0.1
+done
+echo "Job response pending; do not resend input" >&2
+exit 75
+''', capture_output=True, text=True, timeout=25)
         except subprocess.CalledProcessError as error:
             raise ValueError('Guest command failed: ' + error.stderr.strip()) from None
         return result.stdout

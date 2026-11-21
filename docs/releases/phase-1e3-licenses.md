@@ -128,20 +128,21 @@ and supply the needed information; do not infer a GPL license for the whole App.
 ## Handoff and distribution layout
 
 1E.4 must bind fresh compilation inputs and complete products, then invoke this
-collector. 1E.5 must stage the generated notices/licenses next to the App and CLI
-in the DMG and include the source-materials and rebuild directories in that same
-delivery or an immutable matching source attachment on the same release entry.
+collector. 1E.5 stages the generated notices and licenses with the App and CLI.
+The 1E.7 DMG carries the complete candidate, including the source-materials
+and rebuild directories. Any separate source attachment must match the
+distributed products and remain available on the same release entry.
 If network source delivery is used, supply an actual corresponding source download
 beside the binary download, at no extra charge, with clear directions and continued
 availability consistent with GPLv3 section 6(d). No future URL is invented here.
 Do not ship raw private validation logs or arbitrary SDK/cache trees.
 
-1E.6 must repeat modified-library loading and necessary local re-signing under
-actual Developer ID/Hardened Runtime conditions, with an interface-compatible
-modified library for both products, preserving the adopted rights. Local ad hoc
-results do not establish those conditions. Recollect/recheck after any graph,
+1E.6 must repeat modified-library loading and local re-signing from the complete
+candidate under the active local ad hoc and Hardened Runtime policy, with an
+interface-compatible modified library for both products, preserving the adopted
+rights. Recollect/recheck after any graph,
 lock, SDK, engine, runtime, native, font/resource, product or signing change.
-Future signed/stapled App, final DMG, extracted products and final checksum
+The accepted signed App, final DMG, extracted products and final checksum
 identities are outside this current candidate review.
 
 ## Exact runtime and resource correspondence in this review

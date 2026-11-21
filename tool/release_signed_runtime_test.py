@@ -17,6 +17,26 @@ from unittest.mock import Mock, patch
 import build_release as build
 import package_release_vm as guest
 import release_signed_runtime as runtime
+import release_signing as signing
+
+
+def local_manifest(inventory=None):
+    item = signing.CodeItem('Meshchan.app', 'Meshchan.app/'+runtime.APP_EXECUTABLE, 'app',
+                            'org.meshchan.meshchan', True, signing_profile=signing.LOCAL_PROFILE)
+    signature = {**item.record(), 'slices': {
+        'arm64': {'identifier': item.identifier, 'adhoc': True, 'team': None, 'timestamp': None,
+                  'authorityChain': [], 'signatureSlots': 1, 'entitlements': item.entitlements,
+                  'runtime': True, 'cdhash': 'a'*40}}}
+    return {
+        'formatVersion': 2, 'signingProfile': signing.LOCAL_PROFILE,
+        'identity': {'target': 'macos-arm64', 'productVersion': '0.1.0-rc.1', 'appBuild': '8',
+                     'appVersion': '0.1.0-rc.1+8', 'apple': {
+                         'CFBundleIdentifier': item.identifier, 'CFBundleVersion': '8',
+                         'CFBundleShortVersionString': '0.1.0', 'CFBundleName': 'Meshchan',
+                         'MeshchanProductVersion': '0.1.0-rc.1'}},
+        'payloadInventory': {} if inventory is None else inventory,
+        'signature': {'identity': signing.local_identity(), 'items': [signature]},
+    }
 
 
 class SignedRuntimeTest(unittest.TestCase):
@@ -54,6 +74,53 @@ class SignedRuntimeTest(unittest.TestCase):
         public['team'] = 'ABCD";BAD'
         with self.assertRaisesRegex(ValueError, 'Developer ID'):
             self.read_signed(self.info)
+
+    def test_guest_requirement_binds_explicit_local_code_hash(self):
+        info = local_manifest()
+        self.assertEqual(self.read_signed(info), info)
+        self.assertEqual(runtime.app_requirements(info), [
+            ('arm64', 'identifier "org.meshchan.meshchan" and cdhash H"'+'a'*40+'"')])
+        for bad in (
+            {key: value for key, value in info.items() if key != 'signingProfile'},
+            {**info, 'formatVersion': 1},
+            {**info, 'signingProfile': signing.DEVELOPER_PROFILE},
+            {**info, 'signature': self.info['signature']},
+            {**self.info, 'signingProfile': signing.LOCAL_PROFILE},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.read_signed(bad)
+        for key, value in (('cdhash', 'bad syntax'), ('signatureSlots', True), ('adhoc', 1),
+                           ('team', 'ABCD123456'), ('timestamp', 'now')):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                modified = copy.deepcopy(info)
+                modified['signature']['items'][0]['slices']['arm64'][key] = value
+                self.read_signed(modified)
+        info['identity']['apple']['CFBundleShortVersionString'] = '0.1.0.1'
+        with self.assertRaisesRegex(ValueError, 'CFBundleShortVersionString'):
+            self.read_signed(info)
+
+    def test_local_app_checks_actual_architectures_and_code_identity(self):
+        app = self.root/'Renamed Meshchan.app'
+        info = local_manifest()
+        expected = info['signature']['items'][0]['slices']['arm64']
+        with (patch.object(runtime, 'check_app') as identify,
+              patch.object(runtime, 'macho_layout', return_value={'slices': {'arm64': {}}}) as layout,
+              patch.object(runtime, 'display_signature', return_value=expected) as display):
+            runtime.verify_local_app(app, info)
+            identify.assert_called_once_with(app, '0.1.0-rc.1', 8)
+            layout.assert_called_once_with(app/runtime.APP_EXECUTABLE)
+            self.assertEqual(display.call_args.args[1].path, app.name)
+            display.return_value = {**expected, 'adhoc': False}
+            with self.assertRaisesRegex(ValueError, 'ad hoc signature'):
+                runtime.verify_local_app(app, info)
+            display.return_value = {**expected, 'cdhash': 'b'*40}
+            with self.assertRaisesRegex(ValueError, 'CodeDirectory hash'):
+                runtime.verify_local_app(app, info)
+            display.reset_mock()
+            layout.return_value['slices']['x86_64'] = {}
+            with self.assertRaisesRegex(ValueError, 'signature architectures'):
+                runtime.verify_local_app(app, info)
+            display.assert_not_called()
 
     def test_observation_requires_owned_pid_real_exit_and_executable_mapping(self):
         mapping = {'inode': 99, 'device': 20, 'address': '0x10000000'}
@@ -125,6 +192,83 @@ class SignedRuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'exitObserved'):
             runtime.cli_observer_pid({'processTree': {**tree, 'members': [{**observer, 'exitObserved': 1}]}})
 
+    def test_cli_replay_rechecks_pinned_process_argv_exit_pid_and_output(self):
+        bundle = self.root/'relocated products/meshctl'
+        workspace = self.root/'CLI workspace'
+        exe, lib = bundle/'bin/meshctl', bundle/build.CLI_SQLITE_LIBRARY
+        observer = workspace/'release-image-probe'
+        data = workspace/'owned signed CLI data'
+        database = data/'meshchan.sqlite'
+        for path in (exe, lib, observer):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(path.name.encode())
+        database.parent.mkdir()
+        with closing(sqlite3.connect(database)) as conn:
+            conn.execute('create table stored_drafts(id, title, body, revision)')
+            conn.execute('insert into stored_drafts values (?, ?, ?, ?)',
+                         ('owned', runtime.CLI_TITLE, runtime.CLI_BODY, 1))
+            conn.commit()
+        rows = []
+        steps = []
+
+        def add_step(name, argv, output, members=None):
+            log = self.root/(name+'.log')
+            log.write_bytes(output)
+            steps.append({'name': 'signed-cli-'+name, 'argv': list(map(str, argv)),
+                          'cwd': str(workspace), 'exitCode': 0, 'log': log.name, 'logSha256': build.sha(output),
+                          'processTree': {'childReaped': True, 'exited': True, 'members': members or []}})
+
+        add_step('version', [exe, '--version'], b'meshctl 0.1.0-rc.1\n')
+        for index, action in enumerate(('create', 'show')):
+            observer_pid, product_pid = 200+index*2, 201+index*2
+            image = workspace/(action+'-image.json')
+            mapping = {'observerPid': observer_pid, 'pid': product_pid, 'exitCode': 0,
+                       'mapping': {'device': lib.stat().st_dev & 0xffffffff, 'inode': lib.stat().st_ino,
+                                   'address': '0xdeadbeef'}}
+            image.write_bytes(build.encoded(mapping))
+            observed = runtime.image_report(image.read_bytes(), exe, lib, runtime.digest(exe), runtime.digest(lib),
+                                            0, observer_pid=observer_pid)
+            select = (['--title', runtime.CLI_TITLE, '--body', runtime.CLI_BODY] if action == 'create'
+                      else ['--id', 'owned'])
+            argv = [exe, '--data-dir', data, 'draft', action, *select, '--json']
+            result = {'exitCode': 0, 'operationSucceeded': True, 'schemaVersion': 1, 'command': 'draft',
+                      'action': action, 'hostCleanup': 'succeeded',
+                      'storageClose': {'state': 'closed', 'error': None},
+                      'draft': {'title': runtime.CLI_TITLE, 'body': runtime.CLI_BODY, 'revision': 1, 'id': 'owned',
+                                'bodyUtf8ByteLength': len(runtime.CLI_BODY.encode())}}
+            members = [{'pid': observer_pid, 'ppid': 100, 'pgid': observer_pid, 'exitObserved': True},
+                       {'pid': product_pid, 'ppid': observer_pid, 'pgid': observer_pid, 'exitObserved': True}]
+            add_step(action, [observer, image, lib, *argv], build.encoded(result), members)
+            rows.append({'name': action, 'argv': list(map(str, argv)), 'cwd': str(workspace), 'pid': product_pid,
+                         'pidAbsentAfterNormalExit': True, 'sqliteMapping': observed, 'report': result})
+        report = {'status': 'PASS', 'bundle': str(bundle), 'versionOutput': 'meshctl 0.1.0-rc.1',
+                  'processes': rows, 'database': str(database), 'databaseSha256': runtime.digest(database),
+                  'storedDrafts': [['owned', runtime.CLI_TITLE, runtime.CLI_BODY, 1]],
+                  'observerSha256': runtime.digest(observer)}
+
+        def verify():
+            runtime.verify_cli_runtime_evidence(report, bundle, workspace, '0.1.0-rc.1',
+                                                ledger={'steps': steps}, evidence_root=self.root)
+
+        verify()
+        for key, val in (('argv', ['/elsewhere/bin/meshctl']), ('exitCode', False)):
+            with self.subTest(key=key), patch.dict(steps[1], {key: val}), self.assertRaisesRegex(ValueError, key):
+                verify()
+        with (patch.dict(steps[1]['processTree']['members'][1], {'pid': 999}),
+              self.assertRaisesRegex(ValueError, 'different product process')):
+            verify()
+        with (patch.dict(steps[1]['processTree']['members'][0], {'pid': 999, 'pgid': 999}),
+              self.assertRaisesRegex(ValueError, 'observerPid')):
+            verify()
+        with (patch.dict(rows[0]['report']['storageClose'], {'state': 'different'}),
+              self.assertRaisesRegex(ValueError, 'Observed CLI output')):
+            verify()
+        with self.assertRaisesRegex(ValueError, 'storage close omitted its error field'):
+            runtime.verified_cli_draft({**rows[0]['report'], 'storageClose': {'state': 'closed'}}, 'create')
+        (self.root/'create.log').write_bytes(b'{}')
+        with self.assertRaisesRegex(ValueError, 'Owned process log'):
+            verify()
+
     def test_independent_vm_evidence_rejects_stale_or_type_confused_processes(self):
         report = {'guestSession': 'package.fixture0', 'guestRun': '20261120T200000Z-product-1324',
                   'identity': self.info['identity'], 'processes': []}
@@ -189,6 +333,15 @@ class SignedRuntimeTest(unittest.TestCase):
             runtime.verify_vm_runtime_evidence(changed, self.root, inventory)
         write_image, read_image = self.root/'write-image.json', self.root/'read-image.json'
         first, second = write_image.read_bytes(), read_image.read_bytes()
+        wrong_vnode = json.loads(second)
+        wrong_vnode['mapping']['inode'] += 1
+        replacement = build.encoded(wrong_vnode)
+        read_image.write_bytes(replacement)
+        changed = copy.deepcopy(report)
+        changed['processes'][1]['sqliteMapping'] = runtime.image_report(
+            replacement, executable, library, '1'*64, '2'*64, 0, observer_pid=599)
+        with self.assertRaisesRegex(ValueError, 'SQLite vnode after process reopen'):
+            runtime.verify_vm_runtime_evidence(changed, self.root, inventory)
         write_image.write_bytes(second)
         read_image.write_bytes(first)
         changed = copy.deepcopy(report)

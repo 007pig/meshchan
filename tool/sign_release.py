@@ -11,18 +11,23 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 
 import build_release as build
 import package_release as package
 from release_materials import (controlled_environment, digest, encoded, product_inventory,
                                repository_source_hashes, require_material_file, sha)
 from release_package_archive import check_payload, metadata_observations, new_extraction_root, prefixed
+import release_signing
 
 ROOT = build.ROOT
 POLICY = ROOT/'tool/release_signing_policy.json'
 PRODUCTS = ('Meshchan.app', 'meshctl')
 RETAINED = (*PRODUCTS, 'materials', 'provenance', 'packaging-source')
 UPSTREAM_GATES = ('frozenStatus', 'integrityStatus', 'cliStatus', 'vmAppStatus', 'postRuntimeIntegrityStatus')
+ACCEPTANCE_GATES = ('signatureStatus', 'materialTransformStatus', 'cliStatus', 'vmAppStatus',
+                    'modifiedLibraryStatus', 'postRuntimeIntegrityStatus')
+LOCAL_SCHEMA = {'formatVersion': 2, 'signingProfile': release_signing.LOCAL_PROFILE}
 SIGNING_SOURCES = tuple(sorted(set(package.SOURCES) | {
     'AGENTS.md', package.SKILL+'config.example.json',
     'tool/sign_release.py', 'tool/sign_release_test.py', 'tool/release_signing.py',
@@ -35,10 +40,12 @@ SIGNING_SOURCES = tuple(sorted(set(package.SOURCES) | {
     'apps/meshchan_app/macos/Runner/Release.entitlements',
 }))
 SIGNATURE_METADATA = 'Record system-managed com.apple.provenance, if present. Reject other xattrs, ACLs, and file flags.'
-SIGNED_README = b"""# Meshchan macOS signing candidate
+SIGNED_README = b"""# Meshchan macOS local signing candidate
 
 Keep Meshchan.app and the complete meshctl directory together with the
 distribution materials. signed-product-info.json describes these candidate bytes.
+The App and CLI carry local ad hoc code signatures. Apple notarization and
+Developer ID distribution are deferred under the current engineering policy.
 The indexes in upstream-provenance and provenance describe the upstream
 engineering and build inputs. Follow the user library replacement guide in
 signing-materials for a standalone test. The release signing guide assumes the
@@ -76,10 +83,6 @@ print(json.dumps({'loaders': {'app': app_loaders, 'cli': cli_loaders},
 """
 
 
-class Blocked(ValueError):
-    """A prerequisite for actual release acceptance is unavailable."""
-
-
 @dataclass(frozen=True)
 class Upstream:
     checkout: Path
@@ -99,7 +102,7 @@ def bound_json(root, relative, pin):
     path = require_material_file(root, relative)
     data = path.read_bytes()
     package.equal(pin, sha(data), 'Bound JSON SHA-256 for '+relative)
-    result = json.loads(data)
+    result = json.loads(data, object_pairs_hook=release_signing.policy_object)
     if type(result) is not dict:
         raise ValueError('Expected JSON object: '+relative)
     return result, data
@@ -124,6 +127,11 @@ def evidence_json(root, reference):
     return bound_json(root, path.relative_to(root).as_posix(), reference['sha256'])[0]
 
 
+def evidence_at(root, reference, path):
+    package.equal(path, package.canonical(root/reference['path']), 'Evidence location for '+path.name)
+    return evidence_json(root, reference)
+
+
 def require_ref(root, path, expected_sha):
     reference = build.ref(root, path)
     package.equal(expected_sha, reference['sha256'], 'Published '+reference['path'])
@@ -136,7 +144,113 @@ def publish_json(root, path, value):
     return require_ref(root, path, expected_sha)
 
 
+def verify_process_logs(root, ledger, *, evidence):
+    from release_signed_runtime import process_log
+
+    for step in ledger['steps']:
+        name = step['name']
+        if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name):
+            raise ValueError('Invalid owned process name')
+        package.verify_report_fields(step, {'exitCode': 0}, 'Owned process '+name)
+        package.verify_report_fields(step['processTree'], {'exited': True, 'childReaped': True},
+                                     'Owned process tree '+name)
+        for field, suffix in (('log', '.log'), ('stderrLog', '.stderr.log')):
+            package.equal(evidence/'logs'/(name+suffix), package.canonical(root/step[field]),
+                          'Owned process log path for '+name)
+            process_log(root, step, field)
+
+
+def process_step(ledger, name):
+    matches = [step for step in ledger['steps'] if step['name'] == name]
+    if len(matches) != 1:
+        raise ValueError('Expected one recorded process for '+name)
+    return matches[0]
+
+
+def verify_upstream_reports(output, evidence, current, extracted, identity, package_info, app_inventory):
+    from release_signed_runtime import APP_BODY, APP_TITLE, process_log, validate_database
+
+    reports = {}
+    for field, name in (
+        ('staticReport', 'relocated-products.json'), ('cliReport', 'cli-runtime.json'),
+        ('vmAppReport', 'vm-app/runtime.json'), ('processLedger', 'build-receipt.json'),
+    ):
+        report = evidence_at(output, current[field], evidence/name)
+        package.verify_report_fields(report, {'status': 'PASS'}, 'Upstream '+field)
+        reports[field] = report
+    ledger = reports['processLedger']
+    verify_process_logs(output, ledger, evidence=evidence)
+    app, cli = extracted/'Meshchan.app', extracted/'meshctl'
+    static_step = process_step(ledger, 'relocated-products')
+    package.equal([str(app), str(cli)], static_step['argv'][-2:], 'Upstream static product arguments')
+    static_output = json.loads(process_log(output, static_step, 'log'), object_pairs_hook=release_signing.policy_object)
+    package.equal(encoded(reports['staticReport']), encoded(static_output), 'Upstream static process output')
+
+    cwd = extracted.parent/'runtime workspace'
+    fixture = cwd/'owned CLI data'
+    cli_report = reports['cliReport']
+    version_step = process_step(ledger, 'cli-version')
+    executable, library = str(cli/'bin/meshctl'), str(cli/build.CLI_SQLITE_LIBRARY)
+    package.verify_report_fields(version_step, {'cwd': str(cwd), 'argv': [executable, '--version']},
+                                 'Upstream CLI version process')
+    package.equal('meshctl '+identity['productVersion'], process_log(output, version_step, 'log').decode().strip(),
+                  'Upstream CLI version')
+    rows = cli_report.get('processes')
+    if type(rows) is not list or len(rows) != 2:
+        raise ValueError('Upstream CLI requires write and reopen evidence')
+    for name, action, row in zip(('cli-write', 'cli-read'), ('create', 'show'), rows, strict=True):
+        package.verify_report_fields(row, {'name': name, 'sqliteLoadedFrom': library}, 'Upstream CLI '+action)
+        step = process_step(ledger, name)
+        package.verify_report_fields(step, {'cwd': str(cwd)}, 'Upstream CLI process')
+        package.equal([executable, '--data-dir', str(fixture), 'draft', action], step['argv'][:5],
+                      'Upstream CLI arguments')
+        cli_output = json.loads(process_log(output, step, 'log'), object_pairs_hook=release_signing.policy_object)
+        package.equal(encoded(row['report']), encoded(cli_output), 'Upstream CLI process output')
+        package.verify_report_fields(cli_output, {'schemaVersion': 1, 'command': 'draft', 'action': action,
+                                                  'exitCode': 0, 'operationSucceeded': True},
+                                     'Upstream CLI result')
+        package.verify_report_fields(cli_output['storageClose'], {'state': 'closed'}, 'Upstream CLI close')
+        trace = process_log(output, step, 'stderrLog').decode()
+        loaded = {path.removeprefix('/System/Volumes/Data') for path in
+                  re.findall(r'^dyld\[\d+\]: <[0-9A-Fa-f-]+> (/.+)$', trace, re.MULTILINE)}
+        if library not in loaded:
+            raise ValueError('Upstream CLI trace does not identify its extracted SQLite: '+name)
+    draft = rows[1]['report']['draft']
+    package.equal(encoded(rows[0]['report']['draft']), encoded(draft), 'Upstream CLI reopened draft')
+    database = require_material_file(fixture, 'meshchan.sqlite')
+    raw_db = database.read_bytes()
+    package.verify_report_fields(cli_report, {'database': str(database), 'databaseSha256': sha(raw_db)},
+                                 'Upstream CLI database')
+    stored = validate_database(raw_db, draft, draft['title'], draft['body'])
+    package.equal(encoded(stored), encoded(cli_report['storedDrafts']), 'Upstream CLI database receipt')
+
+    vm = reports['vmAppReport']
+    vm_step = process_step(ledger, 'vm-app-runtime')
+    package.equal(['--app', str(app), '--package-info', str(extracted/'package-info.json'),
+                   '--evidence', str(evidence/'vm-app')], vm_step['argv'][-6:], 'Upstream VM product arguments')
+    vm_entry = build.material_result(process_log(output, vm_step, 'log').decode())
+    package.verify_report_fields(vm_entry, {'status': 'PASS', 'guestRun': vm['guestRun']}, 'Upstream VM process')
+    package.verify_report_fields(vm, {
+        'app': str(app), 'identity': identity, 'packageInfoSha256': package_info['sha256'],
+        'appInventorySha256': sha(encoded(app_inventory)),
+        'guestInventoryBefore': 'PASS', 'guestInventoryAfter': 'PASS', 'guestSignature': 'PASS',
+        'guestExecutorExit': 0, 'guestLockReleased': True,
+    }, 'Upstream VM evidence')
+    vm_rows = vm.get('processes')
+    if type(vm_rows) is not list or len(vm_rows) != 2:
+        raise ValueError('Upstream VM App requires write and reopen evidence')
+    for row in vm_rows:
+        package.verify_report_fields(row, {'exitCode': 0, 'pidAbsentAfterNormalExit': True}, 'Upstream VM App process')
+    package.equal(encoded(vm_rows[0]['draft']), encoded(vm_rows[1]['draft']), 'Upstream VM reopened draft')
+    vm_db = require_material_file(evidence/'vm-app', 'vm-fixture.sqlite').read_bytes()
+    package.equal(vm['guestDatabaseSha256'], sha(vm_db), 'Upstream VM database')
+    validate_database(vm_db, vm_rows[1]['draft'], APP_TITLE, APP_BODY)
+    return reports['staticReport']
+
+
 def read_upstream(args):
+    from package_release_vm import DEFAULT_DATA_SUBDIR
+
     source = package.real_directory(package.canonical(args.source_checkout))
     run, info = package.selected_info(source, args.build_run, args.expected_build_info_sha256)
     output = package.output_path(args.package_run, new=False)
@@ -182,25 +296,32 @@ def read_upstream(args):
         package.equal({'status': 'PASS', 'buildStatus': 'PASS', 'materialsStatus': 'PASS', 'run': args.build_run},
                       verification['result'], 'Frozen check')
         for name in ('check-inputs', 'check-products', 'materials-recheck', 'check-commit'):
-            result = evidence_json(source, verification['ledgers'][name])
-            package.equal('PASS', result['status'], 'Frozen ledger '+name)
-        reports = {name: evidence_json(output, current[name])
-                   for name in ('staticReport', 'cliReport', 'vmAppReport', 'processLedger')}
-        for name, report in reports.items():
-            package.equal('PASS', report['status'], 'Upstream '+name)
-        package.verify_report_fields(reports['vmAppReport'], {
-            'identity': identity, 'packageInfoSha256': original['packageInfo']['sha256'],
-            'appInventorySha256': sha(encoded(trees['Meshchan.app'][1])),
-            'guestExecutorExit': 0, 'guestLockReleased': True,
-        }, 'Upstream VM evidence')
+            reference = verification['ledgers'][name]
+            ledger = package.canonical(source/reference['path'])
+            if (ledger.name != 'build-receipt.json' or ledger.parent.parent != run/'evidence'
+                    or not ledger.parent.name.startswith(name+'-')):
+                raise ValueError('Frozen ledger is outside the selected build verification run: '+name)
+            result = evidence_json(source, reference)
+            package.verify_report_fields(result, {'formatVersion': 1, 'status': 'PASS'}, 'Frozen ledger '+name)
+            verify_process_logs(source, result, evidence=ledger.parent)
         external_source = (source,) if source != ROOT else ()
-        protected = (*external_source, run, output, *caches,
-                     *package.git_metadata(source), *package.git_metadata(ROOT))
+        protected = (*external_source, run, output, *caches, *package.git_metadata(source),
+                     *package.git_metadata(ROOT), Path.home()/DEFAULT_DATA_SUBDIR)
+        extracted = package.real_directory(package.canonical(current['extracted']))
+        package.equal(top, extracted.name, 'Upstream extracted product name')
+        package.verify_report_fields(current, {'extractRoot': str(extracted.parent)}, 'Upstream extraction')
+        package.disjoint(extracted.parent, (ROOT, *protected))
+        check_payload(extracted, inventory)
+        metadata_observations(extracted, inventory)
+        static_report = verify_upstream_reports(output, receipt.parent, current, extracted, identity,
+                                               original['packageInfo'], trees['Meshchan.app'][1])
+        protected = (*protected, extracted.parent)
     provenance = {
         'sourceCheckout': str(source), 'buildRun': args.build_run, 'packageRun': str(output),
         'sourceCommit': info['sourceCommit'], 'buildRecipeVersion': info['recipeVersion'],
         'buildInfoSha256': args.expected_build_info_sha256,
         'originalPackageReceiptSha256': args.expected_package_receipt_sha256,
+        'upstreamCheckReceipt': str(receipt),
         'upstreamCheckReceiptSha256': args.expected_upstream_check_sha256,
         'packageInfo': original['packageInfo'], 'archive': original['archive'],
         'materialsManifestSha256': trees['materials'][1]['materials-manifest.json']['sha256'],
@@ -209,7 +330,22 @@ def read_upstream(args):
     historical = {'package-info.json': package_info, 'package-receipt.json': original_bytes,
                   'package-check-receipt.json': current_bytes, 'engineering-README.md': package.README}
     return Upstream(source, run, output, stage, top, info, inventory, protected, provenance,
-                    historical, reports['staticReport'])
+                    historical, static_report)
+
+
+def accepted_upstream(info):
+    """Re-read the original engineering package and all five pinned admission gates."""
+    source = info['upstream']
+    inputs = SimpleNamespace(
+        source_checkout=Path(source['sourceCheckout']), build_run=source['buildRun'],
+        package_run=Path(source['packageRun']), upstream_check_receipt=Path(source['upstreamCheckReceipt']),
+        expected_build_info_sha256=source['buildInfoSha256'],
+        expected_package_receipt_sha256=source['originalPackageReceiptSha256'],
+        expected_upstream_check_sha256=source['upstreamCheckReceiptSha256'],
+    )
+    upstream = read_upstream(inputs)
+    package.equal(source, upstream.provenance, 'Selected original engineering package')
+    return upstream
 
 
 def output_path(value, new):
@@ -243,7 +379,7 @@ def platform_identity(runner):
         'architecture': platform.machine(),
         'xcode': runner.command('xcode-version', ['/usr/bin/xcodebuild', '-version']).strip(),
         'xcodePath': runner.command('xcode-path', ['/usr/bin/xcode-select', '-p']).strip(),
-        'tools': {path: digest(Path(path)) for path in ('/usr/bin/codesign', '/usr/bin/security')},
+        'tools': {'/usr/bin/codesign': digest(Path('/usr/bin/codesign'))},
         'python': {'path': sys.executable, 'resolvedPath': str(Path(sys.executable).resolve()),
                    'version': sys.version, 'sha256': digest(Path(sys.executable))},
     }
@@ -316,9 +452,11 @@ def signed_payload(root, expected):
 
 def native_report(upstream, root, runner):
     identity = upstream.info['identity']
-    result = json.loads(runner.command('signed-native-mapping',
-        [sys.executable, '-B', '-c', NATIVE_VALIDATOR, root/'Meshchan.app', root/'meshctl',
-         identity['productVersion'], identity['appBuild']], cwd=upstream.checkout))
+    with build.checkout_lock(upstream.checkout):
+        package.verify_frozen_helpers(upstream.checkout, upstream.info)
+        result = json.loads(runner.command('signed-native-mapping',
+            [sys.executable, '-B', '-c', NATIVE_VALIDATOR, root/'Meshchan.app', root/'meshctl',
+             identity['productVersion'], identity['appBuild']], cwd=upstream.checkout))
     for name in ('loaders', 'appNativeAssets', 'appAotSnapshot'):
         package.equal(upstream.static_report[name], result[name], 'Relocated signed '+name)
     for product, libraries in result['native'].items():
@@ -331,44 +469,160 @@ def native_report(upstream, root, runner):
 
 def candidate_fields(upstream, tools):
     return {
-        'formatVersion': 1, 'identity': upstream.info['identity'], 'upstream': upstream.provenance,
+        **LOCAL_SCHEMA, 'identity': upstream.info['identity'], 'upstream': upstream.provenance,
         'signingTool': tools, 'policy': {'path': POLICY.relative_to(ROOT).as_posix(),
                                        'sha256': tools['inputs'][POLICY.relative_to(ROOT).as_posix()]['sha256']},
         'metadataPolicy': SIGNATURE_METADATA, 'inventoryExclusions': ['signed-product-info.json'],
     }
 
 
-def selection(args, signing, runner):
-    if args.identity and args.expected_team:
-        try:
-            return signing.select_identity(args.identity, args.expected_team, runner.command)
-        except signing.IdentityUnavailable as error:
-            raise Blocked(str(error)) from error
-    output = runner.command('signing-identities', ['/usr/bin/security', 'find-identity', '-p', 'codesigning', '-v'])
-    if 'Developer ID Application:' not in output:
-        raise Blocked('No valid Developer ID Application identity is available in the signing keychains.')
-    raise Blocked('Specify the exact Developer ID Application certificate SHA-1 and expected Team ID.')
+def manifest_inventory(info, raw):
+    payload = info['payloadInventory']
+    name = 'signed-product-info.json'
+    if type(payload) is not dict or name in payload:
+        raise ValueError('Signed product inventory must exclude its own manifest')
+    return payload | {name: {'type': 'file', 'size': len(raw), 'sha256': sha(raw), 'mode': 0o600}}
+
+
+def signed_vm_arguments(python, config, relocated, manifest_pin, evidence):
+    return list(map(str, [python, '-B', ROOT/'tool/package_release_vm.py', '--config', config,
+                          '--app', relocated/'Meshchan.app', '--signed-info', relocated/'signed-product-info.json',
+                          '--expected-signed-info-sha256', manifest_pin, '--evidence', evidence]))
+
+
+def replacement_arguments(python, config, root, manifest_pin, replacement, timeout):
+    return list(map(str, [python, '-B', ROOT/'tool/release_signed_replacement.py', '--signed-root', root,
+                          '--signed-info-sha256', manifest_pin, '--output', replacement,
+                          '--vm-config', config, '--timeout', timeout]))
+
+
+def verify_local_runtime_invocations(ledger, python, root, relocated, manifest_pin, evidence, replacement):
+    vm_step = process_step(ledger, 'signed-vm-app-runtime')
+    replacement_step = process_step(ledger, 'signed-user-replacement')
+    vm_argv, replacement_argv = vm_step.get('argv'), replacement_step.get('argv')
+    if (type(vm_argv) is not list or len(vm_argv) != 13 or type(replacement_argv) is not list
+            or len(replacement_argv) != 13 or not all(type(arg) is str for arg in vm_argv+replacement_argv)):
+        raise ValueError('Malformed local VM or replacement process arguments')
+    config = vm_argv[4]
+    if not Path(config).is_absolute():
+        raise ValueError('Local VM process did not use its staged configuration path')
+    try:
+        build.command_timeout(replacement_argv[-1])
+    except (ValueError, argparse.ArgumentTypeError) as error:
+        raise ValueError('Invalid replacement process timeout') from error
+    package.verify_report_fields(vm_step, {
+        'cwd': str(ROOT), 'argv': signed_vm_arguments(python, config, relocated, manifest_pin, evidence/'vm-app'),
+    }, 'Local VM process')
+    package.verify_report_fields(replacement_step, {
+        'cwd': str(ROOT),
+        'argv': replacement_arguments(python, config, root, manifest_pin, replacement, replacement_argv[-1]),
+    }, 'Local replacement process')
+    return vm_step, replacement_step
+
+
+def read_local_acceptance(candidate_root, manifest_pin, receipt_path, receipt_pin):
+    """Bind independent acceptance and retained runtime evidence to one local candidate."""
+    from package_release_vm import DEFAULT_DATA_SUBDIR
+    from release_signed_runtime import parse_signed_info, process_log, verify_cli_runtime_evidence
+
+    root = package.real_directory(package.canonical(candidate_root))
+    receipt = package.canonical(receipt_path)
+    output = output_path(root.parent.parent, new=False)
+    if (root.parent != output/'signed' or receipt.name != 'signing-receipt.json'
+            or receipt.parent.parent != output/'evidence' or not receipt.parent.name.startswith('check-')):
+        raise ValueError('Use the independent check receipt from the selected local signing run')
+    name = 'signed-product-info.json'
+    raw = require_material_file(root, name).read_bytes()
+    package.equal(manifest_pin, sha(raw), 'Selected local candidate manifest SHA-256')
+    info = parse_signed_info(raw)
+    package.verify_report_fields(info, LOCAL_SCHEMA, 'Local candidate manifest')
+    full = manifest_inventory(info, raw)
+    report, _ = bound_json(output, receipt.relative_to(output).as_posix(), receipt_pin)
+    package.verify_report_fields(report, {
+        **LOCAL_SCHEMA, 'command': 'check', 'status': 'PASS', 'upstreamStatus': 'PASS',
+        **dict.fromkeys(ACCEPTANCE_GATES, 'PASS'),
+        'signedRoot': str(root), 'signedInfo': {'path': (root/name).relative_to(output).as_posix(), 'sha256': manifest_pin},
+        'upstream': info['upstream'], 'identity': info['identity'], 'signingIdentity': info['signature']['identity'],
+        'relocatedInventorySha256': sha(encoded(full)),
+    }, 'Independent local acceptance')
+    package.equal(info['signingTool']['inputs'], report['signingTool']['inputs'], 'Accepted signing tool inputs')
+    package.equal(info['signingTool']['inputs'], tool_identity()['inputs'], 'Current signing tool inputs')
+    check_payload(root, full)
+    metadata_observations(root, full)
+    workspace = package.real_directory(package.canonical(Path(report['workspace'])))
+    package.disjoint(workspace, [ROOT, root, Path.home()/DEFAULT_DATA_SUBDIR])
+    relocated = workspace/'relocated products'
+    check_payload(relocated, full)
+    metadata_observations(relocated, full)
+    evidence = receipt.parent
+    ledger = evidence_at(output, report['processLedger'], evidence/'build-receipt.json')
+    package.verify_report_fields(ledger, {'status': 'PASS'}, 'Process ledger')
+    verify_process_logs(output, ledger, evidence=evidence)
+    cli = evidence_at(output, report['cliReport'], evidence/'cli-runtime.json')
+    package.verify_report_fields(cli, {'signingProfile': release_signing.LOCAL_PROFILE,
+                                      'signedInfoSha256': manifest_pin,
+                                      'relocatedRoot': str(relocated)}, 'Accepted local CLI')
+    verify_cli_runtime_evidence(cli, relocated/'meshctl', workspace/'cli workspace',
+                                info['identity']['productVersion'], ledger=ledger, evidence_root=output)
+    replacement = workspace/'user modified products'
+    vm_step, replacement_step = verify_local_runtime_invocations(
+        ledger, report['environment']['python']['path'], root, relocated, manifest_pin, evidence, replacement)
+    vm_reference = vm_report(output, evidence/'vm-app/runtime.json',
+                             build.material_result(process_log(output, vm_step, 'log').decode()),
+                             relocated, info, raw)
+    package.equal(report['vmAppReport'], vm_reference, 'Accepted local VM process receipt')
+    replacement_result = build.material_result(process_log(output, replacement_step, 'log').decode())
+    package.verify_report_fields(replacement_result, {
+        'status': 'PASS', 'signingProfile': release_signing.LOCAL_PROFILE,
+        'receipt': str(replacement/'evidence/replacement-receipt.json'),
+        'receiptSha256': report['modifiedLibraryReport']['sha256'],
+    }, 'Accepted local replacement process')
+    verify_replacement_evidence(replacement, report['modifiedLibraryReport'], root, info, manifest_pin)
+    return info, raw, report
+
+
+def verify_replacement_evidence(workspace, reference, root, info, manifest_pin):
+    evidence = workspace/'evidence'
+    replacement = evidence_at(workspace, reference, evidence/'replacement-receipt.json')
+    package.verify_report_fields(replacement, {**LOCAL_SCHEMA, 'status': 'PASS', 'signedInfoSha256': manifest_pin,
+                                               'signedRoot': str(root), 'identity': info['identity'],
+                                               'finalIntegrity': 'PASS'}, 'Accepted local library replacement')
+    package.verify_report_fields(replacement['cli'], {'status': 'PASS', 'exitCode': 0}, 'Accepted replacement CLI')
+    package.verify_report_fields(replacement['app'], {'status': 'PASS', 'exitCode': 0, 'guestExecutorExit': 0,
+                                                      'guestLockReleased': True, 'pidAbsent': True},
+                                 'Accepted replacement App')
+    verify_process_logs(workspace, replacement, evidence=evidence)
+    cli = replacement['cli']
+    for field in ('log', 'stderrLog', 'pidReceipt'):
+        require_ref(workspace, require_material_file(workspace, cli[field]), cli[field+'Sha256'])
+    app_evidence = replacement['app']['evidence']
+    required = {'session.json', 'refresh-state.json', 'Release/app.stdout', 'Release/app.stderr',
+                'Release/app.pid', 'Release/app.exit', 'Release/synthetic-ports.png'}
+    if type(app_evidence) is not dict or set(app_evidence) != required:
+        raise ValueError('Incomplete retained replacement App evidence')
+    guest = evidence/'app-vm'
+    for name, pin in app_evidence.items():
+        require_ref(guest, require_material_file(guest, name), pin)
+    modified = workspace/'user products'
+    package.equal(replacement['modifiedInventorySha256'], sha(encoded(product_inventory(modified))),
+                  'Retained modified product inventory')
+
+
+def selection(profile, policy):
+    if profile != release_signing.LOCAL_PROFILE or release_signing.policy_profile(policy) != profile:
+        raise ValueError('Select the explicit local-adhoc signing profile and matching policy')
+    return release_signing.local_identity()
 
 
 def sign(args, upstream, output, evidence, runner, record, tools, signing, policy):
     record['signatureStatus'] = 'RUNNING'
-    identity = selection(args, signing, runner)
+    identity = selection(args.signing_profile, policy)
     record['signingIdentity'] = identity
     partial = output/'in-progress'
     copy_source(partial, upstream, tools)
     order = signing.discover_code(partial, policy)
     record['codeOrder'] = order
-    try:
-        signing.sign_products(partial, policy, identity, runner.command, scratch=evidence)
-    except subprocess.CalledProcessError as error:
-        diagnostics = error.stderr or b''
-        if isinstance(diagnostics, bytes):
-            diagnostics = diagnostics.decode(errors='replace')
-        if any(reason in diagnostics.lower() for reason in (
-                'user interaction is not allowed', 'errsecinteractionnotallowed',
-                'cssmerr_csp_no_user_interaction')):
-            raise Blocked('The selected identity needs operator interaction in the signing keychain.') from error
-        raise
+    signing.sign_products(partial, policy, identity, runner.command, scratch=evidence)
     original = source_payload(upstream, tools)
     payload = signed_payload(partial, original)
     signatures = signing.verify_signatures(partial, policy, identity, runner.command, evidence)
@@ -405,31 +659,33 @@ def require_original(args, upstream):
 
 
 def repeat_check(args, upstream, output, evidence, runner, record, tools, signing, policy):
-    from package_release_vm import checked_vm_configuration
-    from release_signed_runtime import accept_cli
+    from package_release_vm import DEFAULT_DATA_SUBDIR, checked_vm_configuration
+    from release_signed_runtime import accept_cli, parse_signed_info, verify_cli_runtime_evidence
 
     root = package.real_directory(package.canonical(output/'signed'/upstream.top))
     record['signatureStatus'] = 'RUNNING'
     info_name = 'signed-product-info.json'
-    info, info_bytes = bound_json(root, info_name, args.expected_signed_info_sha256)
+    _, info_bytes = bound_json(root, info_name, args.expected_signed_info_sha256)
+    info = parse_signed_info(info_bytes)
     sealing_receipt = package.real_directory(package.canonical(output/'evidence'))/'signing-receipt.json'
-    result = json.loads(require_material_file(output, sealing_receipt.relative_to(output).as_posix()).read_bytes())
+    result = json.loads(require_material_file(output, sealing_receipt.relative_to(output).as_posix()).read_bytes(),
+                        object_pairs_hook=release_signing.policy_object)
     package.verify_report_fields(result, {
-        'formatVersion': 1, 'command': 'sign', 'status': 'SIGNED', 'signedRoot': str(root),
+        **LOCAL_SCHEMA, 'command': 'sign', 'status': 'SIGNED', 'signedRoot': str(root),
         'signatureStatus': 'PASS', 'materialTransformStatus': 'PASS',
         'signedInfo': {'path': (root/info_name).relative_to(output).as_posix(), 'sha256': sha(info_bytes)},
+        'signingIdentity': info['signature']['identity'], 'identity': info['identity'], 'upstream': info['upstream'],
+        'signingTool': info['signingTool'],
     }, 'Original signing completion')
     sealed_tools = info['signingTool']
     package.equal(tools['inputs'], sealed_tools['inputs'], 'Signing inputs used for the sealed product')
     package.verify_report_fields(info, candidate_fields(upstream, sealed_tools), 'Signed product manifest')
     expected = source_payload(upstream, tools)
     package.equal(expected, info['beforeSigningInventory'], 'Pre-signing payload')
-    identity = info['signature']['identity']
-    package.verify_report_fields(identity, {'sha1': args.identity.upper(), 'team': args.expected_team},
-                                 'Externally selected signing identity')
+    identity = selection(args.signing_profile, policy)
+    package.equal(identity, info['signature']['identity'], 'Sealed local signing identity')
     payload = info['payloadInventory']
-    full = payload | {info_name: {'type': 'file', 'size': len(info_bytes), 'sha256': sha(info_bytes),
-                                  'mode': 0o600}}
+    full = manifest_inventory(info, info_bytes)
     check_payload(root, full)
     metadata_observations(root, full)
     package.equal(payload, signed_payload(root, expected), 'Signed product bytes')
@@ -449,7 +705,9 @@ def repeat_check(args, upstream, output, evidence, runner, record, tools, signin
 
     parent = package.real_directory(package.canonical(args.workspace_parent))
     workspace = package.canonical(parent/'Meshchan signing runtime')
-    package.disjoint(workspace, [ROOT, *upstream.protected])
+    protected = [ROOT, *upstream.protected, Path.home()/DEFAULT_DATA_SUBDIR]
+    package.disjoint(workspace, protected)
+    vm = checked_vm_configuration(args.vm_config, [*protected, workspace], cwd=ROOT)
     with new_extraction_root(workspace) as fd:
         stamp = os.fstat(fd)
     record['workspace'] = str(workspace)
@@ -469,27 +727,23 @@ def repeat_check(args, upstream, output, evidence, runner, record, tools, signin
     cli = accept_cli(relocated/'meshctl', workspace/'cli workspace', runner, info['identity']['productVersion'])
     package.equal('PASS', cli['status'], 'Signed CLI runtime')
     cli_report = evidence/'cli-runtime.json'
-    record['cliReport'] = publish_json(output, cli_report, {**cli, 'signedInfoSha256': sha(info_bytes),
-                                                         'relocatedRoot': str(relocated)})
+    record['cliReport'] = publish_json(output, cli_report, {**cli, 'signingProfile': args.signing_profile,
+                                                           'signedInfoSha256': sha(info_bytes),
+                                                           'relocatedRoot': str(relocated)})
     record['cliStatus'] = 'PASS'
     record['vmAppStatus'] = 'RUNNING'
-    runner.env = {**controlled_environment(), 'LC_ALL': 'C', 'TZ': 'UTC'}
-    with checked_vm_configuration(args.vm_config, [ROOT, *upstream.protected, workspace], cwd=ROOT) as vm_config:
+    with vm as vm_config:
         vm_evidence = evidence/'vm-app'
-        vm_args = [sys.executable, '-B', ROOT/'tool/package_release_vm.py', '--config', vm_config,
-                   '--app', relocated/'Meshchan.app', '--signed-info', relocated/info_name,
-                   '--expected-signed-info-sha256', sha(info_bytes), '--evidence', vm_evidence]
+        vm_args = signed_vm_arguments(sys.executable, vm_config, relocated, sha(info_bytes), vm_evidence)
         guest = build.material_result(runner.command('signed-vm-app-runtime', vm_args, cwd=ROOT))
         record['vmAppReport'] = vm_report(output, vm_evidence/'runtime.json', guest, relocated, info, info_bytes)
         record['vmAppStatus'] = 'PASS'
 
         record['modifiedLibraryStatus'] = 'RUNNING'
         replacement_root = workspace/'user modified products'
-        replacement_result = build.material_result(runner.command('signed-user-replacement', [
-            sys.executable, '-B', ROOT/'tool/release_signed_replacement.py', '--signed-root', root,
-            '--signed-info-sha256', sha(info_bytes), '--output', replacement_root,
-            '--vm-config', vm_config, '--timeout', str(args.timeout),
-        ], cwd=ROOT))
+        args_replacement = replacement_arguments(sys.executable, vm_config, root, sha(info_bytes),
+                                                 replacement_root, args.timeout)
+        replacement_result = build.material_result(runner.command('signed-user-replacement', args_replacement, cwd=ROOT))
     record['modifiedLibraryReport'] = replacement_report(replacement_root, replacement_result, root,
                                                         info, info_bytes, signing, policy, runner.command)
     record['modifiedLibraryStatus'] = 'PASS'
@@ -503,9 +757,11 @@ def repeat_check(args, upstream, output, evidence, runner, record, tools, signin
     package.equal(payload, signed_payload(relocated, expected), 'Relocated signed product after runtime')
     require_original(args, upstream)
     package.equal(tools, tool_identity(), 'Signing inputs during acceptance')
-    evidence_json(output, record['cliReport'])
-    evidence_json(output, record['vmAppReport'])
-    evidence_json(replacement_root, record['modifiedLibraryReport'])
+    verify_cli_runtime_evidence(evidence_json(output, record['cliReport']), relocated/'meshctl',
+                                workspace/'cli workspace', info['identity']['productVersion'],
+                                ledger=runner.receipt, evidence_root=output)
+    vm_report(output, vm_evidence/'runtime.json', guest, relocated, info, info_bytes)
+    verify_replacement_evidence(replacement_root, record['modifiedLibraryReport'], root, info, sha(info_bytes))
     record['postRuntimeIntegrityStatus'] = 'PASS'
     return 'PASS'
 
@@ -518,11 +774,12 @@ def replacement_report(workspace, result, root, info, data, signing, policy, com
     )
 
     path = workspace/'evidence/replacement-receipt.json'
-    package.verify_report_fields(result, {'status': 'PASS', 'receipt': str(path)}, 'Replacement entry')
+    package.verify_report_fields(result, {'status': 'PASS', 'receipt': str(path),
+                                         'signingProfile': info['signingProfile']}, 'Replacement entry')
     reference = {'path': str(path), 'sha256': result['receiptSha256']}
     report = evidence_json(workspace, reference)
     package.verify_report_fields(report, {
-        'formatVersion': 1, 'status': 'PASS', 'signedInfoSha256': sha(data), 'identity': info['identity'],
+        **LOCAL_SCHEMA, 'status': 'PASS', 'signedInfoSha256': sha(data), 'identity': info['identity'],
         'signedRoot': str(root), 'finalIntegrity': 'PASS',
     }, 'User replacement acceptance')
     cli, app = report['cli'], report['app']
@@ -605,9 +862,10 @@ def replacement_report(workspace, result, root, info, data, signing, policy, com
 
 
 def vm_report(output, path, candidate, root, info, data):
-    from release_signed_runtime import verify_vm_runtime_evidence
+    from release_signed_runtime import manifest_profile, verify_vm_runtime_evidence
 
-    package.verify_report_fields(candidate, {'status': 'PASS'}, 'Signed VM entry')
+    profile = manifest_profile(info)
+    package.verify_report_fields(candidate, {'status': 'PASS', 'signingProfile': profile}, 'Signed VM entry')
     reference = {'path': path.relative_to(output).as_posix(), 'sha256': candidate['receiptSha256']}
     result = evidence_json(output, reference)
     guest_run = candidate['guestRun']
@@ -615,7 +873,7 @@ def vm_report(output, path, candidate, root, info, data):
         raise ValueError('Signed VM acceptance has no current run ID')
     inventory = inventory_part(info['payloadInventory'], 'Meshchan.app')
     package.verify_report_fields(result, {
-        'status': 'PASS', 'guestRun': guest_run, 'app': str(root/'Meshchan.app'),
+        'status': 'PASS', 'signingProfile': profile, 'guestRun': guest_run, 'app': str(root/'Meshchan.app'),
         'signedInfoSha256': sha(data), 'identity': info['identity'],
         'appInventorySha256': sha(encoded(inventory)),
         'guestInventoryBefore': 'PASS', 'guestInventoryAfter': 'PASS', 'guestSignature': 'PASS',
@@ -628,8 +886,6 @@ def vm_report(output, path, candidate, root, info, data):
 
 
 def run(args):
-    import release_signing as signing
-
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         raise ValueError('Use a macOS arm64 signing host')
     new = args.command != 'check'
@@ -650,14 +906,15 @@ def run(args):
     evidence_stamp = evidence.lstat()
     receipt_path = evidence/'signing-receipt.json'
     record = {
-        'formatVersion': 1, 'command': args.command, 'startedAt': build.now(), 'status': 'RUNNING',
+        **LOCAL_SCHEMA, 'command': args.command, 'startedAt': build.now(), 'status': 'RUNNING',
         'upstreamStatus': 'PASS', 'upstream': upstream.provenance, 'identity': upstream.info['identity'],
-        **dict.fromkeys(('signatureStatus', 'materialTransformStatus', 'cliStatus', 'vmAppStatus',
-                         'modifiedLibraryStatus', 'postRuntimeIntegrityStatus'), 'NOT_RUN'),
+        **dict.fromkeys(ACCEPTANCE_GATES, 'NOT_RUN'),
     }
 
     with build.DeferredInterrupts() as interrupted:
-        env = {**controlled_environment(), 'LC_ALL': 'C', 'TZ': 'UTC'}
+        scratch = evidence/'tool scratch'
+        scratch.mkdir(mode=0o700)
+        env = {**controlled_environment(), 'LC_ALL': 'C', 'TZ': 'UTC', 'TMPDIR': str(scratch)}
         runner = build.Runner(output, evidence, {'status': 'RUNNING', 'steps': []}, env,
                               args.timeout, interrupted)
 
@@ -676,11 +933,12 @@ def run(args):
             record['environment'] = platform_identity(runner)
             tools = tool_identity()
             record['signingTool'] = tools
-            policy = signing.load_policy(POLICY)
+            policy = release_signing.load_policy(POLICY)
+            selection(args.signing_profile, policy)
             if args.command == 'prepare':
                 prepared = output/'prepared'
                 inventory = copy_source(prepared, upstream, tools)
-                record['codeOrder'] = signing.discover_code(prepared, policy)
+                record['codeOrder'] = release_signing.discover_code(prepared, policy)
                 native_path = evidence/'prepared-native.json'
                 record['preparedNative'] = publish_json(output, native_path, native_report(upstream, prepared, runner))
                 index = evidence/'prepared-inventory.json'
@@ -694,16 +952,17 @@ def run(args):
                 evidence_json(output, record['preparedInventory'])
                 status = 'PREPARED'
             elif args.command == 'sign':
-                status = sign(args, upstream, output, evidence, runner, record, tools, signing, policy)
+                status = sign(args, upstream, output, evidence, runner, record, tools, release_signing, policy)
             else:
                 (evidence/'relocation-certs').mkdir(mode=0o700)
-                status = repeat_check(args, upstream, output, evidence, runner, record, tools, signing, policy)
+                status = repeat_check(args, upstream, output, evidence, runner, record, tools, release_signing, policy)
+            verify_process_logs(output, runner.receipt, evidence=evidence)
             build.raise_if_interrupted(interrupted)
             final_ref = finish(status)
             while not interrupted.seal_if_unchanged(0):
                 build.raise_if_interrupted(interrupted)
         except BaseException as error:
-            status = 'BLOCKED' if isinstance(error, Blocked) and not interrupted else 'FAIL'
+            status = 'FAIL'
             for key, value in record.items():
                 if key.endswith('Status') and value == 'RUNNING':
                     record[key] = status
@@ -712,7 +971,8 @@ def run(args):
                 record['interruptSignal'] = int(interrupted[0])
             finish(status)
             raise
-    return {'status': record['status'], 'receipt': str(receipt_path), 'receiptSha256': final_ref['sha256'],
+    return {'status': record['status'], 'signingProfile': record['signingProfile'],
+            'receipt': str(receipt_path), 'receiptSha256': final_ref['sha256'],
             **{key: record[key] for key in ('signedRoot', 'signedInfo', 'preparedRoot') if key in record}}
 
 
@@ -730,9 +990,8 @@ def main():
         command.add_argument('--expected-upstream-check-sha256', required=True)
         command.add_argument('--output', type=Path, required=True)
         command.add_argument('--timeout', type=build.command_timeout, default=900)
-        if name != 'prepare':
-            command.add_argument('--identity', required=name == 'check', help='Developer ID Application certificate SHA-1')
-            command.add_argument('--expected-team', required=name == 'check')
+        command.add_argument('--signing-profile', choices=[release_signing.LOCAL_PROFILE],
+                             default=release_signing.LOCAL_PROFILE)
         if name == 'check':
             command.add_argument('--expected-signed-info-sha256', required=True)
             command.add_argument('--workspace-parent', type=Path, required=True)
@@ -743,16 +1002,8 @@ def main():
     for name, value in vars(args).items():
         if name.endswith('_sha256') and not package.SHA256.fullmatch(value):
             parser.error('Use a lowercase SHA-256 for --'+name.replace('_', '-'))
-    identity = getattr(args, 'identity', None)
-    team = getattr(args, 'expected_team', None)
-    if bool(identity) != bool(team) or (identity and not (
-            re.fullmatch('[0-9a-fA-F]{40}', identity) and re.fullmatch('[A-Z0-9]{10}', team))):
-        parser.error('Specify both a 40-digit certificate SHA-1 and a 10-character Team ID')
     try:
         record = run(args)
-    except Blocked as error:
-        print('BLOCKED: '+str(error), file=sys.stderr)
-        return 2
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, KeyboardInterrupt, build.GateInterrupted) as error:
         print('ERROR: '+build.failure_message(error), file=sys.stderr)
         return 1

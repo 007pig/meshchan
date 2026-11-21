@@ -2,9 +2,9 @@
 
 The App and CLI each carry a dynamically loaded libserialport from the
 same archived source package. The replacement experiment starts with the
-complete Developer ID signed candidate and copies both products before
-changing the library. It uses only local tools and an ad hoc signature for
-each affected code item. The original products, signed manifest, and license
+complete `local-adhoc` candidate and copies both products before changing the
+library. It uses local tools to apply a new ad hoc signature to each
+affected code item. The original products, signed manifest, and license
 materials remain the baseline for the release.
 
 ## Build and exercise the synthetic replacement
@@ -57,10 +57,10 @@ separate user products and rechecks the install names after local signing.
 
 It re-signs the changed framework before the outer App and the CLI dylib before
 the CLI executable. Each main executable keeps Hardened Runtime. Local main
-executables receive `com.apple.security.cs.disable-library-validation=true`
-because the ad hoc copies lack the original Developer ID Team. The CLI also
-receives `com.apple.security.cs.allow-unsigned-executable-memory=true` for
-its embedded Dart AOT snapshot, as it does in the distribution policy.
+executables retain `com.apple.security.cs.disable-library-validation=true`
+for bundled libraries with local signatures. The CLI also retains
+`com.apple.security.cs.allow-unsigned-executable-memory=true` for its embedded
+Dart AOT snapshot.
 Libraries receive empty entitlements. Other nested libraries keep their
 original signatures. The tool verifies the flags, identifier, ad hoc signature,
 and entitlements for each re-signed item. The recorded signature differences
@@ -73,10 +73,11 @@ exported interface, architecture sets, and bundle symlinks. Replace the rebuilt
 libraries in independent App and CLI copies. Repeat the recorded local
 `codesign` commands for those copies using the generated
 `evidence/user-app.entitlements` and `evidence/user-cli.entitlements` files.
-The recorded commands use the ordinary user's ad hoc selector `-`, which requires no maintainer key
-or paid Developer ID identity. The ad hoc copies carry the user's local
-signature and lack the original Developer ID Team and secure timestamp.
-These local entitlement settings apply only to the replacement experiment.
+The recorded commands use the ordinary user's ad hoc selector `-`, which
+requires no maintainer key or paid Developer ID identity. The ad hoc copies carry the user's local
+signature without a Developer ID Authority, Team, or secure timestamp. The
+local entitlement policy preserves the same runtime allowances as the original
+engineering candidate.
 
 After running without a guest configuration, check
 `evidence/replacement-receipt.json` for `status: INCOMPLETE`,
@@ -126,6 +127,7 @@ Read `evidence/replacement-receipt.json` and its bound logs in the output.
 Without a guest configuration the receipt records the CLI result and remains
 `INCOMPLETE` after a successful CLI and final integrity check. The command
 exits 1 in that mode to distinguish it from paired release acceptance.
+Require `formatVersion: 2` and `signingProfile: local-adhoc` in the receipt.
 Both execution checks and the final product inventory and metadata checks
 must pass for an overall `PASS`. Keep failed evidence and pick fresh output
 for a retry.
@@ -139,7 +141,8 @@ release acceptance. The local instructions above preserve the ability to
 use an interface-compatible replacement, including how to reseal the modified
 App without access to the distributor's private key. Record the actual local
 runtime results when this gate is performed and assess any additional
-installation requirements when the final distribution form is selected.
+installation requirements during 1E.9 engineering download and installation
+validation.
 See “LGPL source, rebuilding and replacement” in
 `signing-source/docs/releases/phase-1e3-licenses.md` or the corresponding
 repository document.

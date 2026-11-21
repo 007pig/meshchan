@@ -25,6 +25,7 @@ from release_package_archive import archive_members, check_payload, prefixed
 ROOT = build.ROOT
 PRODUCT_RUNNER = 'apps/meshchan_app/tool/macos_vm/product.sh'
 GUEST_LAUNCHER = '.agents/skills/macos-vm-gui-testing/scripts/guest.sh'
+DEFAULT_DATA_SUBDIR = Path('Library/Application Support/meshchan')
 q = shlex.quote
 
 
@@ -35,8 +36,8 @@ def load(name, relative):
     return module
 
 
-def guest_inventory(vm, guest, expected):
-    with tempfile.TemporaryFile() as stream:
+def guest_inventory(vm, guest, expected, *, scratch):
+    with tempfile.TemporaryFile(dir=scratch) as stream:
         # Restricted PAX extends USTAR only where needed, including long
         # paths and raw link targets. Compare the same data-only inventory
         # as the engineering archive.
@@ -291,7 +292,8 @@ def run(args):
         args.evidence = runtime_probe.canonical(args.evidence)
         manifest = runtime_probe.canonical(args.signed_info)
         info = runtime_probe.signed_info(manifest, args.expected_signed_info_sha256)
-        info_binding = {'signedInfoSha256': args.expected_signed_info_sha256}
+        info_binding = {'signedInfoSha256': args.expected_signed_info_sha256,
+                        'signingProfile': runtime_probe.manifest_profile(info)}
     else:
         manifest = args.package_info
         package_info = manifest.read_bytes()
@@ -300,7 +302,7 @@ def run(args):
     ident = info['identity']
     prefix = 'Meshchan.app'
     inventory = info['payloadInventory']
-    protected = [args.app, manifest]
+    protected = [args.app, manifest, Path.home()/DEFAULT_DATA_SUBDIR]
     # Protect the complete tree in the documented App-plus-CLI layout,
     # including a pinned tree whose declared CLI is missing.
     if 'meshctl' in inventory:
@@ -311,12 +313,15 @@ def run(args):
             protected.append(candidate)
         if (app_parent/'meshctl').is_dir():
             protected.append(app_parent)
-    require_product_disjoint({'VM evidence': args.evidence}, protected, protected='a selected runtime input')
+    evidence = args.evidence.absolute()
+    require_product_disjoint({'VM evidence': evidence}, protected, protected='a selected runtime input')
+    configuration = checked_vm_configuration(args.config, [*protected, evidence])
     expected = {name.removeprefix(prefix+'/'): item
                 for name, item in inventory.items() if name.startswith(prefix+'/')}
     expected['.'] = inventory[prefix]
     check_payload(args.app, expected)
-    evidence = args.evidence.absolute()
+    if signed and info_binding['signingProfile'] == runtime_probe.LOCAL_PROFILE:
+        runtime_probe.verify_local_app(args.app, info)
     evidence.mkdir(mode=0o700)
     report = {'status': 'RUNNING', 'identity': ident, 'app': str(args.app),
               **info_binding,
@@ -341,6 +346,8 @@ def run(args):
     def finish_and_record_guest():
         if session is not None:
             if (exit_code := finish_guest(product, session)) is not None:
+                if type(exit_code) is not int or exit_code != 0:
+                    raise ValueError('Guest executor did not finish normally')
                 report['guestExecutorExit'] = exit_code
                 report['guestLockReleased'] = True
 
@@ -349,10 +356,11 @@ def run(args):
             local_probe = evidence/'release-image-probe'
             with (evidence/'image-observer-build.log').open('xb') as compilation:
                 subprocess.run(runtime_probe.image_probe_command(local_probe), check=True, timeout=60,
-                               stdout=compilation, stderr=subprocess.STDOUT)
+                               stdout=compilation, stderr=subprocess.STDOUT,
+                               env={**build.controlled_environment(), 'TMPDIR': str(evidence)})
             probe_sha = digest(local_probe)
             report['observerSha256'] = probe_sha
-        with checked_vm_configuration(args.config, protected) as vm_config:
+        with configuration as vm_config:
             product = host.Product(str(vm_config), evidence)
         vm = product.vm
         require_ready_connection(vm)
@@ -370,13 +378,18 @@ def run(args):
         guest = session+'/'+(runtime_probe.APP_PHASE_DIRECTORY if signed else 'products phase 1E.5')
         vm.remote('umask 077; /bin/mkdir '+q(guest), timeout=10)
         product.upload([(args.app, prefix)], guest)
-        guest_inventory(vm, guest, expected)
+        guest_inventory(vm, guest, expected, scratch=evidence)
         app = guest+'/'+prefix
-        verify = ['/usr/bin/codesign', '--verify', '--deep', '--strict', '--all-architectures']
-        if signed:
-            signature = info['signature']['identity']
-            verify.append('-R='+runtime_probe.developer_requirement(signature))
-        vm.remote(shlex.join([*verify, app]), timeout=30)
+        verify = ['/usr/bin/codesign', '--verify', '--strict']
+
+        def verify_app_signature():
+            vm.remote(shlex.join([*verify, '--deep', '--all-architectures', app]), timeout=30)
+            if signed:
+                for architecture, requirement in runtime_probe.app_requirements(info):
+                    scope = ['--architecture', architecture] if architecture else ['--all-architectures']
+                    vm.remote(shlex.join([*verify, *scope, '-R='+requirement, app]), timeout=30)
+
+        verify_app_signature()
         cwd = guest+'/runtime workspace'
         vm.remote('/bin/mkdir '+q(cwd), timeout=10)
         fixture = cwd+'/'+(runtime_probe.APP_FIXTURE if signed else 'meshchan-1d3-package')
@@ -395,7 +408,7 @@ def run(args):
             sqlite_device, sqlite_inode = map(int, vm.remote(
                 '/usr/bin/stat -f "%d:%i" '+q(library), capture_output=True, text=True,
                 timeout=10).stdout.strip().split(':'))
-            report.update(guestSigningIdentity=signature, guestObserverTransfer='PASS')
+            report.update(guestSigningIdentity=info['signature']['identity'], guestObserverTransfer='PASS')
         report.update(guestApp=redacted(app), guestInventoryBefore='PASS', guestSignature='PASS')
 
         for mode in ('write', 'read'):
@@ -473,7 +486,7 @@ def run(args):
             report['guestDatabaseSha256'] = build.sha(database_bytes)
             check_observer()
             report['guestObserverAfter'] = 'PASS'
-            vm.remote(shlex.join([*verify, app]), timeout=30)
+            verify_app_signature()
             report['guestSignatureAfter'] = 'PASS'
         else:
             with closing(sqlite3.connect(data.as_uri()+'?mode=ro&immutable=1', uri=True)) as connection:
@@ -482,7 +495,7 @@ def run(args):
             if drafts != [(draft['id'], draft['revision'])] or integrity != [('ok',)]:
                 raise ValueError('Guest SQLite file did not retain the closed draft')
             report['guestDatabaseSha256'] = digest(data)
-        guest_inventory(vm, guest, expected)
+        guest_inventory(vm, guest, expected, scratch=evidence)
         report['guestInventoryAfter'] = 'PASS'
         check_payload(args.app, expected)
     except BaseException as error:
@@ -515,11 +528,16 @@ def run(args):
         if 'cleanupError' in report:
             details = [report[key] for key in ('error', 'cleanupError') if key in report]
             raise ValueError('\n'.join(details)) from None
+    if report.get('guestLockReleased') is not True:
+        report.update(status='FAIL', error='No completed owned guest executor and lock release')
+        build.write(receipt, report)
+        raise ValueError(report['error'])
     report['status'] = 'PASS'
     build.write(receipt, report)
     result = {'status': 'PASS', 'guestRun': report['guestRun']}
     if signed:
-        result['receiptSha256'] = build.sha(build.encoded(report))
+        result.update(receiptSha256=build.sha(build.encoded(report)),
+                      signingProfile=info_binding['signingProfile'])
     print(json.dumps(result))
 
 

@@ -1,7 +1,8 @@
 {
-  "formatVersion": 1,
-  "certificateType": "Developer ID Application",
-  "secureTimestamp": true,
+  "formatVersion": 2,
+  "signingProfile": "local-adhoc",
+  "certificateType": null,
+  "secureTimestamp": false,
   "codeItems": [
     {
       "path": "Meshchan.app/Contents/Frameworks/App.framework",
@@ -45,7 +46,9 @@
       "role": "app",
       "identifier": "org.meshchan.meshchan",
       "runtime": true,
-      "entitlements": {}
+      "entitlements": {
+        "com.apple.security.cs.disable-library-validation": true
+      }
     },
     {
       "path": "meshctl/lib/liblibserialport_plus.dylib",
@@ -70,7 +73,8 @@
       "identifier": "org.meshchan.meshctl",
       "runtime": true,
       "entitlements": {
-        "com.apple.security.cs.allow-unsigned-executable-memory": true
+        "com.apple.security.cs.allow-unsigned-executable-memory": true,
+        "com.apple.security.cs.disable-library-validation": true
       }
     }
   ]

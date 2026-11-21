@@ -39,7 +39,7 @@ class Product:
         self.state_path.write_text(json.dumps(self.state, indent=2) + '\n')
 
     def upload(self, entries, destination):
-        with tempfile.TemporaryFile() as stream:
+        with tempfile.TemporaryFile(dir=self.out) as stream:
             with tarfile.open(fileobj=stream, mode='w') as archive:
                 for source, name in entries:
                     archive.add(source, arcname=name)
@@ -134,7 +134,7 @@ echo $!'''
         exclude_fixture = process.stdout.strip() != 'closed' or bool(getattr(process, 'stderr', '').strip())
         target = self.out / mode
         target.mkdir(exist_ok=True)
-        with tempfile.TemporaryFile() as stream:
+        with tempfile.TemporaryFile(dir=self.out) as stream:
             self.vm.remote('/usr/bin/tar -cf - -C ' + q(root) + ' --exclude=Meshchan.app' + (' --exclude=fixture' if exclude_fixture else '') + ' .', stdout=stream, timeout=60)
             stream.seek(0)
             with tarfile.open(fileobj=stream) as archive:

@@ -14,6 +14,9 @@ build and verify the App and CLI, then
 [`tool/package_release.py`](../tool/package_release.py) to stage and verify the
 engineering package. Start with the [Release build guide](releases/phase-1e4-build.md)
 and [engineering packaging guide](releases/phase-1e5-package.md).
+Use the [local signing guide](releases/phase-1e6-signing.md) to seal and
+accept that package. The [DMG guide](releases/phase-1e7-dmg.md) covers
+image creation, independent acceptance, and retention of the exact image.
 
 The dev.2 tools `package_dev_candidate.py` and `revise_dev_candidate.py` and the
 dev.3 tools `validate_dev_candidate.py` and `package_1c_candidate.py` are kept

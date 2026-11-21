@@ -1,3 +1,4 @@
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -71,14 +72,15 @@ class SigningPolicyTests(unittest.TestCase):
 
     def test_orders_strict_known_graph_and_main_flags(self):
         root = self.product()
+        items = {root/item.path: item for item in self.policy}
 
         def check_entitlements(name, argv):
             if '--entitlements' in argv:
                 plist = argv[argv.index('--entitlements')+1]
-                self.assertEqual(plistlib.loads(plist.read_bytes()), {signing.CLI_UNSIGNED_MEMORY: True})
+                self.assertEqual(plistlib.loads(plist.read_bytes()), items[argv[-1]].entitlements)
 
         command = mock.MagicMock(side_effect=check_entitlements)
-        signing.sign_products(root, self.policy, {'sha1': FINGERPRINT, 'team': TEAM}, command)
+        signing.sign_products(root, self.policy, signing.local_identity(), command)
         graph = signing.discover_code(root, self.policy)
         self.assertEqual(len(graph), 8)
         self.assertEqual([item['role'] for item in graph],
@@ -87,10 +89,12 @@ class SigningPolicyTests(unittest.TestCase):
         for item, recorded in zip(graph, command.call_args_list, strict=True):
             _, argv = recorded.args
             self.assertEqual(argv[-1], root/item['path'])
-            self.assertIn('--timestamp', argv)
+            self.assertEqual(argv[:5], ['/usr/bin/codesign', '--force', '--sign', '-', '--timestamp=none'])
             self.assertNotIn('--deep', argv)
             self.assertEqual('--options' in argv, item['runtime'])
-            self.assertEqual('--entitlements' in argv, item['role'] == 'cli')
+            self.assertEqual('--entitlements' in argv, item['role'] in ('app', 'cli'))
+            self.assertEqual(item['signingProfile'], signing.LOCAL_PROFILE)
+            self.assertIs(item['secureTimestamp'], False)
 
     def test_unclassified_mach_o_and_executable_are_rejected(self):
         root = self.product()
@@ -120,11 +124,20 @@ class SigningPolicyTests(unittest.TestCase):
         path.write_text(json.dumps(policy))
         with self.assertRaisesRegex(ValueError, 'exact entitlements'):
             signing.load_policy(path)
-        policy['codeItems'][-1]['entitlements'] = {signing.CLI_UNSIGNED_MEMORY: True}
+        policy['codeItems'][-1]['entitlements'] = self.policy[-1].entitlements
         policy['codeItems'].insert(0, policy['codeItems'].pop(4))
         path.write_text(json.dumps(policy))
         with self.assertRaisesRegex(ValueError, 'order nested frameworks'):
             signing.load_policy(path)
+
+    def test_policy_rejects_ambiguous_profiles(self):
+        data = json.loads(signing.DEFAULT_POLICY.read_bytes())
+        missing = {key: value for key, value in data.items() if key != 'signingProfile'}
+        for bad in (missing, {**data, 'signingProfile': 'unknown'}, {**data, 'formatVersion': 1},
+                    {**data, 'secureTimestamp': 0}, {**data, 'secureTimestamp': True},
+                    {**data, 'certificateType': signing.CERTIFICATE_TYPE}):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, 'policy format'):
+                signing.parse_policy(json.dumps(bad))
 
     def test_owned_copy_and_bounded_transformation(self):
         original = self.product()
@@ -183,12 +196,12 @@ class SigningPolicyTests(unittest.TestCase):
         root = self.product()
         command = mock.MagicMock(side_effect=[None, subprocess.CalledProcessError(1, ['codesign'])])
         with self.assertRaises(subprocess.CalledProcessError):
-            signing.sign_products(root, self.policy, {'sha1': FINGERPRINT, 'team': TEAM}, command)
+            signing.sign_products(root, self.policy, signing.local_identity(), command)
         self.assertEqual(command.call_count, 2)
         (self.root/'external-shared-file').hardlink_to(root/self.policy[0].binary)
         command.reset_mock()
         with self.assertRaisesRegex(ValueError, 'shared hard links'):
-            signing.sign_products(root, self.policy, {'sha1': FINGERPRINT, 'team': TEAM}, command)
+            signing.sign_products(root, self.policy, signing.local_identity(), command)
         command.assert_not_called()
 
     def test_identity_must_be_exact_valid_developer_id(self):
@@ -204,6 +217,7 @@ class SigningPolicyTests(unittest.TestCase):
             signing.select_identity(FINGERPRINT, TEAM, command)
 
     def test_signature_validation_rejects_privileges_runtime_team_and_unsigned_time(self):
+        self.policy = tuple(replace(item, signing_profile=signing.DEVELOPER_PROFILE) for item in self.policy)
         item = next(item for item in self.policy if item.role == 'app')
         authority = f'Developer ID Application: Test Person ({TEAM})'
         baseline = {'identifier': item.identifier, 'team': TEAM, 'adhoc': False,
@@ -243,7 +257,30 @@ class SigningPolicyTests(unittest.TestCase):
                     signing.display_signature(root, item, 'arm64', command, 'display')
                 command.assert_called_once()
 
+    def test_local_signature_display_requires_ad_hoc_marker_and_well_formed_absences(self):
+        root = self.product()
+        item = self.policy[-1]
+        properties = ''.join((
+            f'Executable={root/item.binary}\nIdentifier={item.identifier}\n',
+            'Total signatures=1\nChosen signature=1\nSignature=adhoc\n',
+            'CodeDirectory v=20500 size=567 flags=0x10002(adhoc,runtime) location=embedded\n',
+            f'TeamIdentifier=not set\nCDHash={"b"*40}\n',
+        ))
+        entitlements = plistlib.dumps(item.entitlements).decode()
+        displayed = signing.display_signature(root, item, 'arm64',
+                                               mock.Mock(side_effect=[properties, entitlements]), 'display')
+        signing.verify_signature_values(item, signing.local_identity(), displayed)
+        for changed, message in (
+            (properties.replace('Signature=adhoc', 'Signature=CMS'), 'did not report an ad hoc signature'),
+            (properties+'Timestamp=\n', 'secure timestamp'),
+            (properties+'Authority=\n', 'signing authority'),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                signing.display_signature(root, item, 'arm64',
+                                          mock.Mock(side_effect=[changed, entitlements]), 'display')
+
     def test_verify_checks_each_actual_item_against_apple_requirement_and_leaf_pin(self):
+        self.policy = tuple(replace(item, signing_profile=signing.DEVELOPER_PROFILE) for item in self.policy)
         root = self.product()
         leaf = b'test public certificate bytes'
         fingerprint = hashlib.sha1(leaf).hexdigest().upper()
@@ -284,6 +321,34 @@ class SigningPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'leaf certificate does not match'):
             signing.verify_signatures(root, self.policy, {'sha1': FINGERPRINT, 'team': TEAM},
                                       command, self.root)
+
+    def test_verify_local_checks_every_item_slice_and_signing_flag(self):
+        root = self.product()
+        (root/self.policy[0].binary).write_bytes(universal_library())
+        displayed = {
+            item.path: {'identifier': item.identifier, 'team': None, 'adhoc': True,
+                        'authorityChain': [], 'timestamp': None,
+                        'runtime': item.runtime, 'entitlements': item.entitlements}
+            for item in self.policy
+        }
+        command = mock.Mock()
+        with mock.patch.object(signing, 'display_signature', side_effect=lambda _, item, *args: displayed[item.path]):
+            report = signing.verify_signatures(root, self.policy, signing.local_identity(), command, self.root)
+            self.assertEqual(len(report), 8)
+            self.assertEqual(set(report[0]['slices']), {'arm64', 'x86_64'})
+            self.assertEqual(command.call_count, 9)
+            self.assertTrue(all(call.args[1][0] == '/usr/bin/codesign'
+                                and '--all-architectures' in call.args[1]
+                                and '--test-requirement' not in call.args[1]
+                                for call in command.call_args_list))
+            for key, value in (
+                ('identifier', 'different.identifier'), ('authorityChain', ['unexpected']),
+                ('team', 'WRONGTEAM1'), ('timestamp', 'invalid'), ('adhoc', False),
+                ('runtime', True), ('entitlements', {signing.DISABLE_LIBRARY_VALIDATION: True}),
+            ):
+                with self.subTest(key=key), mock.patch.dict(displayed[self.policy[0].path], {key: value}):
+                    with self.assertRaises(ValueError):
+                        signing.verify_signatures(root, self.policy, signing.local_identity(), command, self.root)
 
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import package_release as package
 from release_materials import encoded, product_inventory, sha
 import sign_release as signing
+from release_signed_runtime_test import local_manifest
 
 
 class SigningBoundaryTest(unittest.TestCase):
@@ -78,6 +79,72 @@ class SigningBoundaryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'outside its selected root'):
             signing.evidence_json(scope, {'path': str(outside), 'sha256': sha(b'{}')})
 
+    def test_upstream_report_cannot_select_a_previous_check_even_with_a_valid_digest(self):
+        previous = self.root/'evidence/check-previous'
+        previous.mkdir(parents=True)
+        report = previous/'relocated-products.json'
+        raw = encoded({'status': 'PASS'})
+        report.write_bytes(raw)
+        current = {'staticReport': {'path': str(report), 'sha256': sha(raw)}}
+        with self.assertRaisesRegex(ValueError, 'Evidence location for relocated-products.json'):
+            signing.verify_upstream_reports(self.root, self.root/'evidence/check-current', current,
+                                            self.root/'old extracted product', {}, {}, {})
+
+    def test_process_ledger_rechecks_log_bytes_and_ownership(self):
+        evidence = self.root/'evidence/check-current'
+        previous = self.root/'evidence/check-previous'
+        for path in (evidence, previous):
+            (path/'logs').mkdir(parents=True)
+            (path/'logs/probe.log').write_bytes(b'typed runtime evidence')
+            (path/'logs/probe.stderr.log').write_bytes(b'')
+        log = evidence/'logs/probe.log'
+        step = {
+            'name': 'probe', 'exitCode': 0, 'processTree': {'exited': True, 'childReaped': True},
+            'log': log.relative_to(self.root).as_posix(), 'logSha256': sha(log.read_bytes()),
+            'stderrLog': (evidence/'logs/probe.stderr.log').relative_to(self.root).as_posix(),
+            'stderrLogSha256': sha(b''),
+        }
+        signing.verify_process_logs(self.root, {'steps': [step]}, evidence=evidence)
+        stale = (previous/'logs/probe.log').relative_to(self.root).as_posix()
+        with self.assertRaisesRegex(ValueError, 'Owned process log path'):
+            signing.verify_process_logs(self.root, {'steps': [{**step, 'log': stale}]}, evidence=evidence)
+        log.write_bytes(b'updated after the receipt')
+        with self.assertRaisesRegex(ValueError, 'Owned process log'):
+            signing.verify_process_logs(self.root, {'steps': [step]}, evidence=evidence)
+
+    def test_local_runtime_replay_rejects_contradictory_process_arguments(self):
+        python = '/opt/example/bin/python3'
+        config = '/private/tmp/meshchan-private-vm-fixture.json'
+        root = self.root/'signed original'
+        relocated = self.root/'relocated products'
+        evidence = self.root/'evidence'
+        replacement = self.root/'user modified products'
+        pin = 'a'*64
+        vm = {'name': 'signed-vm-app-runtime', 'cwd': str(signing.ROOT),
+              'argv': signing.signed_vm_arguments(python, config, relocated, pin, evidence/'vm-app')}
+        user = {'name': 'signed-user-replacement', 'cwd': str(signing.ROOT),
+                'argv': signing.replacement_arguments(python, config, root, pin, replacement, 900)}
+
+        def verify(rows):
+            return signing.verify_local_runtime_invocations(
+                {'steps': rows}, python, root, relocated, pin, evidence, replacement)
+
+        self.assertEqual(verify([vm, user]), (vm, user))
+        for step, index, replacement_arg, label in (
+            (0, 6, str(root/'Meshchan.app'), 'Local VM process argv'),
+            (0, 8, str(root/'signed-product-info.json'), 'Local VM process argv'),
+            (0, 10, 'b'*64, 'Local VM process argv'),
+            (1, 4, str(relocated), 'Local replacement process argv'),
+            (1, 10, '/private/tmp/meshchan-private-vm-another.json', 'Local replacement process argv'),
+            (1, 12, '0', 'Invalid replacement process timeout'),
+        ):
+            steps = deepcopy([vm, user])
+            steps[step]['argv'][index] = replacement_arg
+            with self.subTest(step=step, index=index), self.assertRaisesRegex(ValueError, label):
+                verify(steps)
+        with self.assertRaisesRegex(ValueError, 'Local VM process cwd'):
+            verify([{**vm, 'cwd': str(relocated)}, user])
+
     def test_material_scope_rejects_payload_drift_even_with_a_new_manifest(self):
         library = self.root/'materials/lib.txt'
         library.parent.mkdir()
@@ -97,10 +164,9 @@ class SigningBoundaryTest(unittest.TestCase):
         relocated = self.root/'relocated products'
         path = self.root/'runtime.json'
         inventory = {'Meshchan.app': package.DIR}
-        info = {'payloadInventory': inventory, 'identity': {'appBuild': '8'},
-                'signature': {'identity': {'team': 'SIGNERTEAM'}}}
+        info = local_manifest(inventory)
         manifest = encoded(info)
-        candidate = {'guestRun': 'current-run', 'status': 'PASS'}
+        candidate = {'guestRun': 'current-run', 'status': 'PASS', 'signingProfile': info['signingProfile']}
         report = {
             **candidate, 'status': 'PASS', 'app': str(relocated/'Meshchan.app'),
             'signedInfoSha256': sha(manifest), 'identity': info['identity'],
@@ -129,14 +195,57 @@ class SigningBoundaryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Bound JSON SHA-256'):
             signing.vm_report(self.root, path, candidate, relocated, info, manifest)
 
-    def test_no_identity_is_blocked_without_signing_commands(self):
-        args = Mock(identity=None, expected_team=None)
-        runner = Mock()
-        runner.command.return_value = '     0 valid identities found\n'
-        with self.assertRaisesRegex(signing.Blocked, 'No valid Developer ID Application'):
-            signing.selection(args, Mock(), runner)
-        runner.command.assert_called_once_with(
-            'signing-identities', ['/usr/bin/security', 'find-identity', '-p', 'codesigning', '-v'])
+    def test_local_selection_requires_matching_policy_without_discovering_identities(self):
+        policy = signing.release_signing.load_policy(signing.POLICY)
+        with patch('release_signing.select_identity') as identity_lookup:
+            identity = signing.selection('local-adhoc', policy)
+            self.assertEqual(identity, signing.release_signing.local_identity())
+            for profile, items in ((None, policy), ('developer-id', policy), ('local-adhoc', ())):
+                with self.subTest(profile=profile, items=items), self.assertRaises(ValueError):
+                    signing.selection(profile, items)
+        identity_lookup.assert_not_called()
+
+    def test_local_acceptance_rejects_foreign_pins_profiles_status_and_inputs(self):
+        output = self.root/'signing run'
+        root = output/'signed/release'
+        root.mkdir(parents=True)
+        receipt = output/'evidence/check-owned/signing-receipt.json'
+        receipt.parent.mkdir(parents=True)
+        info = {**local_manifest(), 'upstream': {'sourceCommit': 'accepted'},
+                'signingTool': {'inputs': {'source.py': {'sha256': 'a'*64}}}}
+        manifest = root/'signed-product-info.json'
+        raw = encoded(info)
+        manifest.write_bytes(raw)
+        manifest_pin = sha(raw)
+        accepted = {
+            **signing.LOCAL_SCHEMA, 'command': 'check', 'status': 'PASS', 'upstreamStatus': 'PASS',
+            **dict.fromkeys(signing.ACCEPTANCE_GATES, 'PASS'),
+            'signedRoot': str(root),
+            'signedInfo': {'path': 'signed/release/signed-product-info.json', 'sha256': manifest_pin},
+            'identity': info['identity'], 'upstream': info['upstream'], 'signingTool': info['signingTool'],
+            'signingIdentity': info['signature']['identity'],
+            'relocatedInventorySha256': sha(encoded(signing.manifest_inventory(info, raw))),
+        }
+        with (patch.object(signing, 'output_path', return_value=output),
+              patch.object(signing, 'check_payload') as verify,
+              patch.object(signing, 'tool_identity', return_value={'inputs': {'source.py': {'sha256': 'b'*64}}})):
+            for changed, label in (
+                ({'status': 'PREPARED'}, 'status'), ({'status': 'SIGNED'}, 'status'),
+                ({'status': 'BLOCKED'}, 'status'), ({'formatVersion': 1}, 'formatVersion'),
+                ({'signingProfile': 'developer-id'}, 'signingProfile'),
+                ({'vmAppStatus': 'NOT_RUN'}, 'vmAppStatus'),
+                ({'signedRoot': str(root.parent/'foreign')}, 'signedRoot'),
+                ({}, 'Current signing tool inputs'),
+            ):
+                with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, label):
+                    modified = encoded({**accepted, **changed})
+                    receipt.write_bytes(modified)
+                    signing.read_local_acceptance(root, manifest_pin, receipt, sha(modified))
+            with self.assertRaisesRegex(ValueError, 'Selected local candidate manifest SHA-256'):
+                signing.read_local_acceptance(root, 'f'*64, receipt, sha(modified))
+            with self.assertRaisesRegex(ValueError, 'Bound JSON SHA-256'):
+                signing.read_local_acceptance(root, manifest_pin, receipt, 'f'*64)
+        verify.assert_not_called()
 
     def test_replacement_cli_marker_must_match_the_bound_launcher_pid(self):
         from release_signed_replacement import APP_EMPTY, MARKER_START
@@ -158,16 +267,18 @@ class SigningBoundaryTest(unittest.TestCase):
             target.write_bytes(contents)
             cli.update({field: name, field+'Sha256': sha(contents)})
         report = {
-            'formatVersion': 1, 'status': 'PASS', 'signedInfoSha256': sha(manifest), 'identity': {},
+            **signing.LOCAL_SCHEMA, 'status': 'PASS', 'signedInfoSha256': sha(manifest), 'identity': {},
             'signedRoot': str(self.root), 'finalIntegrity': 'PASS', 'marker': marker, 'cli': cli,
             'app': {**fields, 'guestExecutorExit': 0, 'guestLockReleased': True, 'pidAbsent': True,
                     'inventoryBefore': 'PASS', 'inventoryAfter': 'PASS', 'result': APP_EMPTY},
         }
         path = evidence/'replacement-receipt.json'
         path.write_bytes(encoded(report))
-        result = {'status': 'PASS', 'receipt': str(path), 'receiptSha256': sha(encoded(report))}
+        result = {'status': 'PASS', 'signingProfile': 'local-adhoc',
+                  'receipt': str(path), 'receiptSha256': sha(encoded(report))}
         with self.assertRaisesRegex(ValueError, 'current-run libserialport invocation marker'):
-            signing.replacement_report(workspace, result, self.root, {'identity': {}}, manifest, Mock(), (), Mock())
+            signing.replacement_report(workspace, result, self.root, {**signing.LOCAL_SCHEMA, 'identity': {}},
+                                       manifest, Mock(), (), Mock())
 
     def test_replacement_guest_evidence_binds_the_owned_run_and_refresh_transition(self):
         from release_signed_replacement import (
@@ -214,7 +325,7 @@ class SigningBoundaryTest(unittest.TestCase):
         }
         expected_signatures = {CLI_BINARY: {'arm64': {'runtime': True}}}
         report = {
-            'formatVersion': 1, 'status': 'PASS', 'signedInfoSha256': sha(manifest), 'identity': {},
+            **signing.LOCAL_SCHEMA, 'status': 'PASS', 'signedInfoSha256': sha(manifest), 'identity': {},
             'signedRoot': str(self.root), 'finalIntegrity': 'PASS', 'marker': marker, 'cli': cli,
             'modifiedInventorySha256': sha(encoded(inventory)),
             'replacement': {
@@ -240,9 +351,10 @@ class SigningBoundaryTest(unittest.TestCase):
             report['app']['evidence'] = {name: sha(contents) for name, contents in files.items()}
             raw = encoded(report)
             receipt_path.write_bytes(raw)
-            reply = {'status': 'PASS', 'receipt': str(receipt_path), 'receiptSha256': sha(raw)}
-            return signing.replacement_report(workspace, reply, self.root, {'identity': {}}, manifest, signer, (),
-                                              command)
+            reply = {'status': 'PASS', 'signingProfile': 'local-adhoc',
+                     'receipt': str(receipt_path), 'receiptSha256': sha(raw)}
+            return signing.replacement_report(workspace, reply, self.root, {**signing.LOCAL_SCHEMA, 'identity': {}},
+                                              manifest, signer, (), command)
 
         with patch('release_signed_replacement.verify_local_signatures', return_value=expected_signatures) as observe:
             self.assertEqual(str(receipt_path), verify(guest_files)['path'])
@@ -276,17 +388,14 @@ class SigningBoundaryTest(unittest.TestCase):
             with self.subTest(name=name, message=message), self.assertRaisesRegex(ValueError, message):
                 verify({**guest_files, name: contents})
 
-    def test_keychain_interaction_blocks_and_timestamp_failure_never_seals(self):
+    def test_signing_failure_never_seals(self):
         signer, runner = Mock(), Mock()
         upstream = Mock(top='meshchan')
-        for error, expected in (
-            (b'User interaction is not allowed.', signing.Blocked),
-            (b'The timestamp service is not available.', subprocess.CalledProcessError),
-        ):
+        for error in (b'User interaction is not allowed.', b'Could not sign the executable.'):
             signer.sign_products.side_effect = subprocess.CalledProcessError(1, 'codesign', stderr=error)
             record = {}
             with patch.object(signing, 'selection', return_value={}), patch.object(signing, 'copy_source'):
-                with self.subTest(error=error), self.assertRaises(expected):
+                with self.subTest(error=error), self.assertRaises(subprocess.CalledProcessError):
                     signing.sign(Mock(), upstream, self.root, self.root, runner, record, {}, signer, ())
             self.assertEqual('RUNNING', record['signatureStatus'])
             self.assertFalse((self.root/'signed').exists())
@@ -362,7 +471,7 @@ class SigningBoundaryTest(unittest.TestCase):
             with self.subTest(change=change):
                 output = self.root/change
                 upstream = Mock(protected=(), provenance={}, info={'identity': {}})
-                args = Mock(command='prepare', output=output)
+                args = Mock(command='prepare', output=output, signing_profile='local-adhoc')
 
                 def create_copy(prepared, _upstream, _tools):
                     prepared.mkdir()
@@ -378,11 +487,18 @@ class SigningBoundaryTest(unittest.TestCase):
                         (output/'evidence').rename(output/'owned evidence')
                         (output/'evidence').mkdir()
 
+                def inspect_runner(runner):
+                    scratch = output/'evidence/tool scratch'
+                    self.assertEqual(runner.env['TMPDIR'], str(scratch))
+                    self.assertEqual(scratch.stat().st_mode & 0o777, 0o700)
+                    return {}
+
                 with (patch.object(signing, 'output_path', return_value=output),
                       patch.object(signing.platform, 'system', return_value='Darwin'),
                       patch.object(signing.platform, 'machine', return_value='arm64'),
                       patch.object(signing, 'read_upstream', return_value=upstream),
-                      patch.object(signing, 'platform_identity', return_value={}),
+                      patch.dict(signing.os.environ, {'TMPDIR': str(self.root/'protected product')}),
+                      patch.object(signing, 'platform_identity', side_effect=inspect_runner),
                       patch.object(signing, 'tool_identity', return_value={}),
                       patch.object(signing, 'copy_source', side_effect=create_copy),
                       patch.object(signing, 'native_report', return_value={}),

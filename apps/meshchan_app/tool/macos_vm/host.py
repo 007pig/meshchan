@@ -36,7 +36,10 @@ class Product:
         self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {'products': {}}
 
     def save(self):
-        self.state_path.write_text(json.dumps(self.state, indent=2) + '\n')
+        with tempfile.TemporaryDirectory(dir=self.out, prefix='.session-') as temporary:
+            pending = Path(temporary) / self.state_path.name
+            pending.write_text(json.dumps(self.state, indent=2) + '\n', encoding='utf-8')
+            pending.replace(self.state_path)
 
     def upload(self, entries, destination):
         with tempfile.TemporaryFile(dir=self.out) as stream:
@@ -61,7 +64,9 @@ class Product:
         self.save()
         print(self.state['run'])
 
-    def job(self, script):
+    def job(self, script, *, timeout=20):
+        if type(timeout) is not int or not 1 <= timeout <= 180:
+            raise ValueError('Guest job timeout must be between 1 and 180 seconds')
         run = self.vm.runpath(self.state['run'])
         job = str(time.time_ns())
         # The queue is private to this explicit GUI-session executor run.
@@ -70,7 +75,7 @@ class Product:
         reply_exit = q(reply + '.exit')
         try:
             # The guest writes the receipt directly. Wait for a complete line.
-            result = self.vm.remote(f'''for attempt in {{1..200}}; do
+            result = self.vm.remote(f'''for attempt in {{1..{timeout * 10}}}; do
     if test -f {reply_exit} && IFS= read -r job_code < {reply_exit}; then
         cat {q(reply + '.stdout')}
         cat {q(reply + '.stderr')} >&2
@@ -80,7 +85,7 @@ class Product:
 done
 echo "Job response pending; do not resend input" >&2
 exit 75
-''', capture_output=True, text=True, timeout=25)
+''', capture_output=True, text=True, timeout=timeout+5)
         except subprocess.CalledProcessError as error:
             raise ValueError('Guest command failed: ' + error.stderr.strip()) from None
         return result.stdout

@@ -19,9 +19,10 @@ import uuid
 import build_release as build
 import package_release_vm as vm_steps
 from release_materials import (ancestor_identities, controlled_environment, digest, directory_identity, encoded,
-                               product_inventory, require_material_file, require_product_disjoint, sections, sha)
+                               product_inventory, require_material_file, require_product_disjoint, safe, sections, sha)
 from release_package_archive import check_payload, compare, metadata_observations
 import release_signing as signing
+from release_signed_runtime import manifest_profile, parse_signed_info
 
 
 APP = 'Meshchan.app'
@@ -34,8 +35,7 @@ APP_BINARY = APP + '/Contents/MacOS/Meshchan'
 APP_NOT_REFRESHED = 'No ports have been listed or opened.'
 APP_EMPTY = 'No available ports were reported.'
 MANIFEST = 'signed-product-info.json'
-LOCAL_LIBRARY_VALIDATION = 'com.apple.security.cs.disable-library-validation'
-UNSIGNED_EXECUTABLE_MEMORY = 'com.apple.security.cs.allow-unsigned-executable-memory'
+UPSTREAM_CHECK = 'upstream-provenance/package-check-receipt.json'
 SOURCE_FILES = tuple('src/libserialport/' + name for name in ('serialport.c', 'timing.c', 'macosx.c'))
 LIST_FUNCTION = b'SP_API enum sp_return sp_list_ports(struct sp_port ***list_ptr)\r\n{'
 SOURCE_MEMBER = re.compile(r'source-materials/archives/libserialport_plus-[0-9.]+\.tar\.gz')
@@ -47,6 +47,19 @@ def checked_absolute(path):
     if path != path.resolve() or path.is_symlink():
         raise ValueError('Use a canonical path with no symlink components: ' + str(path))
     return path
+
+
+def inspectable_upstream_path(path):
+    # Shipped manifests name the publisher's local inputs. If another account
+    # cannot inspect one of those paths, protect its nearest visible parent.
+    for candidate in (path, *path.parents):
+        try:
+            resolved = candidate.resolve()
+            ancestor_identities(resolved)
+        except PermissionError:
+            continue
+        return resolved
+    raise ValueError('Cannot inspect an ancestor of upstream release input: '+str(path))
 
 
 def product_inventory_from_payload(inventory):
@@ -154,15 +167,9 @@ def replace_library(original, copies, path, source, compiler, sdk, command, labe
             'originalSha256': digest(old), 'rebuiltSha256': digest(new)}
 
 
-def local_entitlements(path):
-    if path == APP:
-        return {LOCAL_LIBRARY_VALIDATION: True}
-    if path == CLI_BINARY:
-        return {LOCAL_LIBRARY_VALIDATION: True, UNSIGNED_EXECUTABLE_MEMORY: True}
-    return {}
-
-
 def local_signing_items(policy):
+    if signing.policy_profile(policy) != signing.LOCAL_PROFILE:
+        raise ValueError('The replacement test requires the local-adhoc signing profile')
     selected = {APP, CLI_BINARY, APP_FRAMEWORK, CLI_LIBRARY}
     items = [item for item in policy if item.path in selected]
     if {item.path for item in items} != selected:
@@ -171,8 +178,7 @@ def local_signing_items(policy):
 
 
 def re_sign_local(copies, policy, command, evidence):
-    # An ad hoc main executable has no Developer ID Team. Preserve HR while
-    # allowing the replacement library and the unchanged signed dependencies.
+    # Preserve the selected local runtime and entitlements on affected code.
     items = local_signing_items(policy)
     for index, item in enumerate(items):
         args = ['/usr/bin/codesign', '--force', '--sign', '-', '--timestamp=none',
@@ -180,7 +186,7 @@ def re_sign_local(copies, policy, command, evidence):
         if item.runtime:
             entitlements = evidence/('user-'+item.role+'.entitlements')
             with entitlements.open('xb') as stream:
-                plistlib.dump(local_entitlements(item.path), stream)
+                plistlib.dump(item.entitlements, stream)
             args += ['--options', 'runtime', '--entitlements', entitlements]
         command('local-sign-'+str(index), [*args, copies/item.path])
 
@@ -200,12 +206,7 @@ def verify_local_signatures(copies, policy, command, *, prefix='local'):
         for arch in actual[item.path]:
             facts = signing.display_signature(copies, item, arch, command,
                                               f'{prefix}-display-{index}-{arch}')
-            expected = local_entitlements(item.path)
-            if (facts['adhoc'] is not True or facts['runtime'] is not item.runtime
-                    or facts['identifier'] != item.identifier
-                    or facts['team'] != 'not set' or facts['timestamp'] is not None
-                    or not signing.exact_entitlements(facts['entitlements'], expected)):
-                raise ValueError('Local signing policy mismatch: '+item.path+' '+arch)
+            signing.verify_signature_values(item, signing.local_identity(), facts)
             signatures[arch] = facts
         observed[item.path] = signatures
     return observed
@@ -491,7 +492,7 @@ def run_app(copies, evidence, vm_config, marker, app_library_hash, *,
                   +'\ntest ! -L '+q(products)+'\n/bin/mkdir '+q(root)
                   +'\n/bin/mkdir '+shlex.join([root+'/fixture', root+'/cwd']), timeout=10)
         product.upload([(app, APP)], root)
-        vm_steps.guest_inventory(vm, root, app_inventory)
+        vm_steps.guest_inventory(vm, root, app_inventory, scratch=evidence)
         remote_app = root+'/'+APP
         vm.remote('/usr/bin/codesign --verify --deep --strict --all-architectures '+q(remote_app),
                   timeout=30)
@@ -558,7 +559,7 @@ def run_app(copies, evidence, vm_config, marker, app_library_hash, *,
             raise ValueError('Collected App receipts differ from current-run observations')
         shutdown = verify_shutdown(collected['Release/app.stdout'].decode())
         require_marker(collected['Release/app.stderr'].decode(), marker, pid)
-        vm_steps.guest_inventory(vm, root, app_inventory)
+        vm_steps.guest_inventory(vm, root, app_inventory, scratch=evidence)
         check_payload(app, app_inventory)
         product.state['products']['Release']['shutdown'] = shutdown
         product.save()
@@ -621,7 +622,8 @@ def run(signed_root, output, *, inventory=None, signed_info_sha256, vm_config=No
     root = checked_absolute(signed_root)
     output = checked_absolute(output)
     config = checked_absolute(vm_config) if vm_config is not None else None
-    protected = (root, build.ROOT/'.git', build.ROOT/'.dart_tool', build.ROOT/'apps')
+    protected = (root, build.ROOT/'.git', build.ROOT/'.dart_tool', build.ROOT/'apps',
+                 Path.home()/vm_steps.DEFAULT_DATA_SUBDIR)
     require_product_disjoint({'Replacement output': output},
                              (*protected, config) if config is not None else protected)
     # pathlib comparisons alone miss case aliases on case-insensitive volumes.
@@ -633,9 +635,26 @@ def run(signed_root, output, *, inventory=None, signed_info_sha256, vm_config=No
     manifest = require_material_file(root, MANIFEST).read_bytes()
     if sha(manifest) != signed_info_sha256:
         raise ValueError('Signed product manifest differs from its selected SHA-256')
-    info = json.loads(manifest)
-    if type(info.get('formatVersion')) is not int or info['formatVersion'] != 1:
-        raise ValueError('Unsupported signed product manifest version')
+    info = parse_signed_info(manifest)
+    if manifest_profile(info) != signing.LOCAL_PROFILE:
+        raise ValueError('The replacement test requires a local-adhoc candidate manifest')
+    upstream = info['upstream']
+    source = Path(upstream['sourceCheckout'])
+    package_run = Path(upstream['packageRun'])
+    check_bytes = require_material_file(root, UPSTREAM_CHECK).read_bytes()
+    if sha(check_bytes) != upstream['upstreamCheckReceiptSha256']:
+        raise ValueError('Archived upstream check receipt differs from the selected candidate')
+    upstream_check = json.loads(check_bytes, object_pairs_hook=signing.policy_object)
+    extract_root = Path(upstream_check['extractRoot'])
+    if not all(path.is_absolute() for path in (source, package_run, extract_root)):
+        raise ValueError('Replacement input has malformed upstream product paths')
+    upstream_paths = [inspectable_upstream_path(path)
+                      for path in (source/safe(upstream['buildRun']), package_run, extract_root)]
+    source_guard = inspectable_upstream_path(source)
+    if directory_identity(source_guard) != directory_identity(build.ROOT):
+        upstream_paths.append(source_guard)
+    require_product_disjoint({'Replacement output': output}, upstream_paths,
+                             protected='an upstream release input')
     expected = info['payloadInventory']
     if type(expected) is not dict or MANIFEST in expected:
         raise ValueError('Signed product payload inventory must exclude its own manifest')
@@ -643,7 +662,7 @@ def run(signed_root, output, *, inventory=None, signed_info_sha256, vm_config=No
         compare(inventory, expected, 'Selected signed product manifest')
     full_expected = expected | {MANIFEST: {'type': 'file', 'mode': 0o600, 'size': len(manifest),
                                          'sha256': signed_info_sha256}}
-    configuration = (vm_steps.checked_vm_configuration(config, (root, output, build.ROOT))
+    configuration = (vm_steps.checked_vm_configuration(config, (*protected, *upstream_paths, output, build.ROOT))
                      if config is not None else None)
     return _run_replacement(root, output, info, full_expected, config, timeout, configuration=configuration)
 
@@ -660,16 +679,28 @@ def _run_replacement(root, output, info, full_expected, config, timeout, *, conf
     scratch = evidence/'certificate-observations'
     scratch.mkdir(mode=0o700)
     marker = MARKER_START+uuid.uuid4().hex
-    report = {'formatVersion': 1, 'status': 'RUNNING', 'steps': [], 'marker': marker,
+    report = {'formatVersion': 2, 'signingProfile': info['signingProfile'],
+              'status': 'RUNNING', 'steps': [], 'marker': marker,
               'signedInfoSha256': signed_info_sha256, 'identity': info['identity'],
               'filesystemMetadata': {'originalBefore': original_metadata},
               'signedRoot': str(root), 'cli': {'status': 'NOT_RUN'}, 'app': {'status': 'NOT_RUN'}}
     receipt = evidence/'replacement-receipt.json'
-    runner = build.Runner(output, evidence, report, controlled_environment(), timeout=timeout)
+    env = {**controlled_environment(), 'TMPDIR': str(scratch)}
+    runner = build.Runner(output, evidence, report, env, timeout=timeout)
     build.write(receipt, report)
     try:
-        policy = signing.load_policy(signing.DEFAULT_POLICY)
-        signing.verify_signatures(root, policy, info['signature']['identity'], runner.command, scratch)
+        index = info['policy']
+        relative = 'tool/release_signing_policy.json'
+        policy_bytes = require_material_file(root, 'signing-source/'+relative).read_bytes()
+        if index != {'path': relative, 'sha256': sha(policy_bytes)}:
+            raise ValueError('Candidate signing policy differs from its manifest')
+        policy = signing.parse_policy(policy_bytes)
+        if signing.policy_profile(policy) != info['signingProfile']:
+            raise ValueError('Candidate signing policy profile conflict')
+        actual_signatures = signing.verify_signatures(root, policy, info['signature']['identity'],
+                                                      runner.command, scratch)
+        if encoded(info['signature']['items']) != encoded(actual_signatures):
+            raise ValueError('Candidate signatures differ from their manifest')
         archive, report['sourceArchive'] = serial_archive(root, expected)
         report['replacement'] = prepare_copies(root, expected, copies, evidence, archive,
                                                 report['sourceArchive']['sha256'], policy,
@@ -730,7 +761,7 @@ def main():
     except (Exception, KeyboardInterrupt) as error:
         print('ERROR: '+build.failure_message(error), file=sys.stderr)
         return 1
-    print(json.dumps({key: result[key] for key in ('status', 'receipt', 'receiptSha256')}, indent=2))
+    print(json.dumps({key: result[key] for key in ('status', 'signingProfile', 'receipt', 'receiptSha256')}, indent=2))
     return 0 if result['status'] == 'PASS' else 1
 
 

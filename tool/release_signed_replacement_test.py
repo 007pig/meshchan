@@ -13,12 +13,30 @@ import unittest
 from unittest import mock
 
 import release_signed_replacement as replacement
+from release_signed_runtime_test import local_manifest
 from release_materials import digest, encoded, product_inventory, sha
 
 
 class ReplacementEvidenceTest(unittest.TestCase):
     MARKER = replacement.MARKER_START + '1'*32
     PORTS = {'schemaVersion': 1, 'command': 'ports', 'ports': []}
+
+    def write_candidate_manifest(self, root):
+        policy = 'tool/release_signing_policy.json'
+        archived = root/'signing-source'/policy
+        archived.parent.mkdir(parents=True)
+        archived.write_bytes(replacement.signing.DEFAULT_POLICY.read_bytes())
+        upstream_check = root/replacement.UPSTREAM_CHECK
+        upstream_check.parent.mkdir()
+        replacement.build.write(upstream_check, {'extractRoot': str(root.parent/'upstream extraction')})
+        info = local_manifest(product_inventory(root))
+        info['policy'] = {'path': policy, 'sha256': digest(archived)}
+        info['upstream'] = {'sourceCheckout': str(root.parent/'frozen checkout'),
+                            'buildRun': 'build/frozen run', 'packageRun': str(root.parent/'original package'),
+                            'upstreamCheckReceiptSha256': digest(upstream_check)}
+        manifest = root/replacement.MANIFEST
+        replacement.build.write(manifest, info)
+        return manifest, info['signature']['items']
 
     def test_cli_requires_exact_schema_and_current_marker(self):
         valid = replacement.verify_cli_output(json.dumps(self.PORTS), self.MARKER+':517\n', self.MARKER)
@@ -72,19 +90,19 @@ class ReplacementEvidenceTest(unittest.TestCase):
                 replacement.patch_source(source, self.MARKER)
 
     def test_local_entitlements_are_scoped_to_runtime_roles(self):
-        self.assertEqual(replacement.local_entitlements(replacement.APP),
-                         {replacement.LOCAL_LIBRARY_VALIDATION: True})
-        self.assertEqual(replacement.local_entitlements(replacement.CLI_BINARY),
-                         {replacement.LOCAL_LIBRARY_VALIDATION: True,
-                          replacement.UNSIGNED_EXECUTABLE_MEMORY: True})
-        for path in (replacement.CLI_LIBRARY, replacement.APP_LIBRARY, replacement.APP_FRAMEWORK):
-            self.assertEqual(replacement.local_entitlements(path), {})
+        policy = replacement.signing.load_policy(replacement.signing.DEFAULT_POLICY)
+        entitlements = {item.path: item.entitlements for item in replacement.local_signing_items(policy)}
+        validation = replacement.signing.DISABLE_LIBRARY_VALIDATION
+        unsigned_memory = replacement.signing.CLI_UNSIGNED_MEMORY
+        self.assertEqual(entitlements, {replacement.APP: {validation: True},
+                                       replacement.CLI_BINARY: {validation: True, unsigned_memory: True},
+                                       replacement.CLI_LIBRARY: {}, replacement.APP_FRAMEWORK: {}})
 
     def test_actual_local_signature_requires_runtime_and_exact_role_entitlements(self):
         policy = replacement.signing.load_policy(replacement.signing.DEFAULT_POLICY)
         observations = {item.path: {'adhoc': True, 'runtime': item.runtime, 'identifier': item.identifier,
-                                     'team': 'not set', 'timestamp': None,
-                                     'entitlements': replacement.local_entitlements(item.path)}
+                                     'team': None, 'timestamp': None, 'authorityChain': [],
+                                     'entitlements': item.entitlements}
                         for item in replacement.local_signing_items(policy)}
         graph = [{'path': item.path, 'architectures': ['arm64']} for item in policy]
         copies = Path('/private/tmp/owned test products')
@@ -102,11 +120,11 @@ class ReplacementEvidenceTest(unittest.TestCase):
             for changed_path, field, value in (
                 (replacement.CLI_BINARY, 'runtime', False),
                 (replacement.CLI_BINARY, 'entitlements', {}),
-                (replacement.APP_FRAMEWORK, 'entitlements', replacement.local_entitlements(replacement.APP)),
+                (replacement.APP_FRAMEWORK, 'entitlements', observations[replacement.APP]['entitlements']),
             ):
                 with self.subTest(changed_path=changed_path, field=field), \
                         mock.patch.dict(observations[changed_path], {field: value}):
-                    with self.assertRaisesRegex(ValueError, 'Local signing policy mismatch'):
+                    with self.assertRaisesRegex(ValueError, 'runtime or entitlements differ'):
                         replacement.verify_local_signatures(copies, policy, command)
 
     def test_archive_binding_checks_actual_bytes_and_accepted_index(self):
@@ -182,11 +200,7 @@ class ReplacementEvidenceTest(unittest.TestCase):
             output = root/'replacement output'
             original.mkdir()
             (original/'example').write_text('payload')
-            manifest = original/replacement.MANIFEST
-            expected = product_inventory(original)
-            manifest.write_bytes(encoded({'formatVersion': 1, 'identity': {}, 'payloadInventory': expected,
-                                          'signature': {'identity': {'sha1': 'a'*40, 'team': 'EXAMPLE123'}}}))
-            manifest.chmod(0o600)
+            manifest, signatures = self.write_candidate_manifest(original)
 
             def prepare(_root, _original_inventory, copies, *_arguments):
                 copies.mkdir()
@@ -196,7 +210,7 @@ class ReplacementEvidenceTest(unittest.TestCase):
                 resource.write_text('changed after the transform check')
                 return {'verifiedInventory': verified}
 
-            with mock.patch.object(replacement.signing, 'verify_signatures'), \
+            with mock.patch.object(replacement.signing, 'verify_signatures', return_value=signatures), \
                     mock.patch.object(replacement, 'serial_archive', return_value=(None, {'sha256': '0'*64})), \
                     mock.patch.object(replacement, 'prepare_copies', side_effect=prepare), \
                     mock.patch.object(replacement, 'run_cli') as run_cli:
@@ -218,28 +232,82 @@ class ReplacementEvidenceTest(unittest.TestCase):
                     replacement.run(root/'signed', output, signed_info_sha256='0'*64)
             self.assertFalse((tool/'new output').exists())
 
+    def test_replacement_output_cannot_touch_upstream_or_default_user_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            original = root/'signed'
+            original.mkdir()
+            manifest, _ = self.write_candidate_manifest(original)
+            home = root/'test home'
+            for protected in (home/replacement.vm_steps.DEFAULT_DATA_SUBDIR,
+                              root/'frozen checkout/build/frozen run',
+                              root/'frozen checkout/tool', root/'original package',
+                              root/'upstream extraction/runtime workspace'):
+                protected.mkdir(parents=True)
+                output = protected/'foreign output'
+                with self.subTest(protected=protected), mock.patch.object(Path, 'home', return_value=home):
+                    with self.assertRaisesRegex(ValueError, 'Replacement output overlaps'):
+                        replacement.run(original, output, signed_info_sha256=digest(manifest))
+                self.assertFalse(output.exists())
+
+    @unittest.skipIf(os.geteuid() == 0, 'Requires unprivileged filesystem permissions')
+    def test_standalone_replacement_admits_output_outside_unreadable_publisher_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            original = root/'signed'
+            original.mkdir()
+            manifest, _ = self.write_candidate_manifest(original)
+            private_source = root/'frozen checkout'
+            private_source.mkdir(mode=0o700)
+            private_source.chmod(0)
+            try:
+                frozen_run = private_source/'build/frozen run'
+                with self.assertRaises(PermissionError):
+                    frozen_run.stat()
+                self.assertEqual(replacement.inspectable_upstream_path(frozen_run), private_source)
+                with mock.patch.object(replacement, '_run_replacement', return_value='admitted') as run:
+                    result = replacement.run(original, root/'external output',
+                                             signed_info_sha256=digest(manifest))
+                self.assertEqual(result, 'admitted')
+                run.assert_called_once()
+            finally:
+                private_source.chmod(0o700)
+
     def test_vm_runtime_directory_cannot_write_inside_selected_replacement_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             original = root/'signed'
             original.mkdir()
             (original/'example').write_text('payload')
-            manifest = original/replacement.MANIFEST
-            replacement.build.write(manifest, {'formatVersion': 1, 'identity': {},
-                                               'payloadInventory': product_inventory(original)})
+            manifest, _ = self.write_candidate_manifest(original)
             output = root/'replacement output'
             checkout = root/'checkout'
             checkout.mkdir()
+            frozen_tools = root/'frozen checkout/tool'
+            frozen_tools.mkdir(parents=True)
+            upstream_extraction = root/'upstream extraction'
+            upstream_extraction.mkdir()
             config = root/'vm-config.json'
             with (mock.patch.object(replacement.build, 'ROOT', checkout),
                   mock.patch.object(replacement.signing, 'verify_signatures') as verify):
-                for protected in (original, output, checkout):
+                for protected in (original, output, checkout, frozen_tools, upstream_extraction):
                     with self.subTest(protected=protected):
                         config.write_bytes(encoded({'runtime_dir': os.path.relpath(protected/'socket state')}))
                         with self.assertRaisesRegex(ValueError, 'overlaps'):
                             replacement.run(original, output, signed_info_sha256=digest(manifest), vm_config=config)
                         self.assertFalse((protected/'socket state').exists())
             verify.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_replacement_rejects_unbound_upstream_extraction_before_creating_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            original, output = root/'signed', root/'replacement output'
+            original.mkdir()
+            manifest, _ = self.write_candidate_manifest(original)
+            replacement.build.write(original/replacement.UPSTREAM_CHECK, {'extractRoot': str(root/'other')})
+            with self.assertRaisesRegex(ValueError, 'Archived upstream check receipt differs'):
+                replacement.run(original, output, signed_info_sha256=digest(manifest))
             self.assertFalse(output.exists())
 
     def test_cli_pass_with_later_integrity_failure_stays_failed(self):
@@ -250,11 +318,7 @@ class ReplacementEvidenceTest(unittest.TestCase):
                 output = root/'replacement output'
                 original.mkdir()
                 (original/'example').write_text('payload')
-                manifest = original/replacement.MANIFEST
-                manifest.write_bytes(encoded({'formatVersion': 1, 'identity': {},
-                                              'payloadInventory': product_inventory(original),
-                                              'signature': {'identity': {'sha1': 'a'*40, 'team': 'EXAMPLE123'}}}))
-                manifest.chmod(0o600)
+                manifest, signatures = self.write_candidate_manifest(original)
 
                 def prepare(_root, _original_inventory, copies, *_arguments):
                     libraries = {}
@@ -272,7 +336,7 @@ class ReplacementEvidenceTest(unittest.TestCase):
                         manifest.chmod(0o644)
                     return {'exitCode': 0}
 
-                with mock.patch.object(replacement.signing, 'verify_signatures'), \
+                with mock.patch.object(replacement.signing, 'verify_signatures', return_value=signatures), \
                         mock.patch.object(replacement, 'serial_archive', return_value=(None, {'sha256': '0'*64})), \
                         mock.patch.object(replacement, 'prepare_copies', side_effect=prepare), \
                         mock.patch.object(replacement, 'run_cli', side_effect=run_cli):
@@ -290,10 +354,7 @@ class ReplacementEvidenceTest(unittest.TestCase):
             output = parent/'replacement output'
             original.mkdir()
             (original/'example').write_text('payload')
-            inventory = product_inventory(original)
-            manifest = original/replacement.MANIFEST
-            manifest.write_bytes(encoded({'formatVersion': 1, 'identity': {}, 'payloadInventory': inventory,
-                                          'signature': {'identity': {'sha1': 'a'*40, 'team': 'EXAMPLE123'}}}))
+            manifest, _ = self.write_candidate_manifest(original)
             manifest.chmod(0o644)
             with self.assertRaisesRegex(ValueError, 'selected SHA-256'):
                 replacement.run(original, output, signed_info_sha256='0'*64)
@@ -302,9 +363,9 @@ class ReplacementEvidenceTest(unittest.TestCase):
             self.assertFalse(output.exists())
             manifest.chmod(0o600)
             with mock.patch.object(replacement.signing, 'verify_signatures',
-                                   side_effect=ValueError('Developer ID signature mismatch')), \
+                                   side_effect=ValueError('Local candidate signature mismatch')), \
                     mock.patch.object(replacement, 'prepare_copies') as prepare:
-                with self.assertRaisesRegex(ValueError, 'Developer ID signature mismatch'):
+                with self.assertRaisesRegex(ValueError, 'Local candidate signature mismatch'):
                     replacement.run(original, output, signed_info_sha256=digest(manifest))
             prepare.assert_not_called()
             receipt = json.loads((output/'evidence/replacement-receipt.json').read_bytes())

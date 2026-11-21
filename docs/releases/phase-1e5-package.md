@@ -152,6 +152,9 @@ requires passing frozen, integrity, CLI, VM App, and final integrity checks in
 the receipt.
 Keep those products and records intact. Sign a separate owned copy and bind
 the resulting bytes to new signatures, inventories and runtime evidence.
-The archive digest identifies this internal ad hoc-signed engineering
-candidate. Developer ID, notarization, the final DMG, installation, upgrades,
-Intel runtime, minimum macOS, and real hardware have separate release gates.
+The archive digest identifies this internal engineering snapshot. The
+[1E.6 signing guide](phase-1e6-signing.md) describes the explicit local ad hoc
+profile and independent acceptance of the complete candidate for 1E.7. The
+final DMG, engineering installation and upgrades, minimum macOS, and real
+hardware have their own candidate-specific gates. Intel runtime is outside
+this release's macOS arm64 scope.

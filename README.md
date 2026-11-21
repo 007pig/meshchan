@@ -9,9 +9,13 @@ The 1E.5 engineering package from frozen product commit `a29430b6` passed
 extraction and offline App and CLI runtime checks. The
 [1E.5 validation record](docs/validation/phase-1e5-package.md#selected-package-and-1e6-handoff)
 identifies the exact package selected for 1E.6 signing. Including later code
-changes requires a new frozen build and package validation. Signing,
-notarization, final DMG packaging, installation and publication remain pending
-under the [1E release contract](docs/releases/phase-1e-plan.md).
+changes requires a new frozen build and package validation. The
+[1E release contract](docs/releases/phase-1e-plan.md) selects locally signed
+App and CLI products and a read-only, unsigned, unnotarized engineering DMG.
+Build 8 passed [independent local signing acceptance](docs/validation/phase-1e6-signing.md#independent-acceptance-and-1e7-handoff)
+and [independent DMG acceptance](docs/validation/phase-1e7-dmg.md#independent-acceptance).
+Installation, Beta upgrade, hardware acceptance, and publication follow their
+own gates.
 
 For current build and packaging commands, start with the
 [Release tooling guide](docs/development.md#release-tooling).
@@ -26,8 +30,8 @@ remaining hardware-free UI run in the operator-selected macOS VM. Intermittent
 USB initialization, a failed scheduling-margin assertion and host synthetic-input
 observations retain their documented limits. 1D.11 local acceptance is closed;
 1E distribution work remains.
-The [1E release contract](docs/releases/phase-1e-plan.md) defines the `0.1.0`
-scope, release gates, open decisions, and subsequent engineering handoffs.
+The [1E release contract](docs/releases/phase-1e-plan.md) defines the
+engineering release scope, gates, open decisions, and handoffs.
 The earlier [fresh build 5 continuation](docs/validation/phase-1d11-build5-gui-delay.md)
 passed a GUI finite Check, but U03 failed USB initialization before receiving.
 B obtained actual local OK with the new finite delayed-confirmation policy,
@@ -49,7 +53,6 @@ The macOS arm64 host provides offline drafts, presets/settings, explicit USB
 checks, recorded PING/Responder, History and safe single-page export through
 one long-lived storage/device worker. See [the beta delivery](docs/releases/phase-1d-beta1.md)
 and [current validation](docs/validation/phase-1d11-hardware-beta.md).
-Developer ID, notarization, installers and public distribution belong to 1E.
 
 
 Meshchan is an open-source decentralized content application based on MeshCore. It includes a Flutter macOS app and a Dart command-line diagnostic tool built on a reusable, Flutter-independent communication core.

@@ -1,10 +1,37 @@
-# Phase 1E release contract — 0.1.0
+# Phase 1E engineering release contract
 
 ## Purpose and verified baseline
 
-1E will deliver a sustainably downloadable, installable, and upgradeable
-`0.1.0` through GitHub Releases. **1E.1 defines this contract; it does not
-complete 1E or release the product.** The next development step is 1E.2.
+1E delivers a repeatable, traceable, downloadable, installable, and upgradeable
+local engineering release for macOS arm64 through GitHub Releases. The release
+includes the complete Meshchan App and `meshctl`, applicable licenses,
+corresponding source, and rebuild and replacement materials. Completion requires
+DMG integrity and limited runtime checks, engineering installation and Beta
+upgrade, limited real USB/RF acceptance, publication, and actual download
+verification.
+
+## Current signing decision
+
+On November 21, 2026, the maintainer selected `local-adhoc` as the ongoing
+engineering release policy. Both products receive verified local ad hoc code
+signatures. The read-only DMG container is unsigned and the release is not
+Apple-notarized. The policy has no expiry. Developer ID Application signing,
+Apple Team credentials, signing keys, a secure timestamp service, notarization,
+and stapling are deferred until the maintainer explicitly requests a new
+official signing route. Their absence does not block any current release step.
+The engineering workflow does not discover official identities or switch to
+official signing when a certificate appears.
+
+The previous contract's Developer ID and notarization requirements are
+superseded for 1E. Earlier Developer ID blockers, preparation receipts, and
+local diagnostics retain their original meanings. See the
+[1E.6 signing validation record](../validation/phase-1e6-signing.md) for the
+historical and current candidate evidence. Local code signatures and SHA-256
+checks establish code integrity and byte correspondence for this workflow.
+They do not authenticate an Apple-recognized publisher or promise automatic
+Gatekeeper approval.
+
+## Historical baseline
 
 The November 17, 2026 documentation review used clean `master` at
 `0f89fe81823e58d524ad5a35a1f18a454b6fa4bc`, matching the planning reference.
@@ -16,7 +43,7 @@ that the historical candidate was built from this exact commit.
 | Repository records | [1D local beta](phase-1d-beta1.md) and the [1D.11 completion](../validation/phase-1d11-rf-matrix-completion.md) close 1A–1D's local handoff with documented limits: complete build 5 App and matching CLI; GUI exact PING/PONG in both directions, real unplug/error/explicit Check recovery, expected timeout, receiving Cancel, active native Quit, offline Save/reopen, History, and safe export. Their original source cuts and artifact inventories remain authoritative. |
 | Read-only source checks in 1E.1 | The [root workspace](../../pubspec.yaml) has four members and one [lockfile](../../pubspec.lock). Link/core/CLI are `0.1.0-beta.1`; App is `0.1.0-beta.1+5`. The existing [version checker](../../tool/check_product_version.py) passed, including internal constraints, CLI constant, and App fallbacks. Lock SHA-256: `e25ed2f37c339206d8587e42e00a0b901bb37874554813840e2025b03bbf847c`. |
 | Reusable engineering foundation | [CI configuration](../../.github/workflows/ci.yml) defines Ubuntu and macOS jobs: locked resolution, version checks, analysis, Flutter/Dart/Python tests, process ownership/persistence checks, native CLI builds, Debug/Release App builds, XCTest, and complete-App relocation. [1D.11](../validation/phase-1d11-rf-matrix-completion.md) records local native/software checks and matching CLI smoke; [1D.10](../validation/phase-1d10-regression-compatibility.md#historical-schema-1-compatibility) records historical-data compatibility. These results retain their original inputs; no suites or builds were rerun here. |
-| Distribution still open | Complete local App/CLI candidates exist in the historical delivery record. Project licensing, final App/CLI materials, repeatable release packaging, Developer ID, notarization, installation, clean-environment acceptance, and public distribution remain 1E work. Local ad hoc signature checks are not public-release acceptance. |
+| Distribution still open | Complete local App/CLI candidates exist in the historical delivery record. The original 1E.1 review left licensing, complete App/CLI materials, packaging, signing, installation, clean-environment acceptance, and public distribution open. Distribution and installation still require their own candidate-specific evidence. |
 
 Workflow configuration is not evidence that remote CI passed at the reviewed
 HEAD. This review did not query remote CI or recheck historical binaries.
@@ -56,14 +83,14 @@ now records GPL-3.0-only, Copyright (c) 2026 Meshchan Contributors, with
 The [native SDK source rules](phase-1e3-sdk-sources.md) provide original
 engine/Dart/LLVM source and build inputs; fresh native source closure verification
 remains required for the complete material gate. 1E.4/1E.5 must rebind new products; 1E.6 repeats
-modified-library loading under formal signing conditions.
+modified-library loading from the selected local candidate.
 
 The subsequent candidate-evidence repair selects App build `7` with the same
 `0.1.0-rc.1` product version. Fresh automatic notices include the approved root
 GPL text, so the changed App content does not reuse build `6`. The old 1E.2
 products/records remain immutable. Current complete source-input/build/output
 and replacement receipts are linked from the 1E.3 validation record; they do not
-replace the separate 1E.4 build-entry or 1E.6 formal-signing acceptance.
+replace the separate 1E.4 build-entry or 1E.6 local signing and runtime acceptance.
 
 The 1E.4 Release recipe selects App build `8` for the embedded Flutter
 engine's runpath change. See the [build guide](phase-1e4-build.md) and
@@ -76,13 +103,13 @@ does not amend the community GPL or establish past contributors' acceptance.
 
 ## Release scope and platform support
 
-| Item | First release commitment |
+| Item | Engineering release commitment |
 | --- | --- |
 | Products | Complete `Meshchan.app` and same-product-version complete `meshctl` bundle, including native assets. |
 | Platform | macOS arm64. |
 | Connection | An explicitly selected USB Companion; no automatic device selection or connection. |
 | Existing capabilities | Offline drafts, profiles/presets, settings, finite device checks, diagnostics, History, and safe summary export, within the [host scope](../architecture/flutter-host.md#product-scope-and-decision-status). |
-| Channel and download | GitHub Releases; one DMG containing the App, full CLI directory, and installation materials. |
+| Channel and download | GitHub Releases with the actual RC or release version labeled as an engineering build. One read-only, unsigned DMG carries the locally signed App, full CLI directory, and license and source materials. |
 | Data continuity | Preserve current Beta drafts, profiles, settings, and diagnostic history. |
 
 Keep these platform facts separate:
@@ -91,7 +118,7 @@ Keep these platform facts separate:
 | --- | --- |
 | Engineering deployment target | macOS `12.0` in the [Xcode project](../../apps/meshchan_app/macos/Runner.xcodeproj/project.pbxproj); this is a build setting. |
 | Recorded runtime environments | Build 5 preparation records macOS 27.2 arm64; the completion records the inventory-matched VM on macOS 27.2.1 (26B131). [1D.10](../validation/phase-1d10-regression-compatibility.md#actual-toolchain) also records macOS 27.2.1 arm64. These are historical tested environments, not a supported-version range. |
-| Final minimum supported macOS | **Pending 1E.9 limited clean-environment validation and maintainer approval.** Record exact tested versions and choose a defensible minimum before publication; do not claim macOS 12 and later are all accepted. |
+| Final minimum supported macOS | **Pending 1E.9 engineering installation and limited clean-environment validation.** Record exact tested versions and choose a defensible minimum before publication; do not claim macOS 12 and later are all accepted. |
 
 A universal executable's Intel slice does not establish Intel runtime support.
 Android/iOS dependency probes do not establish mobile product support. The
@@ -101,13 +128,13 @@ publication/synchronization, and automatic retry/resend are outside this release
 
 ## Product identity, versions, and compatibility
 
-These are rules for subsequent work; 1E.1 changes no versions or configuration.
+The selected products are App `0.1.0-rc.1+8` and CLI `0.1.0-rc.1`, with Apple short version `0.1.0` and build string `8`. A subsequent product version change requires its own candidate and acceptance.
 
 | Identity | Required correspondence |
 | --- | --- |
-| Full product version | Final `0.1.0`; candidates may use `0.1.0-rc.1`, etc. The four member manifests, internal constraints, CLI constant, and App fallback/build definitions must agree on the product version. The root workspace has no product version. |
-| App build | A positive, increasing integer for each new distributable App build, never reused for changed content. Current build is `5`; the next must be at least `6`, rechecked against actual state in 1E.2. App runtime/new App diagnostic records identify `<product-version>+<build>`. |
-| Apple numeric versions | Final `CFBundleShortVersionString` must be `0.1.0`; `CFBundleVersion` must equal the App build. 1E.2 must define and check the numeric mapping for prereleases without losing the full product version or confusing build ordering. |
+| Full product version | Publish the actual embedded version, including the RC suffix if the selected product is an RC. The four member manifests, internal constraints, CLI constant, and App fallback/build definitions must agree on the product version. The root workspace has no product version. |
+| App build | A positive, increasing integer for each new distributable App build, never reused for changed content. The selected RC is build `8`, following Beta build `5` and RC builds `6` and `7`. App runtime/new App diagnostic records identify `<product-version>+<build>`. |
+| Apple numeric versions | `CFBundleShortVersionString` uses the product version's numeric core. `CFBundleVersion` equals the App build. Preserve the full product version in App runtime identity and diagnostics. |
 | CLI version | `meshctl --version` reports the full product version, including an RC suffix when applicable. CLI records may omit App build metadata; `build-info.json` identifies the matching App/CLI pair. |
 | Source and Git tag | Select a full, frozen release commit. Final tag `v0.1.0` must point to that commit; any candidate tag uses its full version, such as `v0.1.0-rc.1`. Build metadata and acceptance identify that same commit and the exact artifacts, not just a branch name. |
 | Build metadata | Record full product version, App build, Apple numeric versions, complete source commit, lock hash, actual toolchain/architecture, build inputs and steps, and the complete product inventory. |
@@ -136,26 +163,27 @@ prove Beta-to-release business-data continuity with owned fixtures; the older
 dev.2 compatibility record is supporting evidence, not that upgrade's result.
 
 Test, upload, and user download must identify the same final artifact bytes.
-Compute download checksums after signing, notarization/stapling as applicable,
-and final packaging. If RC-to-final changes embedded versions or any other
+Compute download checksums over the completed engineering DMG and final
+release attachments. If RC-to-final changes embedded versions or any other
 product content, regenerate and validate the final candidate; renaming an RC
 file or reusing its hash is insufficient. Publish accepted files without a
-publication-time rebuild. “Reproducible” here means inputs, dependencies, steps,
-and results can be rebuilt and traced; timestamped signatures are not promised
-to be byte-identical.
+publication-time rebuild, re-sign, or repackaging. Reproducibility here means
+that recorded inputs, dependencies, and tools support repeating and tracing the
+build and packaging steps. Retention and publication use the exact accepted
+artifact bytes.
 
 ## Planned deliverables
 
-The following names describe future release assets, not existing files:
+The asset names and evidence below define the engineering release handoff.
 
 | Deliverable | Responsibility |
 | --- | --- |
-| `Meshchan-0.1.0-macos-arm64.dmg` | Complete App, full CLI directory (`bin/meshctl` plus native libraries), and installation materials. Build records verify actual architecture of executables/libraries; filename alone is insufficient. |
+| `Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg` for the selected RC | Complete local candidate directory with the App, full CLI (`bin/meshctl` plus native libraries), licenses, corresponding source, and rebuild and replacement instructions. The outer volume includes an engineering README, DMG tool source, and a payload inventory. Build records verify actual architecture of executables/libraries; filename alone is insufficient. |
 | `SHA256SUMS` | SHA-256 of the final DMG and other immutable download attachments, excluding the checksum file itself. |
 | `build-info.json` | Full source commit, product version, App build and Apple versions, root lockfile identity/hash, actual Flutter/Dart/Python/Xcode/compiler/SDK versions, architectures, build recipe, and product inventory reference. |
 | License and source materials | Maintainer-selected project license, third-party notices for actual App and CLI contents, and applicable native/runtime source, build, and relinking materials with provenance. Separate attachments are permitted. |
 | User instructions | Installation, CLI layout/use, supported macOS/USB scope, Beta upgrade and data directory/ownership behavior, known limits, and support/reporting instructions. |
-| Acceptance summary | Gate results, exact test environments and limitations, bound to the frozen source commit and final DMG/asset hashes. Evidence can be retained separately with stable references; raw private evidence is not a release attachment. |
+| Acceptance summary | Gate results, exact test environments and limitations, bound to frozen compile source, original packaging inputs, current signing tools, DMG tools, accepted local candidate, and final DMG/asset hashes. Evidence can be retained separately with stable references; raw private evidence is not a release attachment. |
 
 No private databases, device credentials, private peer configuration, or raw test
 data belong in release assets. Existing
@@ -166,27 +194,31 @@ complete App/CLI release packager or proof that materials are complete.
 
 ## Release gates and required evidence
 
-All final-candidate gates below are **pending**. Existing evidence supplies a
-baseline only; the later steps must attach candidate-specific results and close
-each gate before marking all of 1E complete.
+Attach candidate-specific evidence for each gate. The original 1E.1–1E.5
+acceptances remain part of the chain. The
+[1E.6 signing](../validation/phase-1e6-signing.md) and
+[1E.7 DMG](../validation/phase-1e7-dmg.md) records identify the actual
+local candidate and image results.
 
 | Gate | Existing foundation | Required final-release evidence | Responsible steps |
 | --- | --- | --- | --- |
 | Source and version consistency | Four-member checker, locked workspace, configured CI and local Beta records. | Frozen commit, dependency/lock identities, actual tools and architecture, version/Apple metadata/diagnostic agreement, build-info, and successful applicable CI tied to the candidate source. | 1E.2, 1E.4, 1E.8 |
 | Artifact completeness | Complete Beta inventories, whole-App and CLI relocation, native-asset/loader checks. | Full App/CLI inventories, native asset provenance, internal symlink targets, permissions and load paths; no checkout/SDK/pub-cache dependency; integrity after signing and final DMG extraction. | 1E.4–1E.7, 1E.9 |
 | License and provenance materials | Collected package/native notices and source fragments; recorded completeness gaps. | Project license decision and distribution materials mapped to actual App/CLI dependencies, Flutter/Dart runtime, native libraries and applicable corresponding source/build/relinking requirements. Inclusion alone is not completeness. | 1E.3, 1E.5 |
-| Formal signing and notarization | Local ad hoc signing checks only. | Developer ID identity/team, signatures on applicable App/CLI nested code, applicable Hardened Runtime, actual final entitlements, post-sign runtime checks, accepted notarization and applicable stapled-ticket verification for final deliverables. | 1E.6, 1E.7 |
-| Download and clean installation | Relocated local products and hardware-free VM UI records. | Real downloaded candidate, macOS quarantine/Gatekeeper checks with normal security settings, ordinary installation, App and CLI offline Save/reopen/settings/History/export and independence from development tools; exact OS/architecture and minimum support decision. | 1E.9; public recheck 1E.12 |
+| Local code signing and DMG integrity | 1E.5 engineering package and 1E.6 local diagnostics. | Explicit `local-adhoc` profile, verified signatures for all actual code and architectures, exact Hardened Runtime and entitlement policy, CLI and VM App runtime, user library replacement, and independent verification of the read-only DMG and its fully extracted, relocated payload after unmount. | 1E.6, 1E.7 |
+| Download and clean installation | Relocated local products and hardware-free VM UI records. | Real engineering download, actual quarantine and system prompts, a verified and documented user approval path under normal system protections, App and CLI offline behavior and independence from development tools, and a support conclusion tied to exact OS and architecture. Automatic Gatekeeper approval is outside the gate. | 1E.9; public recheck 1E.12 |
 | Upgrade and data continuity | Historical schema-1 producer/App/CLI interoperability and exclusive ownership. | Closed Beta fixture upgraded using the final candidate; drafts/profiles/settings/history and original run versions preserved, default-directory continuity, GUI/CLI contention and orderly handoff, normal Quit/reopen. | 1E.2, 1E.9 |
 | Limited real USB acceptance | 1D.11 finite exact round trips, fault/recovery, timeout, Cancel/Quit, with unresolved initialization limits. | Final packaged App/CLI identity; explicit selected-device Check, real exact round trip, active-operation Cancel or normal Quit and independent resource/process-release evidence. Retain failures and known limits; no reliability claim. | 1E.10 |
 | Publication and download verification | Channel and asset policy defined here; no final release evidence. | Tag/source correspondence, user instructions and acceptance summary available; uploaded files equal accepted files; actual public downloads match final checksums/build-info and required materials. | 1E.8, 1E.11, 1E.12 |
 
-Signing, notarization, and App Sandbox are separate concerns. Current
+1E.6 verifies the actual local signature and runtime entitlements on the
+complete App and CLI. The build-time
 [Release entitlements](../../apps/meshchan_app/macos/Runner/Release.entitlements)
-request none; local configuration does not establish a usable Developer ID
-identity. 1E.6 decides and verifies actual signing/runtime entitlements while
-preserving the adopted data-directory contract; enabling Sandbox is not implied
-by notarization.
+and the local post-build signature policy have distinct roles. Keep the
+established Sandbox setting, data directory, and exclusive ownership contract.
+Installation validation uses normal system protections and a documented user
+approval path. Disabling Gatekeeper or SIP, changing global protection settings,
+or removing quarantine in bulk is outside that validation.
 
 Follow [AGENTS.md](../../AGENTS.md): hardware-free GUI work uses the existing
 macOS VM and applicable VM instructions; real USB work uses the host Mac.
@@ -197,33 +229,32 @@ independent work, without switching hardware-free tests to host automation.
 
 ## Dependencies and open decisions
 
-These unknowns do not block 1E.1. Record decisions/evidence at the responsible
-step; no keychain scan, credential access, Apple login, or secret collection is
-needed to complete this contract.
+Record actual inputs and evidence at the responsible step. The engineering
+route uses locally available coding and image tools and an owned VM workspace.
 
 | Item | Current evidence/status | Owner step | Blocks |
 | --- | --- | --- | --- |
 | Project license | Closed in 1E.3: GPL-3.0-only; Copyright (c) 2026 Meshchan Contributors. Root LICENSE/COPYRIGHT and the approved decision record preserve 007pig's authority/no-exceptions confirmation. | Maintainer / 1E.3 | License decision closed; GPL corresponding-source and later release gates remain. |
-| App and CLI third-party materials | Beta preserves notices for its graph; [earlier material gaps](phase-1c-dev3.md#materials-and-distribution-limits) and 1D.11 retain native source/build/relinking and AOT runtime correspondence work. Final Flutter/App and CLI coverage is unverified. | 1E.3, integrated in 1E.5 | License gate and final distributable contents. |
-| Developer ID, Apple team, notarization credentials | No repository evidence establishes usable certificates/private keys, team access, or notarization credentials. Ad hoc configuration is insufficient; maintainer availability confirmation is pending. | Maintainer / 1E.6–1E.7 | Formal signing, notarization and final DMG. |
+| App and CLI third-party materials | Beta preserves notices for its graph; [earlier material gaps](phase-1c-dev3.md#materials-and-distribution-limits) and 1D.11 retain native source/build/relinking and AOT runtime correspondence work. Use the selected package receipts to bind actual Flutter/App and CLI coverage to the retained files. | 1E.3, integrated in 1E.5 | License gate and final distributable contents. |
+| Developer ID, Apple Team, secure timestamps, notarization, and stapling | Inapplicable to the current profile. Deferred until explicitly requested by the maintainer. | Future official route | None for the engineering release. |
 | Minimum macOS and clean test coverage | Deployment target 12.0; recorded 27.2/27.2.1 runtime evidence does not establish an older supported minimum. Test environment/version selection and limited acceptance are pending. | Maintainer / 1E.9, documented in 1E.11 | Supported-version promise and installation gate. |
-| Final build and signing environments | Existing local toolchain and CI provide a foundation. No final release executor, actual tool versions, signing environment, or artifact-transfer/retention arrangement has been selected and verified. | 1E.4, 1E.6, 1E.8 | Traceable builds, signing and preservation of the accepted candidate. |
+| Build, local signing, and retention environments | Consume the frozen 1E.4 build and accepted 1E.5 package. Record actual signing and DMG tools, the checked VM, source-specific CI, and artifact transfer and retention. | 1E.4–1E.8 | Traceable builds, local acceptance, and preservation of the accepted candidate. |
 
 ## Remaining steps and handoff
 
+The [engineering handoff](#1e6-and-1e7-engineering-handoff) identifies the
+accepted 1E.6 and 1E.7 outputs. The next development step is 1E.8.
+
 | Step | Goal | Main dependencies and expected output |
 | --- | --- | --- |
-| 1E.2 | Unify version, App identity, and compatibility checks. | This contract and actual build state; checked full/Apple version mapping, increasing build policy, stable Bundle ID/directory, generated metadata and new-record expectations. |
-| 1E.3 | Complete license and third-party distribution materials. | Maintainer license decision and actual App/CLI closure; notices and applicable source/build/relinking materials with provenance and remaining gaps closed. |
-| 1E.4 | Establish a reproducible Release build entry. | 1E.2 and selected executor/toolchain; locked App/CLI build recipe, explicit source inputs, build-info and inventories. |
-| 1E.5 | Package complete products and check integrity. | 1E.3–1E.4; full App/CLI staging, materials, symlink/mode/native-loader checks and extraction verification. |
-| 1E.6 | [Apply Developer ID signing and verify runtime](phase-1e6-signing.md). | Staged products, identity/team and signing environment; signed nested products, actual entitlements, Hardened Runtime, runtime and user library replacement evidence. |
-| 1E.7 | Notarize and produce the final DMG. | 1E.6, notarization access and complete contents; accepted notarization/tickets, final DMG, post-processing inventories and hashes. |
-| 1E.8 | Provide CI, release entry, and candidate retention. | 1E.4–1E.7 as available; source-specific CI results, controlled release entry and immutable candidate/evidence retention for later publication. |
-| 1E.9 | Accept clean installation and Beta upgrade. | Retained final candidate, owned Beta fixtures and suitable clean macOS environments; real-download/install/offline/upgrade evidence and minimum OS decision. |
-| 1E.10 | Run limited USB acceptance on the final package. | Final candidate, explicit hardware authorization and host test setup; finite Check/exact round trip/Cancel-or-Quit release evidence. |
-| 1E.11 | Complete user-facing release documentation. | Scope, material and install/upgrade decisions; prepared installation, upgrade, support and known-limit instructions, finalized before source freeze. |
-| 1E.12 | Publish and verify actual downloads. | All prior gates closed, final source/tag choice and accepted immutable assets; GitHub Release plus public-download/hash/material verification. |
+| 1E.1–1E.5 | Retain the completed release, version, materials, build, and engineering package foundations. | Preserve the original acceptance records and use this contract for the active signing and release policy. |
+| 1E.6 | [Close the explicit local signing profile](phase-1e6-signing.md). | Accepted upstream package, complete locally signed App/CLI and materials, exact signature and runtime checks, user library replacement, and a new pinned candidate manifest and independent receipt. Complete as the prerequisite to 1E.7. |
+| 1E.7 | [Build and independently accept the complete engineering DMG](phase-1e7-dmg.md). | Accepted local candidate, full image payload, read-only mount and complete extraction, owned detach, limited CLI and VM App runtime from the extracted copy, and final integrity and SHA-256. |
+| 1E.8 | Provide CI, a controlled engineering entry point, and candidate and evidence retention. | Source-specific CI, repeatable entry point, and immutable retention of the accepted image, App/CLI, materials, checksums, and evidence. |
+| 1E.9 | Accept actual engineering downloads, installation, and Beta upgrade. | Actual quarantine and prompts, tested user approval and offline use under normal security settings, preserved data and exclusive ownership, and support conclusions for tested environments. |
+| 1E.10 | Run limited real USB/RF acceptance on the final package. | Explicit device identity and selected-device Check, a finite exact round trip, Cancel or normal Quit, and verified resource and process release. Preserve known limits. |
+| 1E.11 | Finalize engineering release documentation and materials. | Local signing and notarization status, trusted source and checksum, tested installation and upgrade, full CLI, data directory and ownership, library replacement, and known limits. |
+| 1E.12 | Publish engineering assets and verify actual downloads. | Upload the accepted bytes and matching source and materials to GitHub Releases under the actual selected version and corresponding source tag. Compare actual downloads to accepted SHA-256 values. |
 
 License materials and user documentation may advance in parallel. Prepare
 product changes, embedded materials, and user documentation before freezing the
@@ -240,12 +271,13 @@ The documentation review used `/opt/homebrew/bin/python3`, Python 3.15.2
 existing version checker and targeted document checks. No build, remote CI,
 GUI, hardware, signing, notarization, or release action is part of that result.
 
-**All of 1E is complete** only when every release gate has candidate-specific
-passing evidence, external decisions are resolved, user-facing support/limits
-are accurate, and the public downloads match the accepted final assets.
-1E.2 can start from build 5, the checked member/constant/fallback versions, the
-observed Apple-version mapping risk, and the preserved identity/data contracts
-above; it must recheck actual source state before making its changes.
+**All of 1E is complete** when the frozen source, actual tools, complete
+products and materials, local signatures, and final image correspond. The
+same accepted bytes must pass DMG extraction and limited runtime, engineering
+installation and Beta upgrade, and limited real USB/RF acceptance. Completion
+also requires source-specific CI, immutable retention of the accepted image,
+products, materials, and evidence, accurate user documentation, and successful
+verification of the actual GitHub Releases download.
 
 ## 1E.4 build entry
 
@@ -264,5 +296,13 @@ CLI, and materials through staging and actual extraction. The
 staging paths, immutable package evidence, and runtime acceptance for 1E.6.
 The selected staging root is
 `build/phase-1e5/run-002/stage/Meshchan-0.1.0-rc.1-macos-arm64/`.
-Use an owned copy for Developer ID signing and bind the resulting bytes in a
-new receipt.
+Use an owned copy for local ad hoc signing and bind the resulting bytes and
+acceptance evidence in new receipts.
+
+## 1E.6 and 1E.7 engineering handoff
+
+The selected build 8 candidate passed [independent local signing acceptance](../validation/phase-1e6-signing.md#independent-acceptance-and-1e7-handoff).
+The complete [engineering DMG passed independent acceptance](../validation/phase-1e7-dmg.md#independent-acceptance)
+after read-only mount, extraction, detach, and limited runtime from the
+extracted copy. 1E.8 consumes the exact accepted image, checksum, and
+receipts identified in the [retention handoff](../validation/phase-1e7-dmg.md#tests-and-1e8-handoff).

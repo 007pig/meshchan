@@ -735,6 +735,32 @@ class AppVMTests(unittest.TestCase):
                     host.Product.assert_not_called()
                     self.assertEqual(product_inventory(candidate), before)
 
+    def test_vm_preflight_keeps_runtime_state_out_of_evidence_and_user_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            app = root/'Meshchan.app'
+            app.mkdir()
+            (app/'payload').write_bytes(b'Fixture App')
+            manifest = root/'signed-product-info.json'
+            arguments = self.vm_manifest_arguments(manifest, prefixed(app.name, product_inventory(app)), signed=True)
+            config = root/'vm.json'
+            home = root/'private home'
+            user_data = home/app_vm.DEFAULT_DATA_SUBDIR
+            output = root/'evidence'
+            with patch.object(Path, 'home', return_value=home), patch.object(app_vm, 'require_ready_connection') as ssh:
+                for evidence, runtime, error in (
+                    (output, output/'private VM socket', 'VM runtime_dir overlaps a selected release input'),
+                    (output, user_data/'private VM socket', 'VM runtime_dir overlaps a selected release input'),
+                    (user_data/'evidence', root/'private VM socket', 'VM evidence overlaps a selected runtime input'),
+                ):
+                    with self.subTest(evidence=evidence, runtime=runtime):
+                        config.write_bytes(encoded({'runtime_dir': str(runtime)}))
+                        args = SimpleNamespace(app=app, evidence=evidence, config=config, **arguments)
+                        with self.assertRaisesRegex(ValueError, error):
+                            app_vm.run(args)
+                        self.assertFalse(evidence.exists())
+                ssh.assert_not_called()
+
     def test_vm_protects_original_and_relocated_cli_from_renamed_or_detached_app_evidence(self):
         for detached in (False, True):
             with self.subTest(detached=detached), tempfile.TemporaryDirectory() as directory:
@@ -771,6 +797,7 @@ class AppVMTests(unittest.TestCase):
                 manifest, prefixed('Meshchan.app', before) | {'meshctl': package.DIR}, signed=True)
             evidence = root/'guest evidence'
             args = SimpleNamespace(app=app, evidence=evidence, config=root/'vm.json', **arguments)
+            args.config.write_bytes(encoded({'runtime_dir': str(root/'private VM state')}))
             with patch.object(app_vm.subprocess, 'run', side_effect=OSError('test compiler boundary')):
                 with self.assertRaisesRegex(ValueError, 'test compiler boundary'):
                     app_vm.run(args)
@@ -819,7 +846,12 @@ class AppVMTests(unittest.TestCase):
             def local(command, **kwargs):
                 return subprocess.run(['/bin/bash', '-c', command], check=True, **kwargs)
 
-            app_vm.guest_inventory(SimpleNamespace(remote=local), str(guest), product_inventory(app))
+            scratch = guest/'owned scratch'
+            scratch.mkdir()
+            with patch.object(app_vm.tempfile, 'TemporaryFile', wraps=tempfile.TemporaryFile) as spool:
+                app_vm.guest_inventory(SimpleNamespace(remote=local), str(guest), product_inventory(app),
+                                       scratch=scratch)
+            spool.assert_called_once_with(dir=scratch)
 
     def test_guest_launch_passes_default_root_and_separate_session_argument(self):
         shared = '/Users/guest/utm-ui-isolation'

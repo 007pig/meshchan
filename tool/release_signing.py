@@ -1,4 +1,4 @@
-"""Apply and verify the Phase 1E.6 Developer ID code signing policy."""
+"""Apply and verify the explicit macOS product signing policy."""
 from dataclasses import dataclass
 import hashlib
 import json
@@ -17,7 +17,10 @@ from release_package_archive import compare, metadata_observations, prefixed
 
 DEFAULT_POLICY = Path(__file__).with_name('release_signing_policy.json')
 CERTIFICATE_TYPE = 'Developer ID Application'
+LOCAL_PROFILE = 'local-adhoc'
+DEVELOPER_PROFILE = 'developer-id'
 CLI_UNSIGNED_MEMORY = 'com.apple.security.cs.allow-unsigned-executable-memory'
+DISABLE_LIBRARY_VALIDATION = 'com.apple.security.cs.disable-library-validation'
 LEAF_OID = '1.2.840.113635.100.6.1.13'
 ISSUER_OID = '1.2.840.113635.100.6.2.6'
 THIN_64 = b'\xcf\xfa\xed\xfe'
@@ -44,10 +47,14 @@ class CodeItem:
     identifier: str
     runtime: bool
     version: str | None = None
+    signing_profile: str = DEVELOPER_PROFILE
 
     @property
     def entitlements(self):
-        return {CLI_UNSIGNED_MEMORY: True} if self.role == 'cli' else {}
+        values = {CLI_UNSIGNED_MEMORY: True} if self.role == 'cli' else {}
+        if self.signing_profile == LOCAL_PROFILE and self.runtime:
+            values[DISABLE_LIBRARY_VALIDATION] = True
+        return values
 
     @property
     def seal(self):
@@ -63,7 +70,28 @@ class CodeItem:
     def record(self):
         return {'path': self.path, 'binary': self.binary, 'role': self.role,
                 'identifier': self.identifier, 'bundleVersion': self.version,
-                'runtime': self.runtime, 'entitlements': self.entitlements, 'secureTimestamp': True}
+                'signingProfile': self.signing_profile, 'runtime': self.runtime,
+                'entitlements': self.entitlements, 'secureTimestamp': self.signing_profile == DEVELOPER_PROFILE}
+
+
+def local_identity():
+    return {'adhoc': True, 'certificateType': None, 'authority': None, 'team': None, 'secureTimestamp': False}
+
+
+def require_local_identity(identity):
+    expected = local_identity()
+    if (type(identity) is not dict or identity != expected
+            or any(type(identity[key]) is not type(value) for key, value in expected.items())):
+        raise ValueError('Expected an explicit ad hoc identity without a certificate, Team, or secure timestamp')
+
+
+def policy_profile(policy):
+    profiles = {item.signing_profile for item in policy}
+    if profiles == {LOCAL_PROFILE}:
+        return LOCAL_PROFILE
+    if profiles == {DEVELOPER_PROFILE}:
+        return DEVELOPER_PROFILE
+    raise ValueError('Missing, unknown, or conflicting code signing profiles')
 
 
 def exact_entitlements(actual, expected):
@@ -85,19 +113,31 @@ def policy_object(pairs):
     value = {}
     for key, item in pairs:
         if key in value:
-            raise ValueError('Duplicate signing policy key: '+key)
+            raise ValueError('Duplicate JSON key: '+key)
         value[key] = item
     return value
 
 
 def load_policy(path):
-    data = json.loads(Path(path).read_bytes(), object_pairs_hook=policy_object)
-    if (type(data) is not dict
-            or set(data) != {'formatVersion', 'certificateType', 'secureTimestamp', 'codeItems'}
-            or type(data['formatVersion']) is not int or data['formatVersion'] != 1
-            or data['certificateType'] != CERTIFICATE_TYPE or data['secureTimestamp'] is not True
-            or not isinstance(data['codeItems'], list)):
-        raise ValueError('Unsupported signing policy format or certificate policy')
+    return parse_policy(Path(path).read_bytes())
+
+
+def parse_policy(raw):
+    data = json.loads(raw, object_pairs_hook=policy_object)
+    if type(data) is not dict or type(data.get('formatVersion')) is not int:
+        raise ValueError('Unsupported signing policy format')
+    keys = {'formatVersion', 'certificateType', 'secureTimestamp', 'codeItems'}
+    if (data['formatVersion'] == 1 and set(data) == keys
+            and data['certificateType'] == CERTIFICATE_TYPE and data['secureTimestamp'] is True):
+        profile = DEVELOPER_PROFILE
+    elif (data['formatVersion'] == 2 and set(data) == keys | {'signingProfile'}
+          and data['signingProfile'] == LOCAL_PROFILE and data['certificateType'] is None
+          and data['secureTimestamp'] is False):
+        profile = LOCAL_PROFILE
+    else:
+        raise ValueError('Unsupported signing policy format, profile, or certificate policy')
+    if type(data['codeItems']) is not list:
+        raise ValueError('Signing policy code items must be a list')
 
     items = []
     for entry in data['codeItems']:
@@ -114,11 +154,11 @@ def load_policy(path):
         identifier = entry['identifier']
         version = entry.get('version')
         runtime = role in ('app', 'cli')
-        item = CodeItem(target.as_posix(), binary.as_posix(), role, identifier, runtime, version)
+        item = CodeItem(target.as_posix(), binary.as_posix(), role, identifier, runtime, version, profile)
         if (not isinstance(identifier, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]*', identifier)
                 or entry['runtime'] is not runtime
                 or not exact_entitlements(entry['entitlements'], item.entitlements)):
-            raise ValueError('Version 1 requires role-specific runtime and exact entitlements: '+str(target))
+            raise ValueError('Signing profile requires role-specific runtime and exact entitlements: '+str(target))
         if role == 'app':
             valid = target == PurePosixPath('Meshchan.app') and binary == target/'Contents/MacOS/Meshchan'
         elif role == 'framework':
@@ -438,7 +478,12 @@ def select_identity(selector, team, command):
 
 
 def sign_products(root, policy, identity, command, *, scratch=None):
-    fingerprint, _ = identity_values(identity['sha1'], identity['team'])
+    if policy_profile(policy) == LOCAL_PROFILE:
+        require_local_identity(identity)
+        selector, timestamp = '-', '--timestamp=none'
+    else:
+        selector, _ = identity_values(identity['sha1'], identity['team'])
+        timestamp = '--timestamp'
     inventory = product_inventory_pair(root)
     inspect_code(root, policy, inventory)
     for path, entry in inventory.items():
@@ -446,7 +491,7 @@ def sign_products(root, policy, identity, command, *, scratch=None):
             raise ValueError('Refusing to sign a product with shared hard links: '+path)
     with tempfile.TemporaryDirectory(prefix='signing-entitlements-', dir=scratch) as directory:
         for index, item in enumerate(policy, 1):
-            argv = ['/usr/bin/codesign', '--force', '--sign', fingerprint, '--timestamp',
+            argv = ['/usr/bin/codesign', '--force', '--sign', selector, timestamp,
                     '--identifier', item.identifier, *item.bundle_args()]
             if item.runtime:
                 argv.extend(['--options', 'runtime'])
@@ -472,6 +517,8 @@ def display_signature(root, item, arch, command, name):
     if len(matches) != 1:
         raise ValueError('Expected one selected embedded CodeDirectory: '+item.path)
     flags = int(matches[0], 16)
+    if item.signing_profile == LOCAL_PROFILE and required_value(properties, 'Signature') != 'adhoc':
+        raise ValueError('Signature display did not report an ad hoc signature: '+item.path)
     raw = command(name+'-entitlements', [*base, '--entitlements', '-', '--xml', root/item.path])
     entitlements = plistlib.loads(raw.encode()) if raw.strip() else {}
     if type(entitlements) is not dict:
@@ -479,9 +526,15 @@ def display_signature(root, item, arch, command, name):
     cdhash = required_value(properties, 'CDHash')
     if not re.fullmatch(r'[0-9a-f]{40}', cdhash):
         raise ValueError('Malformed CodeDirectory hash: '+item.path)
-    timestamps = re.findall(r'^Timestamp=(.+)$', properties, re.MULTILINE)
-    return {'identifier': required_value(properties, 'Identifier'), 'team': required_value(properties, 'TeamIdentifier'),
-            'authorityChain': re.findall(r'^Authority=(.+)$', properties, re.MULTILINE),
+    timestamps = re.findall(r'^Timestamp=(.*)$', properties, re.MULTILINE)
+    if len(timestamps) > 1 or (timestamps and not timestamps[0].strip()):
+        raise ValueError('Malformed secure timestamp: '+item.path)
+    team = required_value(properties, 'TeamIdentifier')
+    authorities = re.findall(r'^Authority=(.*)$', properties, re.MULTILINE)
+    if any(not authority.strip() for authority in authorities):
+        raise ValueError('Malformed signing authority: '+item.path)
+    return {'identifier': required_value(properties, 'Identifier'), 'team': None if team == 'not set' else team,
+            'authorityChain': authorities,
             'timestamp': timestamps[0] if len(timestamps) == 1 else None,
             'signatureSlots': 1, 'flags': flags,
             'runtime': bool(flags & CS_RUNTIME), 'adhoc': bool(flags & CS_ADHOC),
@@ -489,22 +542,39 @@ def display_signature(root, item, arch, command, name):
 
 
 def verify_signature_values(item, identity, displayed):
-    team = identity['team']
-    chain = displayed['authorityChain']
-    if (displayed['adhoc'] or displayed['identifier'] != item.identifier or displayed['team'] != team
-            or not chain or not chain[0].startswith(CERTIFICATE_TYPE+': ')
-            or (identity.get('authority') is not None and chain[0] != identity['authority'])):
-        raise ValueError('Embedded signing identity/Team/identifier differs from policy: '+item.path)
+    if item.signing_profile == LOCAL_PROFILE:
+        require_local_identity(identity)
+        if (displayed['adhoc'] is not True or displayed['team'] is not None
+                or displayed['authorityChain'] != [] or displayed['timestamp'] is not None
+                or displayed['identifier'] != item.identifier):
+            raise ValueError('Embedded ad hoc signature state differs from policy: '+item.path)
+    elif item.signing_profile == DEVELOPER_PROFILE:
+        verify_developer_signature(item, identity, displayed)
+    else:
+        raise ValueError('Unknown code signing profile: '+item.signing_profile)
     if (displayed['runtime'] is not item.runtime
             or not exact_entitlements(displayed['entitlements'], item.entitlements)):
         raise ValueError('Embedded runtime or entitlements differ from policy: '+item.path)
+
+
+def verify_developer_signature(item, identity, displayed):
+    chain = displayed['authorityChain']
+    if (displayed['adhoc'] is not False or displayed['identifier'] != item.identifier
+            or displayed['team'] != identity['team']
+            or not chain or not chain[0].startswith(CERTIFICATE_TYPE+': ')
+            or (identity.get('authority') is not None and chain[0] != identity['authority'])):
+        raise ValueError('Embedded signing identity/Team/identifier differs from policy: '+item.path)
     if not displayed['timestamp'] or displayed['timestamp'].strip().lower() in {'none', 'not set'}:
         raise ValueError('Missing secure Timestamp in signature: '+item.path)
 
 
 def verify_signatures(root, policy, identity, command, scratch):
-    """Verify all independently selected Developer ID code, without accessing signing keys."""
-    fingerprint, team = identity_values(identity['sha1'], identity['team'])
+    """Verify every discovered code item and architecture against the selected profile."""
+    local = policy_profile(policy) == LOCAL_PROFILE
+    if local:
+        require_local_identity(identity)
+    else:
+        fingerprint, team = identity_values(identity['sha1'], identity['team'])
     graph = discover_code(root, policy)
     verify = ['/usr/bin/codesign', '--verify', '--strict', '--all-architectures', '--verbose=2']
     command('verify-app-nested', [*verify, '--deep', root/'Meshchan.app'])
@@ -512,18 +582,23 @@ def verify_signatures(root, policy, identity, command, scratch):
     with tempfile.TemporaryDirectory(prefix='certificates-', dir=scratch) as directory:
         for index, (item, discovered) in enumerate(zip(policy, graph, strict=True), 1):
             prefix = f'verify-{index:02d}-{item.role}'
-            requirement = (f'=anchor apple generic and identifier "{item.identifier}" '
-                           f'and certificate 1[field.{ISSUER_OID}] exists '
-                           f'and certificate leaf[field.{LEAF_OID}] exists '
-                           f'and certificate leaf = H"{fingerprint}" '
-                           f'and certificate leaf[subject.OU] = "{team}"')
-            command(prefix+'-requirement', [*verify, *item.bundle_args(), '--test-requirement', requirement,
-                                            root/item.path])
+            args = [*verify, *item.bundle_args()]
+            if not local:
+                requirement = (f'=anchor apple generic and identifier "{item.identifier}" '
+                               f'and certificate 1[field.{ISSUER_OID}] exists '
+                               f'and certificate leaf[field.{LEAF_OID}] exists '
+                               f'and certificate leaf = H"{fingerprint}" '
+                               f'and certificate leaf[subject.OU] = "{team}"')
+                args.extend(['--test-requirement', requirement])
+            command(prefix+'-requirement', [*args, root/item.path])
             slices = {}
             for arch in discovered['architectures']:
                 name = prefix+'-'+arch
                 displayed = display_signature(root, item, arch, command, name)
                 verify_signature_values(item, identity, displayed)
+                if local:
+                    slices[arch] = displayed
+                    continue
                 extracted = Path(directory)/name
                 command(name+'-certificate-chain', ['/usr/bin/codesign', '--display', '--architecture', arch,
                                                     *item.bundle_args(), f'--extract-certificates={extracted}',

@@ -1,46 +1,39 @@
-# Phase 1E.6 macOS release signing
+# Phase 1E.6 macOS local release signing
 
-This step starts with the accepted [1E.5 engineering package](phase-1e5-package.md#signing-handoff).
-It produces a separately sealed Developer ID candidate for [1E.7](phase-1e-plan.md#remaining-steps-and-handoff)
-after independent runtime and materials acceptance. The [validation record](../validation/phase-1e6-signing.md)
-identifies the actual input and current gate status.
+This step consumes the accepted [1E.5 engineering package](phase-1e5-package.md#signing-handoff)
+and produces a separately sealed, locally signed candidate for
+[1E.7](phase-1e7-dmg.md). The [validation record](../validation/phase-1e6-signing.md)
+identifies the actual input, current local status, and historical Developer ID
+attempts.
 
-## Signer and policy
+## Local signing policy
 
-On the macOS arm64 signing host, verify the project's stable Python 3.15+
-and Xcode selection. Use the trusted maintainer Team ID and exact SHA-1 selector
-for an accessible **Developer ID Application** certificate and its matching
-private key. Inspect the current identities with `security find-identity -p
-codesigning -v`. An installed public certificate alone does not supply the
-identity. Verify the Team with the maintainer if it is ambiguous. The selector
-and Team are public, and the key remains in the operator's keychain.
+On a macOS arm64 signing host, verify the project's stable Python 3.15+
+and Xcode selection. The selected profile is `local-adhoc`. It uses
+`codesign --force --sign - --timestamp=none` for every code item with the
+applicable identifier, entitlements, and runtime options. The workflow runs
+without an official identity scan, Developer ID selector, Team ID, maintainer
+key, or secure timestamp service. The [maintainer's signing decision](phase-1e-plan.md#current-signing-decision)
+defers the official signing route until explicitly requested.
 
-The [versioned policy](../../tool/release_signing_policy.json) enumerates the
-eight code items in the selected candidate. Sign the four versioned App
-frameworks from the inside out, then the outer App. Sign both CLI dylibs and
-then the standalone CLI executable, using stable identifiers. All use the
-same Developer ID Application certificate and secure timestamp. Both main
-executables require Hardened Runtime and retain default Library Validation.
-Version 1 gives only the CLI main executable
-`com.apple.security.cs.allow-unsigned-executable-memory`. In two local
-diagnostic runs on copies of the selected CLI, Hardened Runtime terminated
-the actual AOT program during Dart startup. The CLI started after enabling
-this exception. The App and all libraries use an empty embedded entitlement
-dictionary (including an absent blob). Actual Developer ID runtime acceptance
-must confirm this policy on both original signed products. See the
-[validation record](../validation/phase-1e6-signing.md) for the diagnostic scope.
-Apple documents the exception under
-[Allow Unsigned Executable Memory](https://developer.apple.com/documentation/BundleResources/Entitlements/com.apple.security.cs.allow-unsigned-executable-memory).
+The [versioned policy](../../tool/release_signing_policy.json) covers every
+discovered Mach-O and signing target. The current candidate has eight signing
+targets. Sign the versioned App frameworks from the inside out, then the outer
+App. Sign both CLI dylibs before the standalone CLI executable. Both main
+executables require Hardened Runtime and
+`com.apple.security.cs.disable-library-validation=true` to load the bundled
+libraries with local signatures. The CLI main executable also requires
+`com.apple.security.cs.allow-unsigned-executable-memory=true` for the embedded
+Dart AOT runtime. Libraries and frameworks use empty entitlements and their
+non-main executable runtime policy. The validation record retains the
+diagnostic CLI startup and Library Validation results behind this policy.
 
-The installer identity, development identity and ad hoc fallback do not satisfy
-the formal policy. During signing, a timestamp failure leaves the attempt
-failed. Use Apple's [distribution signing guidance](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac)
-and [verification guidance](https://developer.apple.com/documentation/security/resolving-common-notarization-issues)
-when investigating identity or timestamp failures. Independent checks read
-each slice's certificate, Team, identifier, embedded entitlements, flags and
-`Timestamp` and also verify the strict nested App seal. Use a macOS signing
-host whose `codesign --display --verbose=4` reports both `Total signatures`
-and `Chosen signature`. The policy requires a single signature per slice.
+Independent checks read each slice's ad hoc status, identifier, signature
+flags, entitlements, and the absence of Developer ID Authority, Team, and a
+secure timestamp. Use a macOS signing host whose
+`codesign --display --verbose=4` reports `Total signatures` and
+`Chosen signature`. The policy requires one signature per slice and
+verification of the strict nested App seal.
 
 ## Recheck the accepted engineering input
 
@@ -86,15 +79,18 @@ Set `MESHCHAN_UPSTREAM_CHECK_RECEIPT` to the fresh passing check receipt found
 above and `MESHCHAN_UPSTREAM_CHECK_SHA` to its recorded hash. For example, the
 validation record identifies one exact recheck and its hash. Keep the
 original package checkout and the frozen source available for all three
-commands. The script binds the actual verifier receipt bytes to the original
-receipts, rechecks the upstream package, and records the product source,
-archived packager inputs, and signing inputs separately.
+commands. Retain the selected package check's evidence directory and its
+external extraction root, including the CLI runtime workspace beside the
+extracted product. Signing rechecks the package, retained extraction,
+process logs, and runtime databases from that exact run. The receipts record
+the product source, archived packager inputs, and signing inputs separately.
 
 ```sh
 meshchan_sign_release() {
   meshchan_sign_action="$1"
   shift
   /opt/homebrew/bin/python3 -B tool/sign_release.py "$meshchan_sign_action" \
+    --signing-profile local-adhoc \
     --source-checkout "$MESHCHAN_FROZEN_CHECKOUT" \
     --build-run "$MESHCHAN_BUILD_RUN" \
     --expected-build-info-sha256 "$MESHCHAN_BUILD_INFO_SHA" \
@@ -104,36 +100,33 @@ meshchan_sign_release() {
     --expected-upstream-check-sha256 "$MESHCHAN_UPSTREAM_CHECK_SHA" "$@"
 }
 
-meshchan_sign_release prepare --output build/phase-1e6/prepare-001
+meshchan_sign_release prepare --output build/phase-1e6/local-prepare-001
 
-meshchan_sign_release sign --output build/phase-1e6/sign-001 \
-  --identity "$MESHCHAN_CERTIFICATE_SHA1" --expected-team "$MESHCHAN_TEAM_ID"
+meshchan_sign_release sign --output build/phase-1e6/local-sign-001
 
 MESHCHAN_SIGNED_WORKSPACE="$(mktemp -d /private/tmp/meshchan-1e6-runtime.XXXXXXXX)"
-meshchan_sign_release check --output build/phase-1e6/sign-001 \
-  --identity "$MESHCHAN_CERTIFICATE_SHA1" --expected-team "$MESHCHAN_TEAM_ID" \
+meshchan_sign_release check --output build/phase-1e6/local-sign-001 \
   --expected-signed-info-sha256 "$MESHCHAN_SIGNED_INFO_SHA" \
   --workspace-parent "$MESHCHAN_SIGNED_WORKSPACE" --vm-config "$MESHCHAN_VM_CONFIG"
 ```
 
-`prepare` creates a new unsigned-for-distribution copy of the accepted local
-products and reports `PREPARED`. It inventories every source file, maps all
-Mach-O and bundle items, and rechecks the frozen loader graph and AOT/native
-relationships on the copy. `sign` takes another new run, preflights the
-explicit identity, signs a separate full copy, and verifies it before
-moving it to `signed/<candidate>/`. Copy the printed `signedInfo.sha256`
-from the actual successful sign result to `MESHCHAN_SIGNED_INFO_SHA`.
-`SIGNED` certifies completion of the signature and static transformation
-checks. The independent `check` must still return `PASS`.
+Optional `prepare` creates a fresh input copy and reports `PREPARED`. It
+inventories every source file, maps all Mach-O and bundle items, and rechecks
+the frozen loader graph and AOT/native relationships. `sign` uses its own
+fresh run and verifies a complete locally signed copy before moving it to
+`signed/<candidate>/`. Copy the printed `signedInfo.sha256` from the actual
+successful sign result to `MESHCHAN_SIGNED_INFO_SHA` before invoking
+`check`. `SIGNED` records successful signature and static transformation
+checks. A separate `check` receipt with `PASS` is required for handoff.
 
-The signing commands retain logs and a receipt in each run's evidence
-directory. Missing or unselected identities yield a `BLOCKED` receipt.
-A failed run or an interrupted run must be preserved. Choose new output
-names for a new prepare or sign attempt and a new external workspace parent
-for a check retry. The original snapshot and any previously sealed signed
-tree stay available for inspection. Use the normal authorized keychain UI
-to unlock or select the maintainer's existing identity if needed. The tool
-has no keychain write or certificate enrollment operation.
+The local manifest and receipts use format version 2 and record
+`signingProfile: local-adhoc`. Historical format version 1 records retain
+their original profile and outcome. Keep logs and failed receipts. Use new
+output names for a new prepare or sign attempt and a new external workspace
+parent for a check retry. Keep the original and previously sealed trees
+available. Independent checks require the same signing tool inputs, including
+the snapshotted guides, used when sealing the candidate. Changes to those
+inputs require resealing a new candidate.
 
 ## Independent acceptance
 
@@ -156,7 +149,7 @@ has no keychain write or certificate enrollment operation.
   gate open. [Apple DTS explanation](https://developer.apple.com/forums/thread/839028)
 - Run the [user library replacement procedure](phase-1e6-user-library-replacement.md)
   from a separate copy of this signed candidate, with its own CLI and VM
-  runtime evidence and local signing policy. Verify both the formal and
+  runtime evidence and local signing policy. Verify both the sealed and
   relocated originals again after the experiment.
 
 `materials/` and its original source archives remain bound byte for byte to
@@ -172,9 +165,9 @@ user replacement receipt and logs.
 
 ## Handoff to 1E.7
 
-Use only a `PASS` acceptance receipt and its identified `signedRoot`,
-`signedInfo` digest, and complete App and CLI trees, plus their bound
-distribution materials. Preserve the exact receipt hash and signed-info
-digest outside the candidate. The private local evidence directory is for
-maintainer handoff. Notarization submission, ticket/stapling, the final DMG,
-Gatekeeper and download/installation tests still require their own acceptance.
+Hand off the complete candidate named by the independent `PASS` receipt
+and its `signedInfo` digest. Preserve the exact receipt and manifest SHA-256
+pins outside the candidate. Keep the acceptance run and external workspace
+with the private handoff evidence. The [1E.7 guide](phase-1e7-dmg.md) uses those
+pins to build and independently accept the read-only unsigned DMG. The
+engineering download, installation and Beta upgrade follow in 1E.9.

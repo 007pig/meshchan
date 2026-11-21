@@ -530,7 +530,7 @@ available. Verify it there before staging with
 `tool/build_release.py check --output <run> --require-frozen` using the same
 Python interpreter. This check requires the original commit, a clean-source
 build without `--allow-dirty`, and accepted strict materials. Preserve the
-complete products, materials, and the frozen commit. Staging, formal signing,
-notarization/stapling and DMG packaging must rebind changed bytes and repeat their
+complete products, materials, and the frozen commit. Staging, local ad hoc
+signing, and DMG packaging must rebind changed bytes and repeat their
 applicable checks. Do not silently rebuild after acceptance. No final-release
 PASS, tag, publication, minimum OS, Intel or installation claim follows here.

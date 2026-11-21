@@ -245,7 +245,8 @@ route uses locally available coding and image tools and an owned VM workspace.
 The [engineering handoff](#1e6-and-1e7-engineering-handoff) identifies the
 accepted 1E.6 and 1E.7 outputs. See the
 [1E.8 validation record](../validation/phase-1e8-ci-retention.md) for the
-source-specific CI, preserved candidate, and 1E.9 inputs.
+source-specific CI, the sealed and independently restored build 8, and
+the exact engineering image for 1E.9.
 
 | Step | Goal | Main dependencies and expected output |
 | --- | --- | --- |

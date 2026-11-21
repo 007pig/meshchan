@@ -249,6 +249,11 @@ def verify_replacement(reader, root, workspace, receipt, result, info, manifest_
     equal(required, set(app['evidence']), 'Retained replacement VM evidence')
     for name, pin in app['evidence'].items():
         reader.bytes(evidence/'app-vm'/name, pin)
+    # Select the replacement evidence by role. The executor's launch claim
+    # is a transient link to an ownership token, outside the receipt's files.
+    reader.directory(evidence/'app-vm/Release/fixture')
+    reader.file(evidence/'app-vm/Release/app-supervisor.log')
+    reader.directory(evidence/'libserialport-source')
     modified = product_inventory(reader.directory(workspace/'user products'))
     equal(replacement['modifiedInventorySha256'], sha(encoded(modified)), 'Modified product inventory')
     source = replacement['sourceArchive']
@@ -256,6 +261,9 @@ def verify_replacement(reader, root, workspace, receipt, result, info, manifest_
                          'Replacement material source')
     src = relative_reference(root, source['path'], scope=root/'materials')
     reader.entry(src, {'sha256': source['sha256'], 'size': source['size']})
+    reader.entry(evidence/'libserialport-source.tar.gz', {'sha256': source['sha256'], 'size': source['size']})
+    for name in ('user-app.entitlements', 'user-cli.entitlements'):
+        reader.file(evidence/name)
 
 
 def verify_tool_snapshot(reader, root, source, expected_names):
@@ -308,14 +316,15 @@ def accepted_local(reader, manifest_ref, acceptance_ref):
     }, 'Original signing result')
     read_ledger(reader, output, signed['processLedger'], output/'evidence', status='SIGNED')
     workspace = original_path(receipt['workspace'])
-    reader.directory(workspace)
     relocated = workspace/'relocated products'
+    cli_workspace = workspace/'cli workspace'
     reader.tree(relocated, full)
+    reader.directory(cli_workspace)
     ledger, logs = read_ledger(reader, output, receipt['processLedger'], evidence)
     cli = reader.report(output, receipt['cliReport'], evidence/'cli-runtime.json')
     verify_report_fields(cli, {'signingProfile': dmg.PROFILE, 'signedInfoSha256': manifest_pin,
                                'relocatedRoot': str(relocated)}, 'Accepted local CLI')
-    verify_cli(reader, cli, relocated/'meshctl', workspace/'cli workspace', info['identity'], ledger, logs)
+    verify_cli(reader, cli, relocated/'meshctl', cli_workspace, info['identity'], ledger, logs)
     verify_vm(reader, receipt['vmAppReport'], output, evidence/'vm-app',
               build.material_result(logs['signed-vm-app-runtime']['log'].decode()), relocated, info, manifest_pin)
     verify_replacement(reader, root, workspace/'user modified products', receipt,

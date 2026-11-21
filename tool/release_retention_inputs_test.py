@@ -10,6 +10,7 @@ import package_dmg as dmg
 import release_retention_inputs as retention
 import release_signed_runtime as runtime
 from release_materials import encoded, sha
+from release_retention_archive import scanned_input
 
 
 class EvidenceTests(unittest.TestCase):
@@ -97,6 +98,52 @@ class EvidenceTests(unittest.TestCase):
         target.unlink()
         with self.assertRaises(FileNotFoundError):
             retention.verify_tool_snapshot(reader, origin, tool, [name])
+
+    def test_replacement_archive_selects_evidence_without_executor_claim(self):
+        signed_root = self.original/'signed'
+        workspace = self.original/'user modified products'
+        evidence = workspace/'evidence'
+        guest = evidence/'app-vm'
+        receipt_path = evidence/'replacement-receipt.json'
+        modified = workspace/'user products'
+        source = 'materials/source-materials/archives/serial.tar.gz'
+        source_pin = self.write(signed_root/source, b'archive')
+        self.write(evidence/'libserialport-source.tar.gz', b'archive')
+        self.write(evidence/'libserialport-source/source.c', b'source')
+        self.write(modified/'replacement.dylib', b'rebuilt library')
+        for path in ('user-app.entitlements', 'user-cli.entitlements', 'app-vm/Release/fixture/meshchan.sqlite',
+                     'app-vm/Release/app-supervisor.log'):
+            self.write(evidence/path, b'replacement evidence')
+        required = ('session.json', 'refresh-state.json', 'Release/app.stdout', 'Release/app.stderr',
+                    'Release/app.pid', 'Release/app.exit', 'Release/synthetic-ports.png')
+        app_refs = {name: self.write(guest/name, b'evidence') for name in required}
+        self.locate(guest/'Release/app-launch.claim').symlink_to('ephemeral-executor:claim')
+        cli = {'status': 'PASS', 'exitCode': 0}
+        for key, name in (('log', 'evidence/logs/modified.log'), ('stderrLog', 'evidence/logs/modified.stderr.log'),
+                          ('pidReceipt', 'cli working directory/child.pid')):
+            cli[key] = name
+            cli[key+'Sha256'] = self.write(workspace/name, b'process')
+        inventory, _ = scanned_input(self.locate(modified))
+        report = {
+            'formatVersion': 2, 'signingProfile': dmg.PROFILE, 'status': 'PASS', 'signedInfoSha256': 'a'*64,
+            'signedRoot': str(signed_root), 'identity': {}, 'finalIntegrity': 'PASS', 'cli': cli,
+            'app': {'status': 'PASS', 'exitCode': 0, 'guestExecutorExit': 0, 'guestLockReleased': True,
+                    'pidAbsent': True, 'evidence': app_refs},
+            'modifiedInventorySha256': sha(encoded(inventory)),
+            'sourceArchive': {'materialsManifestSha256': 'b'*64, 'sha256': source_pin, 'path': source, 'size': 7},
+            'steps': [{'name': 'modified', 'exitCode': 0, 'processTree': {'exited': True, 'childReaped': True},
+                       **{key: cli[key] for key in ('log', 'logSha256', 'stderrLog', 'stderrLogSha256')}}],
+        }
+        pin = self.write(receipt_path, encoded(report))
+        receipt = {'modifiedLibraryReport': {'path': 'evidence/replacement-receipt.json', 'sha256': pin}}
+        result = {'status': 'PASS', 'signingProfile': dmg.PROFILE, 'receipt': str(receipt_path), 'receiptSha256': pin}
+        info = {'identity': {}, 'upstream': {'materialsManifestSha256': 'b'*64}}
+        self.lookups.clear()
+        reader = retention.RetainedRead(self.locate, live=False)
+        retention.verify_replacement(reader, signed_root, workspace, receipt, result, info, 'a'*64)
+        for path in reader.roots():
+            scanned_input(self.locate(path))
+        self.assertNotIn(guest/'Release/app-launch.claim', self.lookups)
 
     def fixture_cli(self):
         bundle = self.original/'relocated products/meshctl'

@@ -372,6 +372,42 @@ exec /usr/bin/git "$@"
         self.assertEqual(stderr.read_text(), 'Building flutter tool...\n')
         self.assertEqual(step['stderrLogSha256'], digest(stderr))
 
+    def test_command_result_and_ledger_share_the_completed_log_snapshot(self):
+        runner = self.runner()
+        stdout, stderr = b'output\r\ncontinued\r', b'diagnostic\r\ncontinued\r'
+        script = (f'import sys; sys.stdout.buffer.write({stdout!r}); '
+                  f'sys.stderr.buffer.write({stderr!r}); sys.exit(int(sys.argv[1]))')
+        save = runner.save
+        for name, code, return_stderr, stream in (
+            ('return-stdout', 0, False, 'log'),
+            ('return-stderr', 0, True, 'stderrLog'),
+            ('failed-stderr', 7, False, 'stderrLog'),
+        ):
+            with self.subTest(name=name):
+                argv = [sys.executable, '-c', script, str(code)]
+
+                def change_log_after_saving():
+                    save()
+                    step = runner.receipt['steps'][-1]
+                    if stream+'Sha256' in step:
+                        (self.root/step[stream]).write_bytes(b'later contents\n')
+
+                with patch.object(runner, 'save', side_effect=change_log_after_saving):
+                    if code:
+                        with self.assertRaises(subprocess.CalledProcessError) as failure:
+                            runner.command(name, argv)
+                        self.assertEqual(failure.exception.returncode, code)
+                        self.assertEqual(failure.exception.cmd, argv)
+                        self.assertEqual(failure.exception.stderr, stderr)
+                    else:
+                        result = runner.command(name, argv, return_stderr=return_stderr)
+                        self.assertEqual(result, ('diagnostic' if return_stderr else 'output')+'\ncontinued\n')
+
+                step = b.read(self.out/'build-receipt.json')['steps'][-1]
+                self.assertEqual(step['logSha256'], b.sha(stdout))
+                self.assertEqual(step['stderrLogSha256'], b.sha(stderr))
+                self.assertNotEqual(step[stream+'Sha256'], digest(self.root/step[stream]))
+
     def test_nonzero_parent_stops_live_helper_and_preserves_exit_code(self):
         runner = self.runner()
         helper = 'import time; print("ready", flush=True); time.sleep(30)'

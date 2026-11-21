@@ -1,0 +1,77 @@
+{
+  "formatVersion": 1,
+  "certificateType": "Developer ID Application",
+  "secureTimestamp": true,
+  "codeItems": [
+    {
+      "path": "Meshchan.app/Contents/Frameworks/App.framework",
+      "binary": "Meshchan.app/Contents/Frameworks/App.framework/Versions/A/App",
+      "role": "framework",
+      "version": "A",
+      "identifier": "io.flutter.flutter.app",
+      "runtime": false,
+      "entitlements": {}
+    },
+    {
+      "path": "Meshchan.app/Contents/Frameworks/FlutterMacOS.framework",
+      "binary": "Meshchan.app/Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS",
+      "role": "framework",
+      "version": "A",
+      "identifier": "io.flutter.flutter-macos",
+      "runtime": false,
+      "entitlements": {}
+    },
+    {
+      "path": "Meshchan.app/Contents/Frameworks/libserialport_plus.framework",
+      "binary": "Meshchan.app/Contents/Frameworks/libserialport_plus.framework/Versions/A/libserialport_plus",
+      "role": "framework",
+      "version": "A",
+      "identifier": "io.flutter.flutter.native-assets.libserialport-plus",
+      "runtime": false,
+      "entitlements": {}
+    },
+    {
+      "path": "Meshchan.app/Contents/Frameworks/sqlite3.framework",
+      "binary": "Meshchan.app/Contents/Frameworks/sqlite3.framework/Versions/A/sqlite3",
+      "role": "framework",
+      "version": "A",
+      "identifier": "io.flutter.flutter.native-assets.sqlite3",
+      "runtime": false,
+      "entitlements": {}
+    },
+    {
+      "path": "Meshchan.app",
+      "binary": "Meshchan.app/Contents/MacOS/Meshchan",
+      "role": "app",
+      "identifier": "org.meshchan.meshchan",
+      "runtime": true,
+      "entitlements": {}
+    },
+    {
+      "path": "meshctl/lib/liblibserialport_plus.dylib",
+      "binary": "meshctl/lib/liblibserialport_plus.dylib",
+      "role": "cliLibrary",
+      "identifier": "org.meshchan.meshctl.libserialport",
+      "runtime": false,
+      "entitlements": {}
+    },
+    {
+      "path": "meshctl/lib/libsqlite3.dylib",
+      "binary": "meshctl/lib/libsqlite3.dylib",
+      "role": "cliLibrary",
+      "identifier": "org.meshchan.meshctl.sqlite3",
+      "runtime": false,
+      "entitlements": {}
+    },
+    {
+      "path": "meshctl/bin/meshctl",
+      "binary": "meshctl/bin/meshctl",
+      "role": "cli",
+      "identifier": "org.meshchan.meshctl",
+      "runtime": true,
+      "entitlements": {
+        "com.apple.security.cs.allow-unsigned-executable-memory": true
+      }
+    }
+  ]
+}

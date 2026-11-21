@@ -10,6 +10,7 @@ import ctypes
 import datetime
 import fcntl
 import hashlib
+import io
 import json
 import math
 import os
@@ -247,6 +248,15 @@ class Runner:
         self.receipt['steps'].append(step)
         self.save()
         child = owned = None
+        failure = None
+        returned_log = stderr_log if return_stderr else log
+        captured = {}
+
+        def log_digest(path):
+            if path in captured:
+                return sha(captured[path])
+            return digest(path) if path.exists() else None
+
         started = time.monotonic()
         if self.show_progress:
             print('START '+name, flush=True)
@@ -266,7 +276,8 @@ class Runner:
                         if code:
                             # The finally block stops owned helpers before the
                             # checkout lock is released and preserves this exit.
-                            raise subprocess.CalledProcessError(code, step['argv'], stderr=stderr_log.read_bytes())
+                            failure = subprocess.CalledProcessError(code, step['argv'])
+                            raise failure
                         if time.monotonic()-started > self.timeout:
                             raise TimeoutError('Command deadline exceeded: '+name)
                         if code == 0 and not live:
@@ -274,15 +285,17 @@ class Runner:
                         time.sleep(0.05)
                 step['exitCode'] = code
                 step['processTree'] = owned.exit_receipt()
+                captured[returned_log] = returned_log.read_bytes()
             finally:
                 # Remain under both the checkout lock and deferred signals until
                 # the isolated group and observed descendants have stopped.
                 if child is not None and 'processTree' not in step:
                     step['processTree'] = (owned or OwnedGate(child)).stop()
                     step['exitCode'] = child.returncode
+                if failure is not None:
+                    failure.stderr = captured[stderr_log] = stderr_log.read_bytes()
                 step.update(finishedAt=now(), elapsedSeconds=round(time.monotonic()-started, 3),
-                            logSha256=digest(log) if log.exists() else None,
-                            stderrLogSha256=digest(stderr_log) if stderr_log.exists() else None)
+                            logSha256=log_digest(log), stderrLogSha256=log_digest(stderr_log))
                 self.save()
             raise_if_interrupted(interrupted)
             if self.interrupted is None:
@@ -290,7 +303,9 @@ class Runner:
                     raise_if_interrupted(interrupted)
         if self.show_progress:
             print('PASS '+name, flush=True)
-        return (stderr_log if return_stderr else log).read_text()
+        # Match Path.read_text's default encoding and universal newlines.
+        with io.TextIOWrapper(io.BytesIO(captured[returned_log])) as result:
+            return result.read()
 
 
 def identity(root, expected_version=None, expected_build=None):

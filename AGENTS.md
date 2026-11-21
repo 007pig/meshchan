@@ -1,55 +1,47 @@
 # Agent Guidance
 
-## Review fixes and pull requests
+## Validation
 
+- For regressions spanning the app, CLI or native transport, trace the affected
+  path and test plausible alternative causes before reporting a root cause.
 - After fixing a review finding, run the unit tests that cover the changed
-  behavior and its regression risk. Passing those tests completes local
-  review-fix verification, including follow-up fixes on an open PR.
-- Run the applicable full validation once the changes are ready and before
-  opening a PR. See the [validation workflow](docs/testing.md#review-fixes-and-pre-pr-validation)
-  for test selection, reporting, and Release candidate checks.
+  behavior and regression risk. Passing those tests completes local review-fix
+  verification, including follow-ups on an open PR.
+- Before opening a PR, complete the applicable
+  [validation workflow](docs/testing.md#review-fixes-and-pre-pr-validation)
+  for the final changes. Report the checks run, their outcomes and any
+  deferred or blocked checks.
+- For visual changes, use the supplied reference or existing Meshchan UI as
+  the baseline. Inspect and refine the result at its intended display size.
+  Exercise the affected interactions when validating interactive changes.
 
 ## Local Python toolchain
 
-- Run Python scripts with `python3`, never `python`.
-- Python code that launches Python tooling must use `sys.executable`, preserving
-  the selected interpreter instead of resolving `python3` from PATH again.
-- On this Mac, use the latest installed stable Python **3.15 or newer**. Verify
-  its version before running project scripts or tests. Do not use the older
-  `/usr/bin/python3` selected by an Apple-compiler-first PATH.
-- The verified interpreter is `/opt/homebrew/bin/python3` (Python 3.15.2).
-  Call that path explicitly, or use the Python-only PATH entry documented in
-  [the developer guide](docs/development.md#local-python-toolchain).
-- Do not install or upgrade Python or change global PATH/settings automatically.
-  Record the actual interpreter path and version in new validation records;
-  preserve historical records with their original toolchain facts.
+- Run project scripts and tests with `python3` from the latest installed stable
+  Python **3.15 or newer**. On this Mac, verify `/opt/homebrew/bin/python3` first.
+  See the [developer guide](docs/development.md#local-python-toolchain) for
+  the project-local PATH option. Leave global settings and installations alone.
+- Launch Python subprocesses with `sys.executable`. Record the path and
+  version used in new validation records and preserve historical toolchain facts.
 
-## Host macOS GUI testing
+## macOS GUI testing
 
-- Prefer the existing **macOS VM** for UI testing whenever real USB/serial
-  hardware is not required. This includes navigation, offline editing and
-  Save/Quit, Profiles/Settings, History/export, and Chinese input-method tests.
-- Use this Mac's **Computer Use** only for UI steps that require real
-  USB/serial hardware. Do not substitute AppleScript, System Events, CGEvent,
-  or accessibility-driver scripts for those host interactions.
-- Do not fall back to host GUI automation for hardware-free tests when the VM
-  is unavailable or blocked. Record the specific VM blocker and continue other
-  independent work.
-- Builds, owned-fixture preparation, CLI tests, and independent process/file
-  verification may use their normal command-line tools. Guest UI and input-method
-  tests follow the applicable VM skill and guide.
-
-## macOS VM GUI automation
-
-- Before running real GUI, host-input isolation, or Chinese input-method tests
-  inside a macOS VM, read
-  [the macos-vm-gui-testing skill](.agents/skills/macos-vm-gui-testing/SKILL.md).
-- Use its guest-side event execution and SSH orchestration for hardware-free UI
-  tests, leaving the host mouse and keyboard available. Follow its identity,
-  focus, Pinyin evidence and owned-fixture requirements.
-- Ordinary unit tests do not require loading this skill.
-- Run real USB/serial hardware validation on the host Mac, including native port
+- Use the existing VM for hardware-free GUI tests, including native Pinyin,
+  navigation and offline Save/Quit. Read the [VM skill](.agents/skills/macos-vm-gui-testing/SKILL.md)
+  before running guest UI or host-input isolation checks. If the VM is blocked,
+  report the cause and continue independent work without a host GUI fallback.
+- Run real USB/serial acceptance on the host Mac, including native port
   enumeration, device checks, Cancel/cleanup and quit with active hardware.
-  Use the VM for hardware-free UI, Pinyin, navigation, offline quit and fake tests.
-- Do not continue VM USB passthrough or SPICE-port hardware testing under this
-  routing policy. Preserve the historical VM results as historical evidence.
+  Use Computer Use for these host UI steps. Keep VM passthrough and SPICE-port
+  results as historical evidence.
+- Use normal command-line tools for builds, owned fixtures, CLI tests and
+  independent process or file verification.
+
+## Shared workspace
+
+- Use subagents as needed for substantial tasks with independent investigations
+  or edits in separate files. Give each edit a single owner and keep one
+  operator per VM desktop or hardware session.
+- Coordinate resource-heavy builds and tests on the shared Mac. At handoff,
+  stop temporary background jobs started for the task and remove temporary
+  files that are no longer needed. Retain validation evidence.

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run the extracted App's offline write/normal-quit/reopen in the test VM."""
 import argparse
-from contextlib import closing
+from contextlib import closing, contextmanager
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -16,7 +17,9 @@ import tempfile
 import time
 
 import build_release as build
-from release_materials import digest
+from release_materials import (
+    ancestor_identities, digest, directory_identity, require_material_file, require_product_disjoint,
+)
 from release_package_archive import archive_members, check_payload, prefixed
 
 ROOT = build.ROOT
@@ -43,6 +46,37 @@ def guest_inventory(vm, guest, expected):
         stream.seek(0)
         with tarfile.open(fileobj=stream, mode='r:') as archive:
             archive_members(archive, prefixed('Meshchan.app', expected), ('Meshchan.app',))
+
+
+def checked_vm_configuration(path, protected_paths, *, cwd=None):
+    """Read and check now, staging exact private bytes only on context entry."""
+    cwd = Path.cwd() if cwd is None else Path(cwd).absolute()
+    data = (cwd/Path(path).expanduser()).read_bytes()
+    config = json.loads(data)
+    runtime = config.get('runtime_dir') if isinstance(config, dict) else None
+    if not isinstance(runtime, str) or not runtime:
+        raise ValueError('VM configuration requires a nonempty runtime_dir')
+    protected = tuple(protected_paths)
+    runtime_path = {'VM runtime_dir': cwd/Path(runtime).expanduser()}
+    require_product_disjoint(runtime_path, protected, protected='a selected release input')
+
+    @contextmanager
+    def staged():
+        # A deferred constructor can run after the host path layout changes.
+        # Recheck that layout while retaining the originally validated bytes.
+        require_product_disjoint(runtime_path, protected, protected='a selected release input')
+        # Ignore a caller TMPDIR pointing into published evidence or a candidate.
+        temporary = Path('/private/tmp' if sys.platform == 'darwin' else '/tmp').resolve()
+        parents = ancestor_identities(temporary)
+        if any(temporary.is_relative_to(path.resolve()) or directory_identity(path) in parents for path in protected):
+            raise ValueError('Private VM configuration temporary location overlaps a selected release input')
+        with tempfile.NamedTemporaryFile(prefix='meshchan-private-vm-', suffix='.json', dir=temporary) as snapshot:
+            os.fchmod(snapshot.fileno(), 0o600)
+            snapshot.write(data)
+            snapshot.flush()
+            yield Path(snapshot.name)
+
+    return staged()
 
 
 def require_ready_connection(vm):
@@ -142,12 +176,26 @@ def record_guest_run(product, session, timeout):
         time.sleep(0.1)
 
 
-def finish_guest(product, session):
+def finish_guest(product, session, *, check_product_shutdown=True):
     # If startup was interrupted, recover only a runner attested to this
     # launch. A different process may have acquired the VM's shared lock.
     if 'run' not in product.state and not record_guest_run(product, session, timeout=2):
         return None
-    product.finish()
+    vm = product.vm
+    if check_product_shutdown:
+        product.finish()
+    else:
+        # A failed child can leave valid executor ownership but no normal App
+        # shutdown receipt. The caller must establish child exit separately.
+        expected = {key: product.state[key] for key in ('run', 'lockIdentity')}
+        if owned_guest_run(vm, session) != expected:
+            raise ValueError('Failed App cleanup could not attest the owned guest runner')
+        vm.remote('/usr/bin/touch '+q(vm.runpath(expected['run'])+'/finish'), timeout=10)
+    return confirm_guest_exit(product)
+
+
+def confirm_guest_exit(product):
+    """Verify the already attested test executor exited and released its lock."""
     vm = product.vm
     receipt_path = q(vm.runpath(product.state['run'])+'/exit-code')
     # The executor opens the file before writing the status. A successful
@@ -185,12 +233,19 @@ fi
     return 0
 
 
-def runtime_command(args, cwd, prefix):
+def runtime_command(args, cwd, prefix, observer=None, library=None):
     # Wait for this shell's direct child. The guest deadline also covers an SSH
     # interruption while the job is running independently in the GUI session.
+    if observer is None:
+        trace_env = ' DYLD_PRINT_LIBRARIES=1'
+    else:
+        trace_env = ''
+        args = [observer, prefix+'.image.json', library, *args]
     return f'''cd {q(cwd)}
 pid=
 cleanup() {{
+  trap '' HUP INT TERM
+  trap - EXIT
   if [[ -n "$pid" && $(jobs -pr) == "$pid" ]]; then
     kill -TERM "$pid" 2>/dev/null || true
     sleep 1
@@ -199,11 +254,17 @@ cleanup() {{
   fi
 }}
 trap cleanup EXIT
-trap 'exit 143' TERM INT
+# Latch an interrupt through the fork and registration of the owned child.
+pending=
+trap 'pending=${{pending:-129}}' HUP
+trap 'pending=${{pending:-143}}' TERM INT
 /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 HOME="$HOME" \\
-  TMPDIR={q(cwd)} DYLD_PRINT_LIBRARIES=1 {shlex.join(args)} \\
+  TMPDIR={q(cwd)}{trace_env} {shlex.join(args)} \\
   > {q(prefix+'.stdout')} 2> {q(prefix+'.stderr')} < /dev/null &
 pid=$!
+trap 'exit 129' HUP
+trap 'exit 143' TERM INT
+[[ -z "$pending" ]] || exit "$pending"
 printf '%s\\n' "$pid" > {q(prefix+'.pid')}
 deadline=$((SECONDS + 14))
 while [[ $(jobs -pr) == "$pid" ]]; do
@@ -222,18 +283,43 @@ printf '%s\\n' "$code" > {q(prefix+'.exit')}
 def run(args):
     host = load('phase_1e5_vm_host', 'apps/meshchan_app/tool/macos_vm/host.py')
     checker = load('phase_1e5_runtime_checker', 'apps/meshchan_app/tool/check_macos_runtime.py')
-    package_info = args.package_info.read_bytes()
-    info = json.loads(package_info)
+    signed = getattr(args, 'signed_info', None) is not None
+    if signed:
+        import release_signed_runtime as runtime_probe
+
+        args.app = runtime_probe.canonical(args.app)
+        args.evidence = runtime_probe.canonical(args.evidence)
+        manifest = runtime_probe.canonical(args.signed_info)
+        info = runtime_probe.signed_info(manifest, args.expected_signed_info_sha256)
+        info_binding = {'signedInfoSha256': args.expected_signed_info_sha256}
+    else:
+        manifest = args.package_info
+        package_info = manifest.read_bytes()
+        info = json.loads(package_info)
+        info_binding = {'packageInfoSha256': build.sha(package_info)}
     ident = info['identity']
     prefix = 'Meshchan.app'
+    inventory = info['payloadInventory']
+    protected = [args.app, manifest]
+    # Protect the complete tree in the documented App-plus-CLI layout,
+    # including a pinned tree whose declared CLI is missing.
+    if 'meshctl' in inventory:
+        app_parent = args.app.parent
+        candidate = manifest.parent
+        if (directory_identity(app_parent) == directory_identity(candidate)
+                or (candidate/prefix).is_dir() or (candidate/'meshctl').is_dir()):
+            protected.append(candidate)
+        if (app_parent/'meshctl').is_dir():
+            protected.append(app_parent)
+    require_product_disjoint({'VM evidence': args.evidence}, protected, protected='a selected runtime input')
     expected = {name.removeprefix(prefix+'/'): item
-                for name, item in info['payloadInventory'].items() if name.startswith(prefix+'/')}
-    expected['.'] = info['payloadInventory'][prefix]
+                for name, item in inventory.items() if name.startswith(prefix+'/')}
+    expected['.'] = inventory[prefix]
     check_payload(args.app, expected)
     evidence = args.evidence.absolute()
     evidence.mkdir(mode=0o700)
     report = {'status': 'RUNNING', 'identity': ident, 'app': str(args.app),
-              'packageInfoSha256': build.sha(package_info),
+              **info_binding,
               'appInventorySha256': build.sha(build.encoded(expected)), 'processes': []}
     receipt = evidence/'runtime.json'
     build.write(receipt, report)
@@ -252,8 +338,22 @@ def run(args):
             return 'Guest command deadline exceeded'
         return redacted(str(error))
 
+    def finish_and_record_guest():
+        if session is not None:
+            if (exit_code := finish_guest(product, session)) is not None:
+                report['guestExecutorExit'] = exit_code
+                report['guestLockReleased'] = True
+
     try:
-        product = host.Product(str(args.config), evidence)
+        if signed:
+            local_probe = evidence/'release-image-probe'
+            with (evidence/'image-observer-build.log').open('xb') as compilation:
+                subprocess.run(runtime_probe.image_probe_command(local_probe), check=True, timeout=60,
+                               stdout=compilation, stderr=subprocess.STDOUT)
+            probe_sha = digest(local_probe)
+            report['observerSha256'] = probe_sha
+        with checked_vm_configuration(args.config, protected) as vm_config:
+            product = host.Product(str(vm_config), evidence)
         vm = product.vm
         require_ready_connection(vm)
         report['guestOS'] = vm.remote('/usr/bin/sw_vers; /usr/bin/uname -m',
@@ -265,45 +365,95 @@ def run(args):
             raise ValueError('Timed out waiting for the owned guest executor')
         run_id = product.state['run']
         report['guestRun'] = run_id
-        guest = session+'/products phase 1E.5'
+        if signed:
+            report['guestOwnershipSha256'] = digest(require_material_file(evidence, 'session.json'))
+        guest = session+'/'+(runtime_probe.APP_PHASE_DIRECTORY if signed else 'products phase 1E.5')
         vm.remote('umask 077; /bin/mkdir '+q(guest), timeout=10)
         product.upload([(args.app, prefix)], guest)
         guest_inventory(vm, guest, expected)
         app = guest+'/'+prefix
-        vm.remote('/usr/bin/codesign --verify --deep --strict --all-architectures '+q(app), timeout=30)
+        verify = ['/usr/bin/codesign', '--verify', '--deep', '--strict', '--all-architectures']
+        if signed:
+            signature = info['signature']['identity']
+            verify.append('-R='+runtime_probe.developer_requirement(signature))
+        vm.remote(shlex.join([*verify, app]), timeout=30)
         cwd = guest+'/runtime workspace'
         vm.remote('/bin/mkdir '+q(cwd), timeout=10)
-        fixture = cwd+'/meshchan-1d3-package'
+        fixture = cwd+'/'+(runtime_probe.APP_FIXTURE if signed else 'meshchan-1d3-package')
+        observer, library = None, None
+        seen_pids = set()
+        if signed:
+            product.upload([(local_probe, local_probe.name)], cwd)
+            observer = cwd+'/'+local_probe.name
+            library = app+'/'+runtime_probe.APP_SQLITE
+
+            def check_observer():
+                vm.remote('test "$(/usr/bin/shasum -a 256 < '+q(observer)+')" = '
+                          +q(probe_sha+'  -'), timeout=10)
+
+            check_observer()
+            sqlite_device, sqlite_inode = map(int, vm.remote(
+                '/usr/bin/stat -f "%d:%i" '+q(library), capture_output=True, text=True,
+                timeout=10).stdout.strip().split(':'))
+            report.update(guestSigningIdentity=signature, guestObserverTransfer='PASS')
         report.update(guestApp=redacted(app), guestInventoryBefore='PASS', guestSignature='PASS')
 
         for mode in ('write', 'read'):
             argv = [app+'/Contents/MacOS/Meshchan', '--meshchan-runtime='+mode,
                     '--data-dir='+fixture, '--runtime-exit']
             base = cwd+'/'+mode
-            product.job(runtime_command(argv, cwd, base))
+            product.job(runtime_command(argv, cwd, base, observer, library))
 
-            def read(suffix):
+            def read(suffix, *, binary=False):
                 return vm.remote('/bin/cat '+q(base+suffix), capture_output=True,
-                                 text=True, timeout=10).stdout
+                                 text=not binary, timeout=10).stdout
 
-            pid, exit_code = int(read('.pid')), int(read('.exit'))
+            wrapper_pid, exit_code = int(read('.pid')), int(read('.exit'))
             stdout, stderr = read('.stdout'), read('.stderr')
-            row = {'argv': list(map(redacted, argv)), 'cwd': redacted(cwd), 'pid': pid,
+            row = {'argv': list(map(redacted, argv)), 'cwd': redacted(cwd),
                    'stdout': redacted(stdout), 'stderr': redacted(stderr), 'exitCode': exit_code}
             report['processes'].append(row)
+            if signed:
+                row['observerPid'] = wrapper_pid
+            else:
+                row['pid'] = wrapper_pid
             build.write(receipt, report)
+            observed = None
+            pid = wrapper_pid
+            if signed:
+                observation = read('.image.json', binary=True)
+                (evidence/(mode+'-image.json')).write_bytes(observation)
+                observed = runtime_probe.image_report(
+                    observation, argv[0], library, expected[runtime_probe.APP_EXECUTABLE]['sha256'],
+                    expected[runtime_probe.APP_SQLITE]['sha256'], exit_code, observer_pid=wrapper_pid)
+                pid = observed['pid']
+                if {pid, wrapper_pid} & seen_pids:
+                    raise ValueError('Guest mapping receipt did not identify a fresh App child')
+                require_absent_pid(vm, wrapper_pid)
+                if (observed['mapping']['device'], observed['mapping']['inode']) != (
+                        sqlite_device & 0xFFFFFFFF, sqlite_inode):
+                    raise ValueError('Guest SQLite mapping did not match the transferred file vnode')
+                seen_pids.update((pid, wrapper_pid))
+            row['pid'] = pid
             require_absent_pid(vm, pid)
-            sqlite = app+'/Contents/Frameworks/sqlite3.framework/'
-            loaded = {path.removeprefix('/System/Volumes/Data') for path in
-                      re.findall(r'^dyld\[\d+\]: <[0-9A-Fa-f-]+> (/.+)$', stderr, re.MULTILINE)}
-            observed = sorted(loaded & {sqlite+'sqlite3', sqlite+'Versions/A/sqlite3'})
-            if not observed:
-                raise ValueError('Guest App did not load its own extracted SQLite')
-            row['sqliteLoadedFrom'] = redacted(observed[0])
+            if signed:
+                row['sqliteMapping'] = {**observed, 'library': redacted(library),
+                                        'executable': redacted(argv[0])}
+                row['sqliteLoadedFrom'] = redacted(library)
+            else:
+                sqlite = app+'/Contents/Frameworks/sqlite3.framework/'
+                loaded = {path.removeprefix('/System/Volumes/Data') for path in
+                          re.findall(r'^dyld\[\d+\]: <[0-9A-Fa-f-]+> (/.+)$', stderr, re.MULTILINE)}
+                observed = sorted(loaded & {sqlite+'sqlite3', sqlite+'Versions/A/sqlite3'})
+                if not observed:
+                    raise ValueError('Guest App did not load its own extracted SQLite')
+                row['sqliteLoadedFrom'] = redacted(observed[0])
             reports = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
             runtime = [r for r in reports if r.get('verification') == 'meshchan.runtime.1d3']
             shutdown = [r for r in reports if r.get('runtime') == 'meshchan.shutdown.1d3']
             checker.validate_runtime_report(exit_code, runtime, shutdown, ident['productVersion'], int(ident['appBuild']))
+            if signed:
+                runtime_probe.validate_app_shutdown(runtime[0], shutdown[0], mode)
             row['pidAbsentAfterNormalExit'] = True
             if runtime[0]['mode'] != mode:
                 raise ValueError('Unexpected guest runtime mode')
@@ -315,35 +465,62 @@ def run(args):
         data = evidence/'vm-fixture.sqlite'
         with data.open('xb') as stream:
             vm.remote('/bin/cat '+q(fixture+'/meshchan.sqlite'), stdout=stream, timeout=15)
-        with closing(sqlite3.connect(data.as_uri()+'?mode=ro&immutable=1', uri=True)) as connection:
-            drafts = connection.execute('select id, revision from stored_drafts').fetchall()
-            integrity = connection.execute('pragma quick_check').fetchall()
         draft = report['processes'][1]['draft']
-        if drafts != [(draft['id'], draft['revision'])] or integrity != [('ok',)]:
-            raise ValueError('Guest SQLite file did not retain the closed draft')
-        report['guestDatabaseSha256'] = digest(data)
+        if signed:
+            database_bytes = data.read_bytes()
+            report['storedDrafts'] = runtime_probe.validate_database(
+                database_bytes, draft, runtime_probe.APP_TITLE, runtime_probe.APP_BODY)
+            report['guestDatabaseSha256'] = build.sha(database_bytes)
+            check_observer()
+            report['guestObserverAfter'] = 'PASS'
+            vm.remote(shlex.join([*verify, app]), timeout=30)
+            report['guestSignatureAfter'] = 'PASS'
+        else:
+            with closing(sqlite3.connect(data.as_uri()+'?mode=ro&immutable=1', uri=True)) as connection:
+                drafts = connection.execute('select id, revision from stored_drafts').fetchall()
+                integrity = connection.execute('pragma quick_check').fetchall()
+            if drafts != [(draft['id'], draft['revision'])] or integrity != [('ok',)]:
+                raise ValueError('Guest SQLite file did not retain the closed draft')
+            report['guestDatabaseSha256'] = digest(data)
         guest_inventory(vm, guest, expected)
         report['guestInventoryAfter'] = 'PASS'
         check_payload(args.app, expected)
     except BaseException as error:
         report['status'] = 'FAIL'
         report['error'] = guest_error(error)
+        # The parent can reach its local kill deadline while the guest still
+        # owns cleanup. Preserve the primary failure before waiting on it.
+        build.write(receipt, report)
         raise ValueError(report['error']) from None
     finally:
         try:
-            if session is not None:
-                if (exit_code := finish_guest(product, session)) is not None:
-                    report['guestExecutorExit'] = exit_code
-                    report['guestLockReleased'] = True
+            finish_and_record_guest()
+        except KeyboardInterrupt as error:
+            with build.DeferredInterrupts():
+                report.update(status='FAIL', cleanupError='Interrupted while finishing owned guest executor ('
+                              +guest_error(error)+')')
+                build.write(receipt, report)
+                # The finish marker is idempotent in the attested run. Retry
+                # that cleanup without starting another executor or App.
+                try:
+                    finish_and_record_guest()
+                except (OSError, ValueError, subprocess.SubprocessError) as retry_error:
+                    report['cleanupError'] += ('\nCould not confirm owned guest executor shutdown ('
+                                               +guest_error(retry_error)+')')
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             report.update(status='FAIL', cleanupError='Could not confirm owned guest executor shutdown ('
                           +guest_error(error)+')')
-            raise ValueError(report['cleanupError']) from None
         finally:
             build.write(receipt, report)
+        if 'cleanupError' in report:
+            details = [report[key] for key in ('error', 'cleanupError') if key in report]
+            raise ValueError('\n'.join(details)) from None
     report['status'] = 'PASS'
     build.write(receipt, report)
-    print(json.dumps({'status': 'PASS', 'guestRun': report['guestRun']}))
+    result = {'status': 'PASS', 'guestRun': report['guestRun']}
+    if signed:
+        result['receiptSha256'] = build.sha(build.encoded(report))
+    print(json.dumps(result))
 
 
 def interrupted(signum, _frame):
@@ -352,9 +529,15 @@ def interrupted(signum, _frame):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('config', 'app', 'package-info', 'evidence'):
+    for name in ('config', 'app', 'evidence'):
         parser.add_argument('--'+name, type=Path, required=True)
+    info = parser.add_mutually_exclusive_group(required=True)
+    info.add_argument('--package-info', type=Path)
+    info.add_argument('--signed-info', type=Path)
+    parser.add_argument('--expected-signed-info-sha256')
     args = parser.parse_args()
+    if (args.signed_info is None) != (args.expected_signed_info_sha256 is None):
+        parser.error('Signed product information and its expected SHA-256 must be specified together')
     signal.signal(signal.SIGTERM, interrupted)
     try:
         run(args)

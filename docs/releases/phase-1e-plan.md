@@ -217,7 +217,7 @@ needed to complete this contract.
 | 1E.3 | Complete license and third-party distribution materials. | Maintainer license decision and actual App/CLI closure; notices and applicable source/build/relinking materials with provenance and remaining gaps closed. |
 | 1E.4 | Establish a reproducible Release build entry. | 1E.2 and selected executor/toolchain; locked App/CLI build recipe, explicit source inputs, build-info and inventories. |
 | 1E.5 | Package complete products and check integrity. | 1E.3–1E.4; full App/CLI staging, materials, symlink/mode/native-loader checks and extraction verification. |
-| 1E.6 | Apply Developer ID signing and verify runtime. | Staged products, identity/team and signing environment; signed nested products, actual entitlements/Hardened Runtime and runtime evidence. |
+| 1E.6 | [Apply Developer ID signing and verify runtime](phase-1e6-signing.md). | Staged products, identity/team and signing environment; signed nested products, actual entitlements, Hardened Runtime, runtime and user library replacement evidence. |
 | 1E.7 | Notarize and produce the final DMG. | 1E.6, notarization access and complete contents; accepted notarization/tickets, final DMG, post-processing inventories and hashes. |
 | 1E.8 | Provide CI, release entry, and candidate retention. | 1E.4–1E.7 as available; source-specific CI results, controlled release entry and immutable candidate/evidence retention for later publication. |
 | 1E.9 | Accept clean installation and Beta upgrade. | Retained final candidate, owned Beta fixtures and suitable clean macOS environments; real-download/install/offline/upgrade evidence and minimum OS decision. |

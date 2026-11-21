@@ -136,12 +136,15 @@ def selected_info(source, relative, pin):
     return run, info
 
 
-def protected_caches(source, info):
+def protected_caches(source, info, *, package_config_sha256=None):
     options = info['materials']['arguments']
     tools = info['toolchain']
     config = require_material_file(source, '.dart_tool/package_config.json')
+    data = config.read_bytes()
+    if package_config_sha256 is not None:
+        equal(package_config_sha256, sha(data), 'Frozen workspace package configuration')
     package_roots = [Path(unquote(urlparse(urljoin(config.as_uri(), item['rootUri'])).path))
-                     for item in build.read(config)['packages']]
+                     for item in json.loads(data)['packages']]
     return [Path(options['downloads']), Path(options['sdkSourceWorkspace']),
             Path(tools['flutterPath']), Path(tools['macosSdk']['path']),
             Path.home()/'.pub-cache', *package_roots]
@@ -464,7 +467,8 @@ def run_package(args):
                 record['frozenVerification'] = {'result': upstream, 'ledgers': upstream_ledgers(root, run, previous)}
                 equal(initial, snapshot(root, run, info, pin), 'Original candidate after frozen check')
                 record['frozenStatus'] = 'PASS'
-                verify_package(args, output, extract, evidence, runner, record, initial, tools, root, run, info)
+                verify_package(args, output, extract, evidence, runner, record, initial, tools, root, run, info,
+                               protected_paths=caches)
                 verify_frozen_helpers(root, info)
                 equal(initial, snapshot(root, run, info, pin), 'Original candidate after runtime acceptance')
                 equal(tools, tool_identity(), 'Packaging inputs during acceptance')
@@ -486,7 +490,8 @@ def run_package(args):
             raise
 
 
-def verify_package(args, output, extract, evidence, runner, record, initial, tools, root, run, info):
+def verify_package(args, output, extract, evidence, runner, record, initial, tools, root, run, info,
+                   *, protected_paths=()):
     trees, inputs, source_metadata = initial
     identity = info['identity']
     top = safe('Meshchan-'+identity['productVersion']+'-'+identity['target'])
@@ -553,13 +558,17 @@ def verify_package(args, output, extract, evidence, runner, record, initial, too
     record['cliReport'] = persist_report(evidence/'cli-runtime.json', cli)
     record['cliStatus'] = 'PASS'
     if args.vm_config:
+        from package_release_vm import checked_vm_configuration
+
         record['vmAppStatus'] = 'RUNNING'
         runner.env = controlled_environment()
         app = unpacked/'Meshchan.app'
-        result = runner.command('vm-app-runtime', [sys.executable, '-B', ROOT/'tool/package_release_vm.py',
-                                '--config='+str(args.vm_config.expanduser().absolute()), '--app', app,
-                                '--package-info', unpacked/'package-info.json',
-                                '--evidence', evidence/'vm-app'], cwd=ROOT)
+        protected = [ROOT, root, output, extract, *protected_paths]
+        with checked_vm_configuration(args.vm_config.expanduser().absolute(), protected, cwd=ROOT) as vm_config:
+            result = runner.command('vm-app-runtime', [sys.executable, '-B', ROOT/'tool/package_release_vm.py',
+                                    '--config='+str(vm_config), '--app', app,
+                                    '--package-info', unpacked/'package-info.json',
+                                    '--evidence', evidence/'vm-app'], cwd=ROOT)
         vm_result = build.material_result(result)
         record['vmAppReport'] = vm_report_reference(output, evidence/'vm-app/runtime.json', vm_result, {
             'app': str(app), 'identity': identity, 'packageInfoSha256': package_entry['sha256'],

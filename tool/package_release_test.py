@@ -496,6 +496,7 @@ class PackageTests(unittest.TestCase):
         run_id = '20261120T000000Z-product-42'
         cases = {
             'matching': {},
+            'overlapping runtime state': None,
             'old extraction': {'app': '/tmp/earlier extraction/Meshchan.app'},
             'different manifest': {'packageInfoSha256': '1'*64},
             'different App inventory': {'appInventorySha256': '2'*64},
@@ -512,11 +513,21 @@ class PackageTests(unittest.TestCase):
                 evidence = output/'evidence'
                 evidence.mkdir(parents=True)
                 extract = self.root/(case+' extraction')
-                args = SimpleNamespace(command='package', vm_config=self.root/'vm.json',
+                config = self.root/'vm.json'
+                runtime_dir = self.source/'owned source sockets' if change is None else self.root/'private VM state'
+                config_bytes = encoded({'runtime_dir': str(runtime_dir)})
+                config.write_bytes(config_bytes)
+                args = SimpleNamespace(command='package', vm_config=config,
                                        expected_build_info_sha256=self.pin)
 
                 def run_command(name, argv, cwd):
                     if name == 'vm-app-runtime':
+                        self.assertIsNotNone(change, 'An overlapping configuration launched guest work')
+                        private_config, = [Path(value.removeprefix('--config=')) for value in argv
+                                           if isinstance(value, str) and value.startswith('--config=')]
+                        self.assertNotEqual(private_config, config)
+                        self.assertEqual(private_config.read_bytes(), config_bytes)
+                        self.assertEqual(private_config.stat().st_mode & 0o777, 0o600)
                         report = evidence/'vm-app/runtime.json'
                         report.parent.mkdir()
                         package.build.write(report, {
@@ -537,7 +548,11 @@ class PackageTests(unittest.TestCase):
                         package.verify_package(args, output, extract, evidence, runner, record, initial,
                                                {'inputs': {}}, self.source, self.run, self.info)
 
-                    if change:
+                    if change is None:
+                        with self.assertRaisesRegex(ValueError, 'VM runtime_dir overlaps a selected release input'):
+                            verify()
+                        self.assertNotIn('vmAppReport', record)
+                    elif change:
                         with self.assertRaisesRegex(ValueError, 'VM App receipt '+next(iter(change))):
                             verify()
                         self.assertNotEqual(record['vmAppStatus'], 'PASS')
@@ -608,20 +623,186 @@ class PackageTests(unittest.TestCase):
 
 
 class AppVMTests(unittest.TestCase):
+    def test_checked_vm_configuration_snapshots_exact_private_bytes_with_consumer_cwd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            protected = root/'Pinned Product'
+            protected.mkdir()
+            consumer = root/'consumer'
+            consumer.mkdir()
+            config = consumer/'vm.json'
+            data = b'{ "runtime_dir": "../separate VM state", "credentials_file": "private path.json" }\n'
+            config.write_bytes(data)
+            with (patch.dict(os.environ, {'TMPDIR': str(protected)}),
+                  patch.object(tempfile, 'NamedTemporaryFile', wraps=tempfile.NamedTemporaryFile) as stage):
+                staged = app_vm.checked_vm_configuration(Path('vm.json'), [protected], cwd=consumer)
+                stage.assert_not_called()
+                config.write_bytes(encoded({'runtime_dir': '../Pinned Product/child'}))
+                with staged as snapshot:
+                    stage.assert_called_once()
+                    self.assertEqual(snapshot.read_bytes(), data)
+                    self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+                    self.assertFalse(snapshot.is_relative_to(protected))
+            self.assertFalse(snapshot.exists())
+            with self.assertRaisesRegex(ValueError, 'VM runtime_dir overlaps a selected release input'):
+                app_vm.checked_vm_configuration(Path('vm.json'), [protected], cwd=consumer)
+            alias = protected.with_name('pinned product')
+            if alias.exists():
+                config.write_bytes(encoded({'runtime_dir': '../pinned product/case alias child'}))
+                with self.assertRaisesRegex(ValueError, 'VM runtime_dir overlaps a selected release input'):
+                    app_vm.checked_vm_configuration(Path('vm.json'), [protected], cwd=consumer)
+
+            state_parent = root/'deferred VM location'
+            config.write_bytes(encoded({'runtime_dir': str(state_parent/'sockets')}))
+            staged = app_vm.checked_vm_configuration(config, [protected])
+            state_parent.symlink_to(protected, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'VM runtime_dir overlaps a selected release input'):
+                with staged:
+                    self.fail('A runtime path redirected into the protected tree must not be staged')
+
+    def test_configured_vm_runtime_dir_cannot_chmod_the_selected_app(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            app = root/'Meshchan.app'
+            app.mkdir()
+            app.chmod(0o755)
+            (app/'payload').write_bytes(b'Fixture App')
+            manifest = root/'package-info.json'
+            inventory = prefixed('Meshchan.app', product_inventory(app))
+            arguments = self.vm_manifest_arguments(manifest, inventory, signed=False)
+            known_hosts = root/'known_hosts'
+            known_hosts.write_text('fixture file only\n')
+            config = root/'vm.json'
+            config.write_bytes(encoded({
+                'host': 'fixture.invalid', 'user': 'tester', 'uuid': '01234567-89ab-cdef-0123-456789abcdef',
+                'known_hosts': str(known_hosts), 'runtime_dir': str(app),
+                'evidence_dir': str(root/'old evidence'), 'guest_root': '/Users/tester/utm-ui-isolation',
+            }))
+            evidence = root/'evidence'
+            args = SimpleNamespace(app=app, evidence=evidence, config=config, **arguments)
+            with patch.object(app_vm, 'require_ready_connection', side_effect=ValueError('Unexpected SSH preparation')) as ssh:
+                with self.assertRaisesRegex(ValueError, 'VM runtime_dir overlaps a selected release input'):
+                    app_vm.run(args)
+            ssh.assert_not_called()
+            self.assertEqual(app.stat().st_mode & 0o777, 0o755)
+
+    def vm_manifest_arguments(self, path, inventory, *, signed):
+        identity = {
+            'productVersion': '0.1.0-rc.1', 'appVersion': '0.1.0-rc.1+8', 'appBuild': '8',
+            'target': 'macos-arm64', 'apple': {'CFBundleIdentifier': 'org.meshchan.meshchan',
+                                           'CFBundleVersion': '8', 'MeshchanProductVersion': '0.1.0-rc.1'},
+        }
+        info = {'formatVersion': 1, 'identity': identity, 'payloadInventory': inventory}
+        if signed:
+            public = {'sha1': 'a'*40, 'team': 'ABCDEFGHIJ', 'authority': 'Developer ID Application: Fixture'}
+            info['signature'] = {'identity': public, 'items': []}
+        data = encoded(info)
+        path.write_bytes(data)
+        if signed:
+            return {'signed_info': path, 'expected_signed_info_sha256': sha(data)}
+        return {'package_info': path}
+
+    def test_vm_evidence_cannot_be_created_inside_the_app_or_pinned_full_product(self):
+        for signed in (False, True):
+            for cli_present in (False, True):
+                with (self.subTest(signed=signed, cli_present=cli_present),
+                      tempfile.TemporaryDirectory() as directory):
+                    root = Path(directory).resolve()
+                    candidate = root/'Pinned Candidate'
+                    app = candidate/'Meshchan.app'
+                    materials = candidate/'materials'
+                    app.mkdir(parents=True)
+                    materials.mkdir()
+                    (app/'payload').write_bytes(b'Fixture App')
+                    if cli_present:
+                        (candidate/'meshctl').mkdir()
+                    inventory = product_inventory(candidate) | {'meshctl': package.DIR}
+                    manifest = candidate/('signed-product-info.json' if signed else 'package-info.json')
+                    arguments = self.vm_manifest_arguments(manifest, inventory, signed=signed)
+                    before = product_inventory(candidate)
+                    destinations = [app/'guest evidence', materials/'guest evidence']
+                    case_alias = root/'pinned candidate'/'materials'
+                    if case_alias.exists():
+                        destinations.append(case_alias/'case alias evidence')
+                    host = SimpleNamespace(Product=Mock(side_effect=ValueError('Unexpected VM start')))
+                    for evidence in destinations:
+                        with self.subTest(evidence=evidence), patch.object(app_vm, 'load', return_value=host):
+                            args = SimpleNamespace(app=app, evidence=evidence,
+                                                   config=root/'vm.json', **arguments)
+                            with self.assertRaisesRegex(ValueError, 'VM evidence overlaps a selected runtime input'):
+                                app_vm.run(args)
+                            self.assertFalse(evidence.exists())
+                    host.Product.assert_not_called()
+                    self.assertEqual(product_inventory(candidate), before)
+
+    def test_vm_protects_original_and_relocated_cli_from_renamed_or_detached_app_evidence(self):
+        for detached in (False, True):
+            with self.subTest(detached=detached), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                candidate = root/'pinned signed candidate'
+                (candidate/'meshctl').mkdir(parents=True)
+                app_parent = root/'relocated products' if detached else candidate
+                app = app_parent/'Renamed copy.app'
+                app.mkdir(parents=True)
+                app.chmod(package.DIR['mode'])
+                (app/'payload').write_bytes(b'Fixture App')
+                (app_parent/'meshctl').mkdir(exist_ok=True)
+                manifest = candidate/'signed-product-info.json'
+                inventory = prefixed('Meshchan.app', product_inventory(app)) | {'meshctl': package.DIR}
+                arguments = self.vm_manifest_arguments(
+                    manifest, inventory, signed=True)
+                for parent in (candidate, app_parent):
+                    evidence = parent/'meshctl'/'guest evidence'
+                    args = SimpleNamespace(app=app, evidence=evidence, config=root/'vm.json', **arguments)
+                    with self.assertRaisesRegex(ValueError, 'VM evidence overlaps a selected runtime input'):
+                        app_vm.run(args)
+                    self.assertFalse(evidence.exists())
+
+    def test_detached_vm_manifest_and_app_allow_external_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            app = root/'relocated app'/'Detached.app'
+            app.mkdir(parents=True)
+            app.chmod(package.DIR['mode'])
+            (app/'payload').write_bytes(b'Fixture App')
+            before = product_inventory(app)
+            manifest = root/'manifest-copy.json'
+            arguments = self.vm_manifest_arguments(
+                manifest, prefixed('Meshchan.app', before) | {'meshctl': package.DIR}, signed=True)
+            evidence = root/'guest evidence'
+            args = SimpleNamespace(app=app, evidence=evidence, config=root/'vm.json', **arguments)
+            with patch.object(app_vm.subprocess, 'run', side_effect=OSError('test compiler boundary')):
+                with self.assertRaisesRegex(ValueError, 'test compiler boundary'):
+                    app_vm.run(args)
+            receipt = json.loads((evidence/'runtime.json').read_bytes())
+            self.assertEqual(receipt['signedInfoSha256'], digest(manifest))
+            self.assertEqual(receipt['status'], 'FAIL')
+            self.assertEqual(product_inventory(app), before)
+
     def test_vm_receipt_hashes_the_manifest_bytes_used_for_its_app_inventory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root/'package-info.json'
             data = encoded({'identity': {}, 'payloadInventory': {'Meshchan.app': package.DIR}})
             path.write_bytes(data)
+            config_data = encoded({'runtime_dir': str(root/'private VM state')})
             args = SimpleNamespace(package_info=path, app=root/'Meshchan.app',
                                    config=root/'vm.json', evidence=Path(os.path.relpath(root/'evidence')))
-            host = SimpleNamespace(Product=Mock(side_effect=ValueError('test VM startup boundary')))
+            args.config.write_bytes(config_data)
+
+            def startup(config, evidence):
+                self.assertEqual(evidence, args.evidence.absolute())
+                self.assertEqual(Path(config).read_bytes(), config_data)
+                self.assertNotEqual(Path(config), args.config)
+                raise ValueError('test VM startup boundary')
+
+            host = SimpleNamespace(Product=Mock(side_effect=startup))
             with (patch.object(app_vm, 'load', return_value=host),
                   patch.object(app_vm, 'check_payload', side_effect=lambda *_: path.write_bytes(data+b'\n'))):
                 with self.assertRaisesRegex(ValueError, 'test VM startup boundary'):
                     app_vm.run(args)
-            host.Product.assert_called_once_with(str(args.config), args.evidence.absolute())
+            host.Product.assert_called_once()
+            self.assertFalse(Path(host.Product.call_args.args[0]).exists())
             report = package.build.read(args.evidence/'runtime.json')
             self.assertEqual(report['packageInfoSha256'], sha(data))
 
@@ -744,27 +925,53 @@ esac
                     app_vm.finish_guest(product, '/private/session')
 
     def test_vm_failure_receipt_preserves_startup_and_cleanup_errors(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            path = root/'package-info.json'
-            path.write_bytes(encoded({'identity': {}, 'payloadInventory': {'Meshchan.app': package.DIR}}))
-            args = SimpleNamespace(package_info=path, app=root/'Meshchan.app',
-                                   config=root/'vm.json', evidence=root/'evidence')
-            vm = SimpleNamespace(root='/Users/guest/private', c={'user': 'guest'},
-                                 remote=Mock(return_value=SimpleNamespace(stdout='guest OS')))
-            host = SimpleNamespace(Product=Mock(return_value=SimpleNamespace(vm=vm)))
-            lock_error = ValueError('Could not inspect /Users/guest/private/active.lock')
-            with (patch.object(app_vm, 'load', return_value=host),
-                  patch.object(app_vm, 'check_payload'), patch.object(app_vm, 'require_ready_connection'),
-                  patch.object(app_vm, 'guest_session', return_value='/private/session'),
-                  patch.object(app_vm, 'start_guest', side_effect=ValueError('Startup failed')),
-                  patch.object(app_vm, 'finish_guest', side_effect=lock_error)):
-                with self.assertRaisesRegex(ValueError, r'Could not inspect \$GUEST_ROOT/active\.lock'):
-                    app_vm.run(args)
-            report = package.build.read(args.evidence/'runtime.json')
-            self.assertEqual(report['status'], 'FAIL')
-            self.assertEqual(report['error'], 'Startup failed')
-            self.assertIn('Could not inspect $GUEST_ROOT/active.lock', report['cleanupError'])
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root/'package-info.json'
+                path.write_bytes(encoded({'identity': {}, 'payloadInventory': {'Meshchan.app': package.DIR}}))
+                args = SimpleNamespace(package_info=path, app=root/'Meshchan.app',
+                                       config=root/'vm.json', evidence=root/'evidence')
+                args.config.write_bytes(encoded({'runtime_dir': str(root/'private VM state')}))
+                vm = SimpleNamespace(root='/Users/guest/private', c={'user': 'guest'},
+                                     remote=Mock(return_value=SimpleNamespace(stdout='guest OS')))
+                product = SimpleNamespace(vm=vm)
+                host = SimpleNamespace(Product=Mock(return_value=product))
+                receipt = args.evidence/'runtime.json'
+                lock_error = ValueError('Could not inspect /Users/guest/private/active.lock')
+                finish_error = KeyboardInterrupt('Fixture cleanup interrupt') if interrupted else lock_error
+
+                def finish(*_):
+                    # The outer runner may kill the local process while it
+                    # waits for the guest. The first failure must already exist.
+                    report = package.build.read(receipt)
+                    self.assertEqual(report['status'], 'FAIL')
+                    self.assertEqual(report['error'], 'Startup failed')
+                    if complete.call_count == 1:
+                        raise finish_error
+                    self.assertIn('Fixture cleanup interrupt', report['cleanupError'])
+                    return 0
+
+                with (patch.object(app_vm, 'load', return_value=host),
+                      patch.object(app_vm, 'check_payload'), patch.object(app_vm, 'require_ready_connection'),
+                      patch.object(app_vm, 'guest_session', return_value='/private/session'),
+                      patch.object(app_vm, 'start_guest', side_effect=ValueError('Startup failed')),
+                      patch.object(app_vm, 'finish_guest', side_effect=finish) as complete):
+                    expected = ('Fixture cleanup interrupt' if interrupted else
+                                r'Could not inspect \$GUEST_ROOT/active\.lock')
+                    with self.assertRaisesRegex(ValueError, expected) as caught:
+                        app_vm.run(args)
+                    self.assertIn('Startup failed', str(caught.exception))
+                report = package.build.read(receipt)
+                self.assertEqual(report['status'], 'FAIL')
+                self.assertEqual(report['error'], 'Startup failed')
+                self.assertEqual(complete.call_count, 2 if interrupted else 1)
+                if interrupted:
+                    self.assertIn('Fixture cleanup interrupt', report['cleanupError'])
+                    self.assertEqual(report['guestExecutorExit'], 0)
+                    self.assertIs(report['guestLockReleased'], True)
+                else:
+                    self.assertIn('Could not inspect $GUEST_ROOT/active.lock', report['cleanupError'])
 
     def test_interrupted_start_does_not_finish_an_unattested_guest(self):
         product = SimpleNamespace(state={}, finish=Mock())

@@ -113,6 +113,56 @@ class EvidenceTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 retention.verify_image_volume(ledger, logs(receipt | {field: value}), mount)
 
+    def test_historical_image_codesign_binds_the_commands_and_signature_outputs(self):
+        candidate = self.original/'extracted product'
+        policy = retention.release_signing
+        framework = 'Meshchan.app/Contents/Frameworks/App.framework'
+        binary = framework+'/Versions/A/App'
+        item = policy.CodeItem(framework, binary, 'framework', 'org.meshchan.app', False, 'A', dmg.PROFILE)
+        target = str(candidate/framework)
+        name = 'verify-01-framework-arm64'
+        codesign = '/usr/bin/codesign'
+        verify = [codesign, '--verify', '--strict', '--all-architectures', '--verbose=2']
+        display = [codesign, '--display', '--architecture', 'arm64', '--bundle-version', 'A']
+        ledger = {'steps': [
+            {'name': 'verify-app-nested', 'argv': [*verify, '--deep', str(candidate/'Meshchan.app')]},
+            {'name': 'verify-01-framework-requirement', 'argv': [*verify, '--bundle-version', 'A', target]},
+            {'name': name+'-display', 'argv': [*display, '--verbose=4', target]},
+            {'name': name+'-entitlements', 'argv': [*display, '--entitlements', '-', '--xml', target]},
+        ]}
+        cdhash = '1'*40
+        fields = (
+            f'Executable={candidate/binary}', 'Total signatures=1', 'Chosen signature=1', 'Signature=adhoc',
+            'CodeDirectory v=20400 flags=0x2(adhoc) location=embedded', f'CDHash={cdhash}',
+            f'Identifier={item.identifier}', 'TeamIdentifier=not set',
+        )
+        stderr = ('\n'.join(fields)+'\n').encode()
+        logs = {name+'-display': {'stderrLog': stderr}, name+'-entitlements': {'log': b''}}
+        signature = {
+            'identity': policy.local_identity(),
+            'order': [{**item.record(), 'architectures': ['arm64']}],
+            'items': [{**item.record(), 'slices': {
+                'arm64': {'identifier': item.identifier, 'team': None, 'authorityChain': [], 'timestamp': None,
+                          'signatureSlots': 1, 'flags': 2, 'runtime': False, 'adhoc': True,
+                          'cdhash': cdhash, 'entitlements': {}},
+            }}],
+        }
+        retention.verify_image_signatures(ledger, logs, candidate, signature, (item,))
+
+        for original, replacement in ((str(candidate/binary).encode(), b'/other/executable'),
+                                      (cdhash.encode(), b'2'*40),
+                                      (b'flags=0x2', b'flags=0x10002')):
+            bad_logs = logs | {name+'-display': {'stderrLog': stderr.replace(original, replacement)}}
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                retention.verify_image_signatures(ledger, bad_logs, candidate, signature, (item,))
+        entitlements = {'log': plistlib.dumps({'com.apple.security.get-task-allow': True})}
+        with self.assertRaisesRegex(ValueError, 'Embedded runtime or entitlements'):
+            retention.verify_image_signatures(ledger, logs | {name+'-entitlements': entitlements},
+                                              candidate, signature, (item,))
+        ledger['steps'][2]['argv'][3] = 'x86_64'
+        with self.assertRaisesRegex(ValueError, 'Historical codesign invocation .* argv differs'):
+            retention.verify_image_signatures(ledger, logs, candidate, signature, (item,))
+
     def test_evidence_references_reject_aliases_and_scope_escape(self):
         reader = retention.RetainedRead(self.locate, live=False)
         target = self.original/'owned/evidence.json'

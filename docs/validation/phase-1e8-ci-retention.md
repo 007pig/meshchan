@@ -324,3 +324,35 @@ All 557 Python tool tests passed in 108.656 seconds with CPython 3.15.2 at
 `/opt/homebrew/bin/python3`. The
 `build/phase-1e8/entry-point-review-python-suite.log` SHA-256 is
 `8ae0ded7c0605a726c50f4b7ebc228627eba50c9618d433673ad6ca519f8132d`.
+
+### Post-push branch review
+
+The pushed checkout `117a82229036a59e54f7b0eb2a2ec697c781b163` produced
+a 76-entry verifier snapshot. The standalone bootstrap authenticated the
+snapshot and launched its CLI from a private copy.
+
+The follow-up verifier bound the original `codesign` argument lists and raw
+observations to the candidate's code items and architecture slices. Both
+historical image records verified eight code items and 13 slices each.
+The revised verifier then restored the original object under the recorded
+read-isolation profile. The restored image passed native macOS verification
+and matched the original DMG SHA-256. The original receipt pin also still
+matched. The temporary recovery was removed. The
+`RC1 Build 8 - post-push review evidence/verification.json` report has
+SHA-256
+`75a2232570d7e1728dcc0883f2f65b9a46b4a18fa8edecf0a4e6ef052fefdc91`.
+
+All 559 Python tool tests passed in 121.071 seconds with CPython 3.15.2
+at `/opt/homebrew/bin/python3`. The
+`build/phase-1e8/post-push-review-python-suite.log` SHA-256 is
+`5e9ec85de068c2033fca3e4d65dbf99cc62751e4682e71beb02d5e5dbcf13760`.
+
+The [push CI run for `117a822`](https://github.com/007pig/meshchan/actions/runs/44924912092)
+completed successfully on attempt 1. Job `check` uploaded artifact
+`14715558197` and job `macos-app` uploaded artifact `14715244122`. Both ZIPs
+were downloaded and verified against GitHub's sizes and SHA-256 values.
+The embedded workflow, reports, logs, and input digests matched the pushed
+commit. The snapshot at `build/phase-1e8/ci-snapshots/review-117a822` has
+external SHA-256
+`dc2908f1c51cc93c9fc77dec242c57fa2af79c9b89e515ecb066a58d3b62e232`.
+The two follow-up fixes were verified in the local working tree.

@@ -149,17 +149,21 @@ def step_report(job, context, root):
         result_path = root / (stage + '.json')
         # Reporting can still run with the runner's default interpreter
         # when the pinned Python setup fails.
-        if stage in CHECKS[job] and not log.is_symlink() and log.is_file():
-            with log.open('rb') as stream:
-                row['log'] = {'path': log.name, **measure(stream)}
-            if not result_path.is_symlink() and result_path.is_file():
-                try:
+        if stage in CHECKS[job]:
+            try:
+                if not log.is_symlink() and log.is_file():
+                    with log.open('rb') as stream:
+                        row['log'] = {'path': log.name, **measure(stream)}
+            except OSError:
+                errors.append('Could not read captured step log: ' + stage)
+            try:
+                if not result_path.is_symlink() and result_path.is_file():
                     code = load_json(result_path.read_bytes())['exit_code']
                     if type(code) is not int or not 0 <= code <= 255:
                         raise ValueError('Expected a shell exit code')
                     row['exit_code'] = code
-                except (OSError, ValueError, TypeError, KeyError):
-                    errors.append('Malformed step exit code capture: ' + stage)
+            except (OSError, ValueError, TypeError, KeyError):
+                errors.append('Malformed step exit code capture: ' + stage)
         if (stage in CHECKS[job] and row['outcome'] == 'success'
                 and (row['log'] is None or row['exit_code'] != 0)):
             errors.append('Successful step is missing complete capture: ' + stage)

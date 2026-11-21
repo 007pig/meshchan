@@ -13,6 +13,7 @@ import package_dmg as dmg
 import package_dmg_image as disk
 import package_release as package
 import release_signed_runtime as runtime
+import release_signing
 import sign_release as signing
 from package_release import equal, verify_report_fields
 from release_materials import digest, encoded, product_inventory, safe, sha
@@ -654,6 +655,60 @@ def verify_process_order(ledger, signatures):
                 raise ValueError('Extracted product check preceded owned image detach')
 
 
+def verify_image_signatures(ledger, logs, candidate, signature, policy):
+    """Bind the retained codesign observations to the extracted products."""
+    codesign = '/usr/bin/codesign'
+    verify = [codesign, '--verify', '--strict', '--all-architectures', '--verbose=2']
+
+    def command(name, argv):
+        verify_report_fields(signing.process_step(ledger, name), {'argv': argv},
+                             'Historical codesign invocation '+name)
+
+    if release_signing.policy_profile(policy) != dmg.PROFILE:
+        raise ValueError('Expected the accepted local signing policy')
+    command('verify-app-nested', [*verify, '--deep', str(candidate/'Meshchan.app')])
+    for index, (item, recorded, order) in enumerate(zip(policy, signature['items'], signature['order'], strict=True), 1):
+        prefix = f'verify-{index:02d}-{item.role}'
+        target = str(candidate/item.path)
+        verify_report_fields(recorded, item.record(), 'Historical codesign item')
+        verify_report_fields(order, item.record(), 'Historical codesign order')
+        slices = recorded['slices']
+        equal(set(order['architectures']), set(slices), 'Historical codesign architecture set')
+        if not slices:
+            raise ValueError('Missing historical codesign architecture observations: '+target)
+        command(prefix+'-requirement', [*verify, *item.bundle_args(), target])
+        for arch, saved in slices.items():
+            name = prefix+'-'+arch
+            display = [codesign, '--display', '--architecture', arch, *item.bundle_args()]
+            command(name+'-display', [*display, '--verbose=4', target])
+            command(name+'-entitlements', [*display, '--entitlements', '-', '--xml', target])
+            properties = logs[name+'-display']['stderrLog'].decode()
+
+            def field(key):
+                return release_signing.required_value(properties, key)
+
+            for key, expected in (('Executable', str(candidate/item.binary)), ('Total signatures', '1'),
+                                  ('Chosen signature', '1'), ('Signature', 'adhoc')):
+                equal(expected, field(key), 'Historical codesign '+key)
+            flags = re.findall(r'^CodeDirectory [^\n]*?\bflags=0x([a-fA-F0-9]+)\([^\n]*\)[^\n]*'
+                               r'\blocation=embedded$', properties, re.MULTILINE)
+            cdhash = field('CDHash')
+            if (len(flags) != 1 or not re.fullmatch(r'[0-9a-f]{40}', cdhash)
+                    or re.search(r'^(?:Authority|Timestamp)=', properties, re.MULTILINE)):
+                raise ValueError('Invalid historical ad hoc CodeDirectory or signing metadata: '+target)
+            flags = int(flags[0], 16)
+            team = field('TeamIdentifier')
+            raw = logs[name+'-entitlements']['log'].decode()
+            observed = {'identifier': field('Identifier'), 'team': None if team == 'not set' else team,
+                        'authorityChain': [], 'timestamp': None, 'signatureSlots': 1,
+                        'flags': flags, 'runtime': bool(flags & release_signing.CS_RUNTIME),
+                        'adhoc': bool(flags & release_signing.CS_ADHOC), 'cdhash': cdhash,
+                        'entitlements': disk.parse_plist(raw, 'historical codesign entitlements') if raw.strip() else {}}
+            release_signing.verify_signature_values(item, signature['identity'], observed)
+            equal(set(observed), set(saved), 'Historical codesign slice fields '+name)
+            verify_report_fields(observed, saved, 'Historical codesign slice '+name)
+
+
 def verify_image_structure(ledger, logs, image, observation):
     for name, command in (('image-info', 'imageinfo'), ('verify-image', 'verify')):
         verify_report_fields(signing.process_step(ledger, name), {
@@ -705,7 +760,7 @@ def verify_image_volume(ledger, logs, mount):
                          'Historical disk image volume ownership')
 
 
-def verify_image_record(reader, record, output, info, layout, expected, *, independent):
+def verify_image_record(reader, record, output, info, layout, expected, policy, *, independent):
     schema = {
         **dmg.SIGNATURE_POLICY, 'formatVersion': 1, **expected, 'dmgTool': layout.manifest['dmgTool'],
         **dict.fromkeys(IMAGE_GATES, 'PASS'),
@@ -766,6 +821,7 @@ def verify_image_record(reader, record, output, info, layout, expected, *, indep
         'signatures': info['signature']['items'], 'native': info['native'],
     }, 'Historical DMG static product report')
     verify_process_order(ledger, static['signatures'])
+    verify_image_signatures(ledger, logs, candidate, info['signature'], policy)
     if independent:
         cli = reader.report(output, record['cliReport'], evidence/'cli-runtime.json')
         context = {'imageSha256': expected['image']['sha256'], 'signingProfile': dmg.PROFILE,
@@ -828,8 +884,10 @@ def accepted_image(reader, refs, info, full):
     payload_path = output/'evidence'/dmg.IMAGE_MANIFEST
     if 'image_payload' in refs:
         equal((payload_path, sha(encoded(layout.manifest))), refs['image_payload'], 'External image payload pin')
-    create_root = verify_image_record(reader, created, output, info, layout, expected, independent=False)
-    check_root = verify_image_record(reader, accepted, acceptance_path.parent, info, layout, expected, independent=True)
+    policy = release_signing.parse_policy(contents['dmg-source/tool/release_signing_policy.json'])
+    create_root = verify_image_record(reader, created, output, info, layout, expected, policy, independent=False)
+    check_root = verify_image_record(reader, accepted, acceptance_path.parent, info, layout, expected, policy,
+                                     independent=True)
     if create_root == check_root or create_root.is_relative_to(check_root) or check_root.is_relative_to(create_root):
         raise ValueError('Creation and independent acceptance must have distinct DMG workspaces')
     equal(created['imageVerification'], accepted['imageVerification'], 'Matching DMG structure observations')

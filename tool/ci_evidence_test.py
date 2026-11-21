@@ -218,6 +218,33 @@ class CIEvidenceTest(unittest.TestCase):
         self.assertIsNone(row['exit_code'])
         self.assertEqual(row['log']['sha256'], evidence.sha256(b'captured output'))
 
+    def test_unreadable_log_preserves_other_step_diagnostics_and_exit_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'format.log').write_bytes(b'format output')
+            (root / 'format.json').write_text('{"exit_code":0}', encoding='utf-8')
+            (root / 'analyze.log').write_bytes(b'analyzer failure')
+            (root / 'analyze.json').write_text('{"exit_code":1}', encoding='utf-8')
+            open_path = Path.open
+
+            def open_log(path, *args, **kwargs):
+                if path == root / 'format.log':
+                    raise PermissionError('Unreadable capture')
+                return open_path(path, *args, **kwargs)
+
+            with patch.object(Path, 'open', open_log):
+                steps, errors = evidence.step_report(self.job, {
+                    'format': {'outcome': 'success', 'conclusion': 'success'},
+                    'analyze': {'outcome': 'failure', 'conclusion': 'failure'},
+                }, root)
+        self.assertIn('Could not read captured step log: format', errors)
+        self.assertIn('Successful step is missing complete capture: format', errors)
+        rows = {row['id']: row for row in steps}
+        self.assertIsNone(rows['format']['log'])
+        self.assertEqual(rows['format']['exit_code'], 0)
+        self.assertEqual(rows['analyze']['log']['sha256'], evidence.sha256(b'analyzer failure'))
+        self.assertEqual(rows['analyze']['exit_code'], 1)
+
     def test_malformed_toolchain_metadata_can_be_reported_with_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'toolchain.json'

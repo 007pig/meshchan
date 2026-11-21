@@ -306,10 +306,6 @@ def retain(args):
         for name, entry in verifier.items():
             (target/VERIFIER/name).chmod(entry['mode'])
         check_payload(target/VERIFIER, verifier)
-        if ((target.stat().st_dev, target.stat().st_ino) != (target_id.st_dev, target_id.st_ino)
-                or canonical(target) != target or regular_entry(target/ARCHIVE)[0] != archive_identity
-                or bound_json(target/MANIFEST, sha(manifest_raw))[1] != manifest_raw):
-            raise ValueError('Retention object changed before publication')
         archive_identity = write_archive(target/ARCHIVE, mappings, expected, stamps)
         manifest_raw = encoded(manifest)
         new_file(target/MANIFEST, manifest_raw, 0o400)
@@ -324,6 +320,10 @@ def retain(args):
             if entry['type'] == 'file' and scanned_input(ROOT/name)[0]['.'] != entry:
                 raise ValueError(f'Retention checkout changed while sealing: {name}')
         check_payload(target/VERIFIER, verifier)
+        if ((target.stat().st_dev, target.stat().st_ino) != (target_id.st_dev, target_id.st_ino)
+                or canonical(target) != target or regular_entry(target/ARCHIVE)[0] != archive_identity
+                or bound_json(target/MANIFEST, sha(manifest_raw))[1] != manifest_raw):
+            raise ValueError('Retention object changed before publication')
         receipt = {'formatVersion': 1, 'status': 'SEALED', 'sealedAt': now(),
                    'manifestSha256': sha(manifest_raw), 'archive': archive_identity}
         receipt_raw = encoded(receipt)

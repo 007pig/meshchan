@@ -1,15 +1,20 @@
+from contextlib import redirect_stdout
 import hashlib
 import io
 import os
 from pathlib import Path
+import shutil
 import stat
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
-from release_materials import encoded
+from release_materials import encoded, product_inventory, sha
 from release_package_archive import archive_stamp
 from release_retention_archive import restore_members, scanned_input, write_archive
+import retain_release as retention
 from retain_release import Mapping, bound_json, canonical, source_inventory
 
 
@@ -166,6 +171,40 @@ class RetentionArchiveTests(unittest.TestCase):
         inventory, stamp = scanned_input(self.data)
         self.assertEqual(inventory['.']['mode'], 0o600)
         self.assertEqual(stamp['.'][1], self.data.stat().st_ino)
+
+    def test_seal_and_check_publish_only_after_archive_round_trip(self):
+        selection = self.root/'selection.json'
+        candidate = {key: {'path': str(self.data), 'sha256': sha(self.data.read_bytes())}
+                     for key in retention.CANDIDATE_FIELDS}
+        raw = encoded({'formatVersion': 1, 'candidate': candidate, 'inputRoots': [str(self.original)],
+                       'retentionSource': 'fixture', 'ci': {}})
+        selection.write_bytes(raw)
+        seal = self.root/'sealed fixture'
+
+        def verify_chain(selected, locate, *, live=False):
+            self.assertEqual(locate(selected['dmg']['path']).read_bytes(), b'owned SQLite fixture')
+            return {'roots': [self.original], 'identities': {}}
+
+        def snapshot(work, source):
+            base = work/retention.VERIFIER
+            (base/'tool').mkdir(parents=True)
+            shutil.copy(retention.ROOT/'tool/retain_release.py', base/'tool')
+            return product_inventory(base)
+
+        def check(data, chain, locate, *, sealing=False):
+            return {'fixture': True}
+
+        with patch.object(retention, 'destinations'), patch.object(retention, 'snapshot_verifier', snapshot), \
+                patch.object(retention.release_retention_inputs, 'verify_chain', verify_chain), \
+                patch.object(retention, 'ci_inputs', check), redirect_stdout(io.StringIO()):
+            retention.retain(SimpleNamespace(selection=selection, selection_sha256=sha(raw),
+                                             work=self.root/'seal log', destination=seal))
+            receipt_pin = sha((seal/retention.RECEIPT).read_bytes())
+            self.original.rename(self.root/'unavailable original')
+            retention.verify(SimpleNamespace(command='check', retention=seal, receipt_sha256=receipt_pin,
+                                             work=self.root/'check log'))
+        self.assertTrue((self.root/'check log/verification.json').is_file())
+        self.assertEqual(sha((seal/retention.RECEIPT).read_bytes()), receipt_pin)
 
 
 if __name__ == '__main__':

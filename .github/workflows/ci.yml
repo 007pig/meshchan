@@ -11,110 +11,145 @@ permissions:
 env:
   MESHCHAN_CI_PYTHON_VERSION: '3.15.2'
 
+defaults:
+  run:
+    shell: 'ci_evidence.py run "{0}"'
+
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      MESHCHAN_CI_RUNNER_LABEL: ubuntu-latest
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Flutter and bundled Dart
+        id: setup_flutter
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           flutter-version: '3.50.0'
 
       - name: Set up CPython
+        id: setup_python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.MESHCHAN_CI_PYTHON_VERSION }}
 
-      - name: Print SDK versions
+      - name: Enable CI check log capture
+        id: enable_evidence
+        shell: bash
         run: |
-          uname -m
-          flutter --version --machine
-          dart --version
-          python3 --version
-          command -v python3
+          umask 077
+          mkdir "$RUNNER_TEMP/meshchan-ci-capture"
+          printf '%s\n' "$GITHUB_WORKSPACE/tool" >> "$GITHUB_PATH"
+
+      - name: Record actual runner architecture and toolchain
+        id: runner_toolchain
+        run: python3 tool/ci_evidence.py toolchain
 
       - name: Get locked workspace dependencies
+        id: locked_dependencies
         run: flutter pub get --enforce-lockfile
 
       - name: Check explicit candidate versions and identity
+        id: candidate_identity
         run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8
 
       - name: Generate production database and dependency probe
+        id: generate_database
         working-directory: packages/meshchan_core
         run: dart run build_runner build
 
       - name: Check production schema snapshot and generated helpers
+        id: schema_snapshot
         working-directory: packages/meshchan_core
         run: dart run tool/check_schema.dart
 
       - name: Check tracked production and probe artifacts
+        id: tracked_generated
         run: |
           git ls-files --error-unmatch packages/meshchan_core/lib/src/storage/database.g.dart packages/meshchan_core/test/support/dependency_probe_database.g.dart packages/meshchan_core/drift_schemas/drift_schema_v1.json packages/meshchan_core/test/storage/generated/schema.dart packages/meshchan_core/test/storage/generated/schema_v1.dart
           git diff --exit-code -- packages/meshchan_core/lib/src/storage/database.g.dart packages/meshchan_core/test/support/dependency_probe_database.g.dart packages/meshchan_core/drift_schemas packages/meshchan_core/test/storage/generated
 
       - name: Check formatting
+        id: format
         run: git ls-files -z -- '*.dart' | xargs -0 dart format --output=none --set-exit-if-changed
 
       - name: Analyze workspace
+        id: analyze
         run: flutter analyze --no-pub --fatal-infos
 
       - name: Test Flutter runtime, recording lifecycle and probes without hardware
+        id: flutter_tests
         working-directory: apps/meshchan_app
         run: flutter test --no-pub --concurrency=1
 
       - name: Verify runtime process ownership without hardware
+        id: runtime_process
         run: python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 
       - name: Verify product drafts and lost committed writes across processes
+        id: draft_process
         run: python3 apps/meshchan_app/tool/check_draft_process.py --dart "$(command -v dart)"
 
       - name: Verify product profiles, settings, resolver and lost writes
+        id: profile_process
         run: python3 apps/meshchan_app/tool/check_profile_process.py --dart "$(command -v dart)"
 
       - name: Verify finite device checks and cleanup across processes
+        id: device_process
         run: python3 apps/meshchan_app/tool/check_device_process.py --dart "$(command -v dart)"
 
       - name: Verify recorded diagnostic process lifecycle without hardware
+        id: diagnostic_process
         run: python3 apps/meshchan_app/tool/check_diagnostic_process.py --dart "$(command -v dart)"
 
       - name: Verify history, recovery and export selection across processes
+        id: history_process
         run: python3 apps/meshchan_app/tool/check_history_process.py --dart "$(command -v dart)"
 
-      - name: Test finite acceptance plan validation without hardware
+      - name: Test Python engineering tools without hardware
+        id: python_tests
         run: python3 -m unittest discover -s tool -p '*_test.py'
 
       - name: Test offline values, real SQLite files, ownership and failure paths
+        id: core_tests
         working-directory: packages/meshchan_core
         run: dart test
 
       - name: Test CLI
+        id: cli_tests
         working-directory: apps/meshctl
         run: dart test
 
       - name: Test core suite without hardware
+        id: link_tests
         working-directory: packages/meshcore_link
         run: dart test
 
       - name: Build native CLI bundle
+        id: native_cli
         working-directory: apps/meshctl
         run: dart build cli --target=bin/meshctl.dart --output=build/dist
 
       - name: Build serial transport check without opening hardware
+        id: serial_probe
         working-directory: packages/meshcore_link
         run: dart build cli --target=example/serial_transport_check.dart --output=build/serial-transport-check
 
       - name: Build development datagram acceptance bundle
+        id: datagram_probe
         working-directory: apps/meshctl
         run: dart build cli --target=tool/datagram_acceptance.dart --output=build/datagram-acceptance
 
       - name: Verify source and native entry points without hardware
+        id: cli_smoke
         run: |
           python3 tool/smoke_cli.py --expected-version 0.1.0-rc.1 \
             --dart "$(command -v dart)" \
@@ -123,72 +158,131 @@ jobs:
             --datagram-acceptance-bundle apps/meshctl/build/datagram-acceptance/bundle
 
       - name: Check patch whitespace
+        id: whitespace
         run: git diff --check
+
+      - name: Finalize CI job evidence
+        id: job_evidence
+        if: ${{ always() && steps.checkout.outcome == 'success' }}
+        shell: bash
+        env:
+          MESHCHAN_CI_STEPS: ${{ toJSON(steps) }}
+          MESHCHAN_CI_CHECK_RUN_ID: ${{ job.check_run_id }}
+        run: python3 tool/ci_evidence.py report
+
+      - name: Upload CI job evidence
+        id: upload_evidence
+        if: ${{ always() && steps.job_evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: meshchan-ci-${{ steps.job_evidence.outputs.checkout_sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: |
+            ${{ runner.temp }}/meshchan-ci-evidence/report.json
+            ${{ runner.temp }}/meshchan-ci-evidence/workflow.yml
+            ${{ runner.temp }}/meshchan-ci-evidence/logs.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record uploaded CI evidence identity
+        if: ${{ always() && steps.upload_evidence.outcome == 'success' }}
+        shell: bash
+        env:
+          EVIDENCE_ID: ${{ steps.upload_evidence.outputs.artifact-id }}
+          EVIDENCE_URL: ${{ steps.upload_evidence.outputs.artifact-url }}
+          EVIDENCE_DIGEST: ${{ steps.upload_evidence.outputs.artifact-digest }}
+          EVIDENCE_OK: ${{ steps.job_evidence.outputs.evidence_ok }}
+        run: |
+          printf '%s\n' "Artifact ID: $EVIDENCE_ID" \
+            "Artifact URL: $EVIDENCE_URL" "Artifact SHA-256: $EVIDENCE_DIGEST" \
+            >> "$GITHUB_STEP_SUMMARY"
+          [[ "$EVIDENCE_ID" =~ ^[0-9]+$ && -n "$EVIDENCE_URL" ]]
+          [[ "$EVIDENCE_DIGEST" =~ ^[0-9a-f]{64}$ && "$EVIDENCE_OK" == true ]]
 
   macos-app:
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      MESHCHAN_CI_RUNNER_LABEL: macos-15
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Set up Flutter and bundled Dart
+        id: setup_flutter
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           flutter-version: '3.50.0'
       - name: Set up CPython
+        id: setup_python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.MESHCHAN_CI_PYTHON_VERSION }}
-      - name: Record actual runner architecture and toolchain
+      - name: Enable CI check log capture
+        id: enable_evidence
+        shell: bash
         run: |
-          uname -m
-          sw_vers
-          flutter --version --machine
-          xcode-select -p
-          xcrun --show-sdk-version
-          xcrun clang --version
-          python3 --version
-          python_path=$(command -v python3)
-          printf '%s\n' "$python_path"
-          printf 'MESHCHAN_BUILD_PYTHON=%s\n' "$python_path" >> "$GITHUB_ENV"
+          umask 077
+          mkdir "$RUNNER_TEMP/meshchan-ci-capture"
+          printf '%s\n' "$GITHUB_WORKSPACE/tool" >> "$GITHUB_PATH"
+
+      - name: Record actual runner architecture and toolchain
+        id: runner_toolchain
+        run: |
+          python3 tool/ci_evidence.py toolchain
+          printf 'MESHCHAN_BUILD_PYTHON=%s\n' "$(command -v python3)" >> "$GITHUB_ENV"
+
       - name: Get locked workspace dependencies
+        id: locked_dependencies
         run: flutter pub get --enforce-lockfile
       - name: Check candidate source identity
+        id: candidate_identity
         run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8
       - name: Test app without hardware
+        id: flutter_tests
         working-directory: apps/meshchan_app
         run: flutter test --no-pub --concurrency=1
       - name: Verify runtime across independent processes
+        id: runtime_process
         run: python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
       - name: Verify product draft process persistence and unknown writes
+        id: draft_process
         run: python3 apps/meshchan_app/tool/check_draft_process.py --dart "$(command -v dart)"
       - name: Verify profile product process persistence
+        id: profile_process
         run: python3 apps/meshchan_app/tool/check_profile_process.py --dart "$(command -v dart)"
       - name: Verify finite device check process lifecycle
+        id: device_process
         run: python3 apps/meshchan_app/tool/check_device_process.py --dart "$(command -v dart)"
       - name: Verify recorded diagnostic process lifecycle
+        id: diagnostic_process
         run: python3 apps/meshchan_app/tool/check_diagnostic_process.py --dart "$(command -v dart)"
       - name: Verify history process persistence and recovery
+        id: history_process
         run: python3 apps/meshchan_app/tool/check_history_process.py --dart "$(command -v dart)"
       - name: Build debug and release apps sequentially
+        id: macos_build
         working-directory: apps/meshchan_app
         run: |
           flutter build macos --debug --no-pub
           flutter build macos --release --no-pub
       - name: Check actual release plist identity
+        id: release_plist
         run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
       - name: Test native macOS runner host without hardware
+        id: xctest
         working-directory: apps/meshchan_app
         run: >-
           xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner
           -configuration Debug -destination 'platform=macOS,arch=arm64'
           -derivedDataPath build/macos -parallel-testing-enabled NO test
       - name: Verify production runtime and relocated release without hardware
+        id: macos_runtime
         run: python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 8 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
       - name: Verify release SQLite across app processes without serial access
+        id: macos_sqlite
         run: |
           python3 - <<'PY'
           import json
@@ -209,3 +303,40 @@ jobs:
               if len(reports) != 1 or reports[0].get('passed') is not True:
                   raise RuntimeError('Missing successful native fixture report')
           PY
+
+      - name: Finalize CI job evidence
+        id: job_evidence
+        if: ${{ always() && steps.checkout.outcome == 'success' }}
+        shell: bash
+        env:
+          MESHCHAN_CI_STEPS: ${{ toJSON(steps) }}
+          MESHCHAN_CI_CHECK_RUN_ID: ${{ job.check_run_id }}
+        run: python3 tool/ci_evidence.py report
+
+      - name: Upload CI job evidence
+        id: upload_evidence
+        if: ${{ always() && steps.job_evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: meshchan-ci-${{ steps.job_evidence.outputs.checkout_sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: |
+            ${{ runner.temp }}/meshchan-ci-evidence/report.json
+            ${{ runner.temp }}/meshchan-ci-evidence/workflow.yml
+            ${{ runner.temp }}/meshchan-ci-evidence/logs.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record uploaded CI evidence identity
+        if: ${{ always() && steps.upload_evidence.outcome == 'success' }}
+        shell: bash
+        env:
+          EVIDENCE_ID: ${{ steps.upload_evidence.outputs.artifact-id }}
+          EVIDENCE_URL: ${{ steps.upload_evidence.outputs.artifact-url }}
+          EVIDENCE_DIGEST: ${{ steps.upload_evidence.outputs.artifact-digest }}
+          EVIDENCE_OK: ${{ steps.job_evidence.outputs.evidence_ok }}
+        run: |
+          printf '%s\n' "Artifact ID: $EVIDENCE_ID" \
+            "Artifact URL: $EVIDENCE_URL" "Artifact SHA-256: $EVIDENCE_DIGEST" \
+            >> "$GITHUB_STEP_SUMMARY"
+          [[ "$EVIDENCE_ID" =~ ^[0-9]+$ && -n "$EVIDENCE_URL" ]]
+          [[ "$EVIDENCE_DIGEST" =~ ^[0-9a-f]{64}$ && "$EVIDENCE_OK" == true ]]

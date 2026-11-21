@@ -14,6 +14,7 @@ import subprocess
 import sys
 from zipfile import BadZipFile, ZipFile
 
+from ci_evidence import load_json
 from release_package_archive import open_archive
 
 
@@ -26,7 +27,11 @@ CHECKOUT = re.compile(
     rb'(?m)^\S+ \[command\][^\r\n]+/git log -1 --format=%H\r?\n'
     rb'\S+ ([0-9a-f]{40})\r?$'
 )
-MERGE_REF = re.compile(rb'(?m)^\S+ \[command\][^\r\n]+/git checkout .*pull/([1-9][0-9]*)/merge\r?$')
+CHECKED_REF = re.compile(
+    rb'(?m)^\S+ \[command\][^\r\n]+/git checkout [^\r\n]+ '
+    rb'(refs/(?:remotes/origin/|remotes/pull/|tags/)\S+)\r?$'
+)
+MERGE_REF = re.compile(r'refs/pull/([1-9][0-9]*)/merge')
 
 
 def require(condition, message):
@@ -49,17 +54,6 @@ def positive_int(value):
 def utc_date(value):
     require(isinstance(value, str) and value.endswith('Z'), 'Invalid GitHub or collection timestamp')
     return datetime.fromisoformat(value)
-
-
-def load_json(data):
-    def unique_object(pairs):
-        result = {}
-        for name, value in pairs:
-            require(name not in result, f'Duplicate JSON field: {name}')
-            result[name] = value
-        return result
-
-    return json.loads(data, object_pairs_hook=unique_object)
 
 
 @dataclass(frozen=True)
@@ -106,16 +100,26 @@ def run_metadata(read, expected):
     attempt = load_json(read('attempt.json', expected.attempt_endpoint))
     for record in (run, attempt):
         require(positive_int(record.get('id')) and record['id'] == expected.run_id
-                and positive_int(record.get('run_attempt')) and record['run_attempt'] == expected.attempt
                 and record.get('event') == expected.event and record.get('head_sha') == expected.head_sha
                 and record.get('repository', {}).get('full_name') == expected.repository
                 and record.get('path') == WORKFLOW,
                 'GitHub run or attempt has a different repository, event, head or workflow identity')
-        require(record.get('status') == 'completed' and record.get('conclusion') == 'success',
-                'GitHub run and selected attempt must be completed with a success conclusion')
-    for key in ('workflow_id', 'check_suite_id', 'head_branch', 'run_started_at'):
-        require(run.get(key) and run[key] == attempt.get(key), f'Run and attempt disagree on {key}')
-    require(positive_int(attempt['repository'].get('id')), 'Missing repository ID')
+    latest, selected = run.get('run_attempt'), attempt.get('run_attempt')
+    require(positive_int(latest) and positive_int(selected) and latest >= selected == expected.attempt,
+            'GitHub run or attempt has a different attempt number')
+    require(attempt.get('status') == 'completed' and attempt.get('conclusion') == 'success',
+            'The selected GitHub attempt must be completed with a success conclusion')
+    require(positive_int(run.get('workflow_id')) and run['workflow_id'] == attempt.get('workflow_id'),
+            'Run and attempt disagree on workflow ID')
+    require(positive_int(run['repository'].get('id')) and run['repository']['id'] == attempt['repository'].get('id'),
+            'Run and attempt disagree on repository ID')
+    require(all(positive_int(record.get('check_suite_id')) for record in (run, attempt)),
+            'Missing GitHub run or attempt check suite ID')
+    if latest == selected:
+        require(run.get('status') == 'completed' and run.get('conclusion') == 'success',
+                'The latest GitHub run must be completed with a success conclusion')
+        for key in ('check_suite_id', 'head_branch', 'run_started_at'):
+            require(run.get(key) == attempt.get(key), f'Run and attempt disagree on {key}')
     utc_date(attempt['run_started_at'])
     return attempt
 
@@ -159,28 +163,44 @@ def successful_jobs(read, expected):
     return result
 
 
-def verify_checkouts(data, jobs, expected):
-    merge_numbers = set()
+def verify_checkouts(data, jobs, attempt, expected):
+    refs = set()
     with ZipFile(io.BytesIO(data)) as archive:
         for name in jobs:
+            # Prefer the checkout step itself. Some older log downloads contain
+            # only the combined job log, which still holds the checkout record.
             matches = [member for member in archive.infolist()
-                       if re.fullmatch(rf'[0-9]+_{re.escape(name)}\.txt', member.filename)]
+                       if re.fullmatch(rf'{re.escape(name)}/[0-9]+_Check out repository\.txt', member.filename)]
+            if not matches:
+                matches = [member for member in archive.infolist()
+                           if re.fullmatch(rf'[0-9]+_{re.escape(name)}\.txt', member.filename)]
             require(len(matches) == 1 and matches[0].file_size <= MAX_FILE_BYTES,
                     f'Missing or repeated GitHub job log: {name}')
             log = archive.read(matches[0])
             checkouts = CHECKOUT.findall(log)
             require(checkouts == [expected.source.encode()], f'Actual checkout log disagrees for {name}')
-            if expected.event == 'pull_request':
-                refs = MERGE_REF.findall(log)
-                require(len(refs) == 1, f'Missing pull request merge ref in checkout log: {name}')
-                merge_numbers.add(int(refs[0]))
+            matches = CHECKED_REF.findall(log)
+            require(len(matches) == 1, f'Missing or repeated checkout ref in GitHub job log: {name}')
+            checked_ref = matches[0].decode()
+            if checked_ref.startswith('refs/remotes/origin/'):
+                checked_ref = 'refs/heads/' + checked_ref.removeprefix('refs/remotes/origin/')
+            elif checked_ref.startswith('refs/remotes/pull/'):
+                checked_ref = 'refs/pull/' + checked_ref.removeprefix('refs/remotes/pull/')
+            refs.add(checked_ref)
+    require(len(refs) == 1, 'Jobs checked out different refs')
+    ref = refs.pop()
     if expected.event == 'pull_request':
-        require(len(merge_numbers) == 1, 'Jobs checked out different pull requests')
-        return merge_numbers.pop()
-    return None
+        pr = MERGE_REF.fullmatch(ref)
+        require(pr, 'Missing pull request merge ref in GitHub job logs')
+        return ref, int(pr[1])
+    require(ref.startswith(('refs/heads/', 'refs/tags/')), 'Expected a branch or tag checkout')
+    branch = attempt.get('head_branch')
+    require(branch == ref.split('/', 2)[2] or (ref.startswith('refs/tags/') and branch is None),
+            'GitHub run branch or tag disagrees with the checked-out ref')
+    return ref, None
 
 
-def read_artifacts(read, rows, jobs, attempt, expected, collected_at, pr_number):
+def read_artifacts(read, rows, jobs, attempt, expected, collected_at, requested_ref, expected_pr, checkout_inputs):
     # A GitHub artifact listing is run-wide. The exact name, report and job
     # window bind each selected object to this attempt without hiding other rows.
     if not expected.require_artifacts:
@@ -215,8 +235,6 @@ def read_artifacts(read, rows, jobs, attempt, expected, collected_at, pr_number)
         data = read(filename, endpoint)
         require(len(data) == size and f'sha256:{sha256(data)}' == digest,
                 f'GitHub artifact ZIP differs from its remote size or digest: {name}')
-        requested_ref = (f'refs/pull/{pr_number}/merge' if pr_number is not None
-                         else f'refs/heads/{attempt["head_branch"]}')
         with ZipFile(io.BytesIO(data)) as archive:
             report = verify_job_zip(
                 archive, repository=expected.repository, event=expected.event, checkout_sha=expected.source,
@@ -225,10 +243,16 @@ def read_artifacts(read, rows, jobs, attempt, expected, collected_at, pr_number)
             )
         require(report.get('workflow_sha') == expected.source, f'Workflow source differs in artifact: {name}')
         require(report.get('job_id') == job_data['id'], f'GitHub job ID differs in artifact: {name}')
-        if pr_number is not None:
+        if checkout_inputs is None:
+            checkout_inputs = report['checkout_inputs']
+        require(report['checkout_inputs'] == checkout_inputs, f'CI input digests disagree for artifact: {name}')
+        if expected_pr is not None:
+            pr_number, pr_parents = expected_pr
             pr = report.get('pull_request', {})
             require(pr.get('number') == pr_number and pr.get('head_sha') == expected.head_sha
-                    and pr.get('merge_sha') == expected.source, f'PR identity differs in artifact: {name}')
+                    and pr.get('merge_sha') == expected.source
+                    and report.get('checkout_parents') == pr_parents,
+                    f'PR merge identity or checkout parent list differs in artifact: {name}')
         require(any(step.get('name') == 'Upload CI job evidence' and step.get('conclusion') == 'success'
                     for step in job_data.get('steps', [])), f'No successful upload step for {name}')
         artifacts.append({'id': artifact_id, 'job': job, 'name': name, 'sha256': digest.removeprefix('sha256:'),
@@ -237,20 +261,24 @@ def read_artifacts(read, rows, jobs, attempt, expected, collected_at, pr_number)
     return artifacts
 
 
-def inspect(read, expected, collected_at):
+def inspect(read, expected, collected_at, *, checkout_inputs=None):
     attempt = run_metadata(read, expected)
     jobs = successful_jobs(read, expected)
     workflow = read('workflow.yml', f'repos/{expected.repository}/contents/{WORKFLOW}?ref={expected.source}', raw=True)
     require(sha256(workflow) == expected.workflow_sha256, 'GitHub workflow bytes differ from their external digest')
     logs = read('logs.zip', f'{expected.attempt_endpoint}/logs')
-    pr_number = verify_checkouts(logs, jobs, expected)
+    requested_ref, pr_number = verify_checkouts(logs, jobs, attempt, expected)
+    expected_pr = None
     if pr_number is not None:
         commit = load_json(read('merge-commit.json', f'repos/{expected.repository}/git/commits/{expected.source}'))
-        parents = [parent.get('sha') for parent in commit.get('parents', [])]
-        require(commit.get('sha') == expected.source and len(parents) == 2 and parents[1] == expected.head_sha,
+        pr_parents = [parent.get('sha') for parent in commit.get('parents', [])]
+        require(commit.get('sha') == expected.source and len(pr_parents) == 2 and pr_parents[1] == expected.head_sha
+                and isinstance(pr_parents[0], str) and re.fullmatch(r'[0-9a-f]{40}', pr_parents[0]),
                 'GitHub merge checkout parents do not match the requested PR head')
+        expected_pr = (pr_number, pr_parents)
     rows = paginated(read, f'{expected.endpoint}/artifacts', 'artifacts')
-    artifacts = read_artifacts(read, rows, jobs, attempt, expected, collected_at, pr_number)
+    artifacts = read_artifacts(read, rows, jobs, attempt, expected, collected_at,
+                               requested_ref, expected_pr, checkout_inputs)
     return {'pull_request_number': pr_number, 'jobs': {name: job['id'] for name, job in jobs.items()},
             'listed_artifacts': len(rows), 'artifacts': artifacts}
 
@@ -266,7 +294,8 @@ def read_file(path):
 
 
 def verify_snapshot(directory, expected_pin, *, source, workflow_sha256, require_artifacts,
-                    event='push', repository='007pig/meshchan', run_id=None, attempt=None, head_sha=None):
+                    event='push', repository='007pig/meshchan', run_id=None, attempt=None, head_sha=None,
+                    checkout_inputs=None):
     """Verify the supplied pin, original responses, attempt identity and downloaded objects offline."""
     directory = Path(directory)
     require(directory.is_dir() and not directory.is_symlink(), 'Expected a real CI snapshot directory')
@@ -276,11 +305,12 @@ def verify_snapshot(directory, expected_pin, *, source, workflow_sha256, require
     expected = Attempt(repository, source, event, head_sha or source, workflow_sha256,
                        manifest['run_id'] if run_id is None else run_id,
                        manifest['attempt'] if attempt is None else attempt, require_artifacts)
-    validate_manifest(directory, manifest, expected, MANIFEST)
+    require(checkout_inputs is None or require_artifacts, 'CI input verification requires the job artifacts')
+    validate_manifest(directory, manifest, expected, MANIFEST, checkout_inputs=checkout_inputs)
     return manifest
 
 
-def validate_manifest(directory, manifest, expected, manifest_filename):
+def validate_manifest(directory, manifest, expected, manifest_filename, *, checkout_inputs=None):
     require(manifest.get('kind') == 'meshchan-github-ci-snapshot' and type(manifest.get('schema')) is int
             and manifest['schema'] == 1 and all(manifest.get(key) == value for key, value in expected.identity().items()),
             'CI snapshot manifest has an unexpected kind or identity')
@@ -293,7 +323,7 @@ def validate_manifest(directory, manifest, expected, manifest_filename):
         require(manifest['files'].get(filename) == files[filename], f'Pinned CI evidence differs: {filename}')
         return data
 
-    summary = inspect(read, expected, collected_at)
+    summary = inspect(read, expected, collected_at, checkout_inputs=checkout_inputs)
     require(manifest['files'] == files and {p.name for p in directory.iterdir()} == files.keys() | {manifest_filename}
             and all(manifest.get(key) == value for key, value in summary.items()),
             'CI snapshot has an incomplete, unexpected or inconsistent file set')

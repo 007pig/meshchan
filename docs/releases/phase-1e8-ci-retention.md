@@ -57,15 +57,17 @@ CI snapshots. It lists allowed original roots for receipt-bound lookup. Use a
 separate pin for the selection JSON. The accepted chain and fixed assertions
 determine the inventory. Historical source and tool identities stay distinct.
 
-Run on the recorded retention source checkout before adding validation records
-to the branch. The [validation record](../validation/phase-1e8-ci-retention.md)
-gives the selection pin and actual source for this handoff. The archive parent
-must exist and belong to the current user. Select fresh work and output names
-when repeating the operation.
+Run from a checkout of the exact retention-tool commit named in the
+[validation record](../validation/phase-1e8-ci-retention.md). That record also
+gives the selection pin. A separate checkout of the tool commit can use the
+original selection file and its recorded absolute input paths. The archive
+parent must exist and belong to the current user. Select fresh work and output
+names when repeating the operation.
 
 ```sh
 MESHCHAN_ARCHIVE="$HOME/Documents/my_projects/Meshchan Engineering Archive"
-MESHCHAN_SELECTION="$PWD/build/phase-1e8/rc1-build8-selection.json"
+MESHCHAN_SELECTION="$HOME/Documents/my_projects/meshchan/build/phase-1e8/rc1-build8-selection.json"
+mkdir -p "$PWD/build/phase-1e8"
 /opt/homebrew/bin/python3 -B tool/retain_release.py retain \
   --selection "$MESHCHAN_SELECTION" --selection-sha256 "$MESHCHAN_SELECTION_SHA256" \
   --work "$PWD/build/phase-1e8/rc1-build8-seal" \
@@ -83,6 +85,12 @@ and filesystem flags are outside the portable data model. Original receipts
 preserve historical paths, process IDs and SQLite device/inode observations.
 The receipts distinguish creation, acceptance, and restoration.
 
+The final directory becomes visible after the tool finishes verification and
+publishes the staged directory without replacing an existing destination.
+`staging.json` in the work directory identifies the private staging path
+even if the process stops before it can write a failure report. Use the
+published directory and its external receipt pin for recovery.
+
 Keep the sealed object on the private, persistent local archive volume.
 Treat it as append-only and write later verification records beside it.
 The engineering image and its original checksum are the transferable assets.
@@ -93,25 +101,31 @@ and the finite-lived GitHub artifacts with independently pinned local copies.
 
 ## Check and restore from the sealed object
 
-Use a trusted verifier from the recorded retention source. The copy under
-`verifier/` is part of the receipt-bound inventory and supports running
-without the checkout. Set `MESHCHAN_RECEIPT_SHA256` from the
-[validation record](../validation/phase-1e8-ci-retention.md). The shell commands
-below use fresh names. The check removes its scratch extraction after
-verification. Restore keeps the verified files and writes a separate report.
-The archive and restore roots must be outside the checkout and temporary
-directories and must be disjoint from each other.
+Use the standalone bootstrap from a trusted copy of
+[`verify_retention_bootstrap.py`](../../tool/verify_retention_bootstrap.py)
+outside the sealed object. Save that one file independently for recovery
+without the checkout. The bootstrap authenticates the receipt and manifest
+with the external pin, checks the complete `verifier/` inventory, and runs
+the verified file bytes from a private copy. Set `MESHCHAN_RECEIPT_SHA256`
+from the [validation record](../validation/phase-1e8-ci-retention.md).
+Use fresh work and restore names. The check removes its scratch extraction
+after verification. Restore keeps the verified files and writes a separate
+report. The archive and restore roots must be outside the checkout and
+temporary directories and must be disjoint from each other.
+
+A trusted checkout can also run `tool/retain_release.py` directly with the
+same check or restore arguments. This uses the checkout's verification fixes
+for earlier seals while preserving their recorded verifier snapshots.
 
 ```sh
 MESHCHAN_ARCHIVE="$HOME/Documents/my_projects/Meshchan Engineering Archive"
 MESHCHAN_SEAL="$MESHCHAN_ARCHIVE/RC1 Build 8 - 1E.8"
-MESHCHAN_VERIFIER="$MESHCHAN_SEAL/verifier/tool/retain_release.py"
-printf '%s  %s\n' "$MESHCHAN_RECEIPT_SHA256" "$MESHCHAN_SEAL/retention-receipt.json" |
-  shasum -a 256 -c -
-/opt/homebrew/bin/python3 -B "$MESHCHAN_VERIFIER" check \
+# Run from the trusted checkout or set this to the independently saved copy.
+MESHCHAN_BOOTSTRAP="$PWD/tool/verify_retention_bootstrap.py"
+/opt/homebrew/bin/python3 -I -S -B "$MESHCHAN_BOOTSTRAP" check \
   --retention "$MESHCHAN_SEAL" --receipt-sha256 "$MESHCHAN_RECEIPT_SHA256" \
   --work "$MESHCHAN_ARCHIVE/RC1 Build 8 - check evidence"
-/opt/homebrew/bin/python3 -B "$MESHCHAN_VERIFIER" restore \
+/opt/homebrew/bin/python3 -I -S -B "$MESHCHAN_BOOTSTRAP" restore \
   --retention "$MESHCHAN_SEAL" --receipt-sha256 "$MESHCHAN_RECEIPT_SHA256" \
   --work "$MESHCHAN_ARCHIVE/RC1 Build 8 - restore evidence" \
   --destination "$MESHCHAN_ARCHIVE/RC1 Build 8 - restored"

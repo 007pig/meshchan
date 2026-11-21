@@ -1,4 +1,5 @@
 """Validate and enumerate the receipt-bound local engineering handoff."""
+import argparse
 from datetime import datetime
 import json
 import os
@@ -17,6 +18,7 @@ from package_release import equal, verify_report_fields
 from release_materials import digest, encoded, product_inventory, safe, sha
 from release_package_archive import check_payload
 from release_signing import policy_object
+from release_signed_replacement import APP_LIBRARY, CLI_LIBRARY, SOURCE_FILES
 
 INPUTS = {'dmg', 'dmg_acceptance', 'signed_manifest', 'local_acceptance'}
 IMAGE_GATES = ('workspaceStatus', 'imageIntegrityStatus', 'attachStatus', 'extractionStatus',
@@ -207,6 +209,42 @@ def verify_cli(reader, cli, bundle, workspace, identity, ledger, logs):
     equal(encoded(stored), encoded(cli['storedDrafts']), 'Retained CLI SQLite fixture rows')
 
 
+def historical_checkout(output, phase):
+    if output.parent.name != phase or output.parent.parent.name != 'build':
+        raise ValueError('Invalid historical '+phase+' output location')
+    return output.parents[2]
+
+
+def runtime_argv(step):
+    argv = step.get('argv')
+    if type(argv) is not list or len(argv) != 13 or not all(type(arg) is str for arg in argv):
+        raise ValueError('Malformed historical runtime process arguments')
+    return argv
+
+
+def verify_vm_invocation(step, checkout, python, candidate, manifest_pin, evidence):
+    # The staged VM configuration is deliberately not retained. Validate
+    # its recorded argument lexically without trying to read the file.
+    config = original_path(runtime_argv(step)[4])
+    command = [original_path(python), '-B', checkout/'tool/package_release_vm.py', '--config', config,
+               '--app', candidate/'Meshchan.app', '--signed-info', candidate/dmg.SIGNED_MANIFEST,
+               '--expected-signed-info-sha256', manifest_pin, '--evidence', evidence]
+    verify_report_fields(step, {'cwd': str(checkout), 'argv': list(map(str, command))}, 'Historical VM invocation')
+    return config
+
+
+def verify_replacement_invocation(step, checkout, python, candidate, manifest_pin, workspace, config):
+    timeout = runtime_argv(step)[-1]
+    try:
+        build.command_timeout(timeout)
+    except (ValueError, argparse.ArgumentTypeError) as error:
+        raise ValueError('Invalid historical replacement timeout') from error
+    command = [original_path(python), '-B', checkout/'tool/release_signed_replacement.py', '--signed-root', candidate,
+               '--signed-info-sha256', manifest_pin, '--output', workspace, '--vm-config', config, '--timeout', timeout]
+    verify_report_fields(step, {'cwd': str(checkout), 'argv': list(map(str, command))},
+                         'Historical replacement invocation')
+
+
 def verify_vm(reader, ref, base, evidence, result, root, info, manifest_pin):
     verify_report_fields(result, {'status': 'PASS', 'signingProfile': dmg.PROFILE,
                                    'receiptSha256': ref['sha256']}, 'Signed VM process result')
@@ -251,9 +289,19 @@ def verify_replacement(reader, root, workspace, receipt, result, info, manifest_
         reader.bytes(evidence/'app-vm'/name, pin)
     # Select the replacement evidence by role. The executor's launch claim
     # is a transient link to an ownership token, outside the receipt's files.
-    reader.directory(evidence/'app-vm/Release/fixture')
+    fixture = evidence/'app-vm/Release/fixture'
+    reader.directory(fixture)
+    reader.file(fixture/'meshchan.sqlite')
     reader.file(evidence/'app-vm/Release/app-supervisor.log')
-    reader.directory(evidence/'libserialport-source')
+    source_root = evidence/'libserialport-source'
+    reader.directory(source_root)
+    rebuilt = replacement['replacement']
+    reader.entry(source_root/SOURCE_FILES[0], {'sha256': rebuilt['patch']['patchedSourceSha256']})
+    equal({APP_LIBRARY, CLI_LIBRARY}, set(rebuilt['libraries']), 'Replacement library evidence set')
+    for filename, name in (('app-library.dylib', APP_LIBRARY), ('cli-library.dylib', CLI_LIBRARY)):
+        library = rebuilt['libraries'][name]
+        verify_report_fields(library, {'path': name}, 'Replacement library path')
+        reader.entry(source_root/filename, {'sha256': library['rebuiltSha256']})
     modified = product_inventory(reader.directory(workspace/'user products'))
     equal(replacement['modifiedInventorySha256'], sha(encoded(modified)), 'Modified product inventory')
     source = replacement['sourceArchive']
@@ -272,6 +320,8 @@ def verify_tool_snapshot(reader, root, source, expected_names):
         raise ValueError('Malformed engineering tool provenance')
     equal(set(expected_names), set(source['inputs']), 'Complete engineering tool input set')
     for name, entry in source['inputs'].items():
+        if type(entry) is not dict or set(entry) != {'type', 'mode', 'size', 'sha256'}:
+            raise ValueError('Incomplete engineering tool file identity: '+name)
         path = relative_reference(root, name)
         reader.entry(path, entry)
 
@@ -325,9 +375,16 @@ def accepted_local(reader, manifest_ref, acceptance_ref):
     verify_report_fields(cli, {'signingProfile': dmg.PROFILE, 'signedInfoSha256': manifest_pin,
                                'relocatedRoot': str(relocated)}, 'Accepted local CLI')
     verify_cli(reader, cli, relocated/'meshctl', cli_workspace, info['identity'], ledger, logs)
+    checkout = historical_checkout(output, 'phase-1e6')
+    python = receipt['environment']['python']['path']
+    config = verify_vm_invocation(signing.process_step(ledger, 'signed-vm-app-runtime'), checkout, python,
+                                  relocated, manifest_pin, evidence/'vm-app')
+    replacement = workspace/'user modified products'
+    verify_replacement_invocation(signing.process_step(ledger, 'signed-user-replacement'), checkout, python,
+                                  root, manifest_pin, replacement, config)
     verify_vm(reader, receipt['vmAppReport'], output, evidence/'vm-app',
               build.material_result(logs['signed-vm-app-runtime']['log'].decode()), relocated, info, manifest_pin)
-    verify_replacement(reader, root, workspace/'user modified products', receipt,
+    verify_replacement(reader, root, replacement, receipt,
                        build.material_result(logs['signed-user-replacement']['log'].decode()), info, manifest_pin)
     reader.directory(evidence)
     return info, full
@@ -402,11 +459,13 @@ def verify_package_runtime(reader, root, receipt, evidence, extracted, app_inven
 
 def frozen_build(reader, upstream, identity):
     source = original_path(upstream['sourceCheckout'])
-    run = relative_reference(source, upstream['buildRun'])
+    run = relative_reference(source, upstream['buildRun'], scope=source/'build/phase-1e4')
+    equal(upstream['buildRun'], run.relative_to(source).as_posix(), 'Frozen build run name')
     info = json_object(reader.bytes(run/'build-info.json', upstream['buildInfoSha256']))
     fields = {
         'formatVersion': 1, 'sourceCommit': upstream['sourceCommit'], 'recipeVersion': upstream['buildRecipeVersion'],
         'runIdentity': upstream['buildRun'], 'identity': identity, 'buildStatus': 'PASS', 'productChecksStatus': 'PASS',
+        'engineeringDirtyMode': False, 'workingTree': '',
     }
     verify_report_fields(info, fields, 'Frozen build information')
     if type(info['recipeVersion']) is not int or info['recipeVersion'] < 55:
@@ -419,6 +478,7 @@ def frozen_build(reader, upstream, identity):
     verify_report_fields(receipt, {
         'formatVersion': 1, 'sourceCommit': info['sourceCommit'], 'recipeVersion': info['recipeVersion'],
         'inputsUnchangedAcrossBuilds': True, 'app': info['app'], 'cli': info['cli'],
+        'engineeringDirtyMode': False, 'workingTree': '',
         'runnerSha256': sha(proof['run_build.py']),
         'candidateInventoriesSha256': sha(proof['candidate-inventories.json']),
         'candidateChecksumsSha256': sha(proof['candidate-checksums.txt']),
@@ -491,7 +551,9 @@ def verify_frozen_recheck(reader, source, run, receipt):
         path = relative_reference(source, reference['path'], scope=run/'evidence')
         if path.name != 'build-receipt.json' or path.parent.parent != run/'evidence' or not path.parent.name.startswith(name+'-'):
             raise ValueError('Frozen verification has an invalid process ledger path')
-        read_ledger(reader, source, reference, path.parent)
+        ledger = reader.report(source, reference, path)
+        verify_report_fields(ledger, {'formatVersion': 1}, 'Frozen verification ledger '+name)
+        verify_steps(reader, ledger, source, path.parent, 'PASS')
 
 
 def accepted_upstream(reader, signed_root, info, tool_snapshot):
@@ -592,6 +654,57 @@ def verify_process_order(ledger, signatures):
                 raise ValueError('Extracted product check preceded owned image detach')
 
 
+def verify_image_structure(ledger, logs, image, observation):
+    for name, command in (('image-info', 'imageinfo'), ('verify-image', 'verify')):
+        verify_report_fields(signing.process_step(ledger, name), {
+            'argv': [disk.HDIUTIL, command, '-plist', image],
+        }, 'Historical image structure process '+name)
+    details = disk.parse_plist(logs['image-info']['log'].decode(), 'historical hdiutil imageinfo')
+    verify_report_fields(details, {'Format': disk.IMAGE_FORMAT, 'Format Description': disk.IMAGE_TYPE,
+                                   'Class Name': 'CUDIFDiskImage'}, 'Historical disk image information')
+    verify_report_fields(details['Properties'], {'Checksummed': True, 'Compressed': True, 'Encrypted': False},
+                         'Historical disk image properties')
+    partitions = details['partitions']['partitions']
+    if type(partitions) is not list or any(type(part) is not dict for part in partitions):
+        raise ValueError('Invalid historical disk image partition information')
+    equal([{disk.FILESYSTEM: ''}], [part['partition-filesystems'] for part in partitions
+                                  if 'partition-filesystems' in part], 'Historical disk image data partition')
+    checksum = disk.parse_plist(logs['verify-image']['log'].decode(), 'historical hdiutil verify')
+    expected = checksum.get('expected')
+    if (type(expected) is not dict or expected.get('Checksum Type') != 'CRC32'
+            or type(expected.get('Checksum Value')) is not str
+            or re.fullmatch(r'\$[0-9A-Fa-f]{8}', expected['Checksum Value']) is None):
+        raise ValueError('Missing historical disk image structural checksum')
+    verify_report_fields(checksum, {'calculated': expected}, 'Historical disk image verification')
+    equal(expected, observation['checksum'], 'Historical disk image receipt checksum')
+    container = 'inspect-container-signature'
+    verify_report_fields(signing.process_step(ledger, container),
+                         {'argv': ['/usr/bin/codesign', '--display', image]}, 'Historical unsigned container process')
+    equal(os.fsencode(image)+b': code object is not signed at all', logs[container]['stderrLog'].strip(),
+          'Historical unsigned container observation')
+
+
+def verify_image_volume(ledger, logs, mount):
+    command = signing.process_step(ledger, 'volume-info')
+    verify_report_fields(command, {'argv': [disk.DISKUTIL, 'info', '-plist', mount['mountPoint']]},
+                         'Historical image volume process')
+    whole, volume = mount['wholeDevice'], mount['volumeDevice']
+    if disk.WHOLE_DISK.fullmatch(whole) is None or re.fullmatch(re.escape(whole)+r's[0-9]+', volume) is None:
+        raise ValueError('Invalid historical image volume devices')
+    reported = disk.parse_plist(logs['volume-info']['log'].decode(), 'historical diskutil info')
+    verify_report_fields(reported, {
+        'BusProtocol': 'Disk Image', 'DeviceNode': volume, 'ParentWholeDisk': Path(whole).name,
+        'MountPoint': mount['mountPoint'], 'FilesystemType': 'hfs', 'FilesystemName': disk.FILESYSTEM,
+        'VolumeName': mount['name'], 'VolumeUUID': mount['volumeUuid'],
+        'Writable': False, 'WritableVolume': False, 'WritableMedia': False,
+    }, 'Historical read-only disk image volume')
+    permissions = reported.get('GlobalPermissionsEnabled')
+    if type(permissions) is not bool:
+        raise ValueError('Missing historical disk image volume ownership information')
+    verify_report_fields(mount['volumeRoot'], {'globalPermissionsEnabled': permissions},
+                         'Historical disk image volume ownership')
+
+
 def verify_image_record(reader, record, output, info, layout, expected, *, independent):
     schema = {
         **dmg.SIGNATURE_POLICY, 'formatVersion': 1, **expected, 'dmgTool': layout.manifest['dmgTool'],
@@ -636,13 +749,9 @@ def verify_image_record(reader, record, output, info, layout, expected, *, indep
     evidence = output/'evidence'
     ledger, logs = read_ledger(reader, output, record['processLedger'], evidence,
                                status=schema['status'], unsigned_image=True)
-    for name in ('image-info', 'verify-image', 'volume-info', 'signed-native-mapping'):
-        signing.process_step(ledger, name)
-    container = signing.process_step(ledger, 'inspect-container-signature')
-    verify_report_fields(container, {'argv': ['/usr/bin/codesign', '--display', expected['image']['path']]},
-                         'Historical unsigned container observation')
-    if b'code object is not signed at all' not in logs['inspect-container-signature']['stderrLog']:
-        raise ValueError('Historical container signature check did not establish an unsigned image')
+    signing.process_step(ledger, 'signed-native-mapping')
+    verify_image_structure(ledger, logs, expected['image']['path'], record['imageVerification'])
+    verify_image_volume(ledger, logs, record['mount'])
     verify_report_fields(signing.process_step(ledger, 'attach-image'), {
         'pid': record['attachChildPid'],
         'argv': [disk.HDIUTIL, 'attach', '-readonly', '-nobrowse', '-noautoopen',
@@ -663,6 +772,9 @@ def verify_image_record(reader, record, output, info, layout, expected, *, indep
                    'signedInfoSha256': layout.manifest['signedInfoSha256']}
         verify_report_fields(cli, context, 'DMG CLI runtime binding')
         verify_cli(reader, cli, candidate/'meshctl', workspace/'cli workspace', info['identity'], ledger, logs)
+        verify_vm_invocation(signing.process_step(ledger, 'dmg-vm-app-runtime'), historical_checkout(output, 'phase-1e7'),
+                             record['environment']['pythonPath'], candidate, layout.manifest['signedInfoSha256'],
+                             evidence/'vm-app')
         vm = verify_vm(reader, record['vmAppReport'], output, evidence/'vm-app',
                        build.material_result(logs['dmg-vm-app-runtime']['log'].decode()),
                        candidate, info, layout.manifest['signedInfoSha256'])

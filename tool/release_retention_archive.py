@@ -19,10 +19,10 @@ def file_identity(metadata):
 
 def regular_entry(path):
     with open_archive(path) as stream:
-        identity, _ = archive_stamp(stream)
         stamp = file_identity(os.fstat(stream.fileno()))
-    if file_identity(path.lstat()) != stamp:
-        raise ValueError(f'Input was replaced while being read: {path}')
+        identity, _ = archive_stamp(stream)
+        if file_identity(os.fstat(stream.fileno())) != stamp or file_identity(path.lstat()) != stamp:
+            raise ValueError(f'Input changed while being read: {path}')
     return identity, stamp
 
 
@@ -80,15 +80,19 @@ def write_archive(path, mapping, expected, stamps):
 def restore_members(path, destination, expected_archive, members, roots):
     # Pin the complete tar bytes before parsing even the first member.
     with open_archive(path) as stream:
+        original = file_identity(os.fstat(stream.fileno()))
         if archive_stamp(stream)[0] != expected_archive:
             raise ValueError('Retained archive bytes, size or mode differ from the external receipt')
-        original = file_identity(os.fstat(stream.fileno()))
+        if file_identity(os.fstat(stream.fileno())) != original or file_identity(path.lstat()) != original:
+            raise ValueError('Retained archive changed while checking its pin')
         with new_extraction_root(destination) as fd:
             extract_archive(stream, fd, members, tuple(roots))
-            if (os.fstat(fd).st_dev, os.fstat(fd).st_ino) != (destination.stat().st_dev, destination.stat().st_ino):
+            restored = os.fstat(fd)
+            if not os.path.samestat(restored, destination.lstat()):
                 raise ValueError('Restore directory was replaced')
         check_payload(destination, {'.': {'type': 'directory', 'mode': 0o700}, **members})
-        if (file_identity(os.fstat(stream.fileno())) != original
-                or file_identity(path.lstat()) != original
-                or archive_stamp(stream)[0] != expected_archive):
+        if (archive_stamp(stream)[0] != expected_archive
+                or file_identity(os.fstat(stream.fileno())) != original
+                or file_identity(path.lstat()) != original):
             raise ValueError('Retained archive changed during verification')
+        return original, restored

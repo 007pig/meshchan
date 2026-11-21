@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import ExitStack
+import ctypes
 from dataclasses import dataclass
 import json
 import os
@@ -25,15 +26,17 @@ from release_materials import (
     require_product_disjoint, safe, sha,
 )
 from release_package_archive import (
-    check_payload, compare, new_extraction_root, open_archive, prefixed,
+    check_payload, compare, directory_fd, new_extraction_root, prefixed,
 )
-from release_retention_archive import regular_entry, restore_members, scanned_input, write_archive
+from release_retention_archive import file_identity, regular_entry, restore_members, scanned_input, write_archive
+from verify_retention_bootstrap import read_regular, require_checkout_boundaries
 
 RECEIPT = 'retention-receipt.json'
 MANIFEST = 'retention-manifest.json'
 ARCHIVE = 'retained.tar'
 VERIFIER = 'verifier'
 WORKFLOW = '.github/workflows/ci.yml'
+CI_CHECKOUT_INPUTS = ('pubspec.lock', 'tool/ci_evidence.py')
 REPOSITORY = '007pig/meshchan'
 CI_ROLES = {'product', 'dmg-tools', 'retention'}
 CANDIDATE_FIELDS = {'dmg', 'dmg_acceptance', 'signed_manifest', 'local_acceptance',
@@ -67,12 +70,7 @@ def require_pin(pin):
 
 
 def bound_json(path, expected):
-    with open_archive(path) as stream:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            raise ValueError(f'Expected regular JSON input: {path}')
-        raw = stream.read()
-    if sha(raw) != require_pin(expected):
-        raise ValueError(f'Pinned JSON bytes differ: {path}')
+    raw, _ = read_regular(None, path, expected_sha256=require_pin(expected))
 
     def unique(pairs):
         result = {}
@@ -147,6 +145,7 @@ def destinations(work, others, inputs=()):
         work_protected = [*protected, ROOT/'.git']
     else:
         work_protected = [*protected, ROOT]
+    require_checkout_boundaries(work, others)
     require_product_disjoint({'Work directory': work}, work_protected)
     require_product_disjoint(others, [*protected, ROOT, Path('/private/tmp'), Path('/tmp'),
                                      Path(tempfile.gettempdir())])
@@ -177,17 +176,28 @@ def committed_blob(commit, name):
                  'sha256': sha(raw)}
 
 
+def git_file_entry(entry):
+    # Git represents only the owner executable bit, even in a checkout
+    # created with an umask that restricts group and other access.
+    return {**entry, 'mode': 0o755 if entry['mode'] & 0o100 else 0o644}
+
+
+def require_checkout_file(name, entry):
+    actual, _ = regular_entry(ROOT/name)
+    if git_file_entry(actual) != entry:
+        raise ValueError(f'Retention checkout file differs from Git: {name}')
+
+
 def snapshot_verifier(work, commit):
     root = work/VERIFIER
     if git('rev-parse', 'HEAD').decode().strip() != commit:
         raise ValueError('Retention source must match the selected checkout HEAD')
-    names = ['LICENSE', 'COPYRIGHT', WORKFLOW, 'docs/releases/phase-1e8-ci-retention.md']
-    names.extend(name for name in git('ls-tree', '-r', '--name-only', '-z', commit, '--', 'tool').decode().split('\0')
+    names = {'LICENSE', 'COPYRIGHT', WORKFLOW, 'docs/releases/phase-1e8-ci-retention.md', *CI_CHECKOUT_INPUTS}
+    names.update(name for name in git('ls-tree', '-r', '--name-only', '-z', commit, '--', 'tool').decode().split('\0')
                  if name.endswith('.py'))
     for name in sorted(names):
         raw, entry = committed_blob(commit, name)
-        if (ROOT/name).read_bytes() != raw or stat.S_IMODE((ROOT/name).lstat().st_mode) != entry['mode']:
-            raise ValueError(f'Retention checkout file differs from Git: {name}')
+        require_checkout_file(name, entry)
         target = root/name
         target.parent.mkdir(parents=True, exist_ok=True)
         new_file(target, raw, entry['mode'])
@@ -205,7 +215,15 @@ def verify_supporting(selection, locate):
     return paths
 
 
-def ci_inputs(selection, chain, locate, *, sealing=False):
+def require_committed_inputs(commit, inputs, label):
+    if not inputs:
+        raise ValueError(f'Missing recorded inputs for {label}')
+    for name, entry in inputs.items():
+        if committed_blob(commit, name)[1] != git_file_entry(entry):
+            raise ValueError(f'{label} does not match its claimed Git source: {name}')
+
+
+def ci_inputs(selection, chain, locate, *, sealing=False, verifier=None):
     entries = selection['ci']
     if set(entries) not in (CI_ROLES, CI_ROLES | {'dmg-tools-pr'}):
         raise ValueError('Select product, DMG tool and retention CI snapshots')
@@ -220,13 +238,11 @@ def ci_inputs(selection, chain, locate, *, sealing=False):
         raise ValueError('CI checkout selection differs from the accepted product or retention source')
     if sealing:
         tool_commit = entries['dmg-tools']['source']
-        for group in coverage.values():
-            for name, entry in group.items():
-                # Git records the executable class. The archived input keeps
-                # the exact POSIX mode (such as 0700 on the original askpass).
-                git_mode = 0o755 if entry['mode'] & 0o100 else 0o644
-                if committed_blob(tool_commit, name)[1] != {**entry, 'mode': git_mode}:
-                    raise ValueError(f'DMG tool CI did not use the accepted input bytes: {name}')
+        for group, inputs in coverage.items():
+            require_committed_inputs(tool_commit, inputs, f'Accepted {group} tools covered by CI')
+        accepted = chain['identities']
+        require_committed_inputs(accepted['upstreamVerifierSnapshotCommit'],
+                                 accepted['upstreamVerifier']['inputs'], 'Reconstructed package verifier')
     snapshots = {}
     for role, entry in entries.items():
         event = 'pull_request' if role == 'dmg-tools-pr' else 'push'
@@ -238,6 +254,12 @@ def ci_inputs(selection, chain, locate, *, sealing=False):
             expected['head_sha'] = entries['dmg-tools']['source']
         if sealing and committed_blob(entry['source'], WORKFLOW)[1]['sha256'] != entry['workflowSha256']:
             raise ValueError(f'Wrong committed workflow for {role}')
+        if role == 'retention':
+            if sealing:
+                expected['checkout_inputs'] = {name: committed_blob(entry['source'], name)[1]['sha256']
+                                               for name in CI_CHECKOUT_INPUTS}
+            elif verifier is not None and all(name in verifier for name in CI_CHECKOUT_INPUTS):
+                expected['checkout_inputs'] = {name: verifier[name]['sha256'] for name in CI_CHECKOUT_INPUTS}
         snapshots[role] = release_ci_evidence.verify_snapshot(root, entry['sha256'], **expected)
     ident = {role: {key: snapshots[role][key] for key in ('source', 'run_id', 'attempt', 'event', 'workflow_sha256')}
              for role in snapshots}
@@ -256,7 +278,30 @@ def source_inventory(mappings):
 
 
 def record_progress(work, name, result):
-    new_file(work/name, encoded({'recordedAt': now(), **result}))
+    # The work directory belongs to this invocation. Keep incomplete writes
+    # at a staging name that readers never interpret as a result.
+    staging = work/('.'+name+'.pending')
+    new_file(staging, encoded({'recordedAt': now(), **result}))
+    if os.path.lexists(work/name):
+        raise FileExistsError(work/name)
+    staging.rename(work/name)
+
+
+def publish_seal(stage, target, parent_fd, stage_id):
+    if not os.path.samestat(stage_id, os.stat(stage.name, dir_fd=parent_fd, follow_symlinks=False)):
+        raise ValueError('Retention staging directory changed before publication')
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == 'darwin':
+        rename, flags = libc.renameatx_np, 0x00000004  # RENAME_EXCL
+    elif sys.platform == 'linux':
+        rename, flags = libc.renameat2, 1  # RENAME_NOREPLACE
+    else:
+        raise ValueError('Exclusive seal publication requires macOS or Linux')
+    rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    rename.restype = ctypes.c_int
+    if rename(parent_fd, os.fsencode(stage.name), parent_fd, os.fsencode(target.name), flags) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), target)
 
 
 def references(selection):
@@ -278,6 +323,7 @@ def retain(args):
     destinations(work, {'Retention directory': target}, [*allowed, selection_path, *references(selection)])
     new_dir(work)
     record_progress(work, 'started.json', {'destination': str(target), 'selectionSha256': sha(raw)})
+    stage = None
     try:
         locate = lambda path: live_locator(allowed, path)
         chain = release_retention_inputs.verify_chain(selection['candidate'], locate, live=True)
@@ -299,42 +345,49 @@ def retain(args):
                     'identities': ident, 'mapping': mappings, 'members': expected, 'verifier': verifier,
                     'metadata': METADATA, 'distribution': {'object': 'maintainer-internal',
                     'engineeringAsset': selection['candidate']['dmg']['path']}}
-        new_dir(target)
-        target_id = target.stat()
-        shutil.copytree(work/VERIFIER, target/VERIFIER, symlinks=True, copy_function=shutil.copyfile)
+        target_parent = target.parent.lstat()
+        stage = Path(tempfile.mkdtemp(prefix='.meshchan-retention-', dir=target.parent))
+        stage_id = stage.lstat()
+        record_progress(work, 'staging.json', {'stagingDirectory': str(stage)})
+        shutil.copytree(work/VERIFIER, stage/VERIFIER, symlinks=True, copy_function=shutil.copyfile)
         # copyfile supplies independent bytes. Apply the recorded Git permission modes.
         for name, entry in verifier.items():
-            (target/VERIFIER/name).chmod(entry['mode'])
-        check_payload(target/VERIFIER, verifier)
-        archive_identity = write_archive(target/ARCHIVE, mappings, expected, stamps)
+            (stage/VERIFIER/name).chmod(entry['mode'])
+        check_payload(stage/VERIFIER, verifier)
+        archive_identity = write_archive(stage/ARCHIVE, mappings, expected, stamps)
         manifest_raw = encoded(manifest)
-        new_file(target/MANIFEST, manifest_raw, 0o400)
+        new_file(stage/MANIFEST, manifest_raw, 0o400)
         # Run the archive-only verifier before publishing the external index.
         with tempfile.TemporaryDirectory(prefix='verify-', dir=work) as parent:
-            extract_and_verify(target/ARCHIVE, Path(parent)/'payload', archive_identity, manifest)
+            extract_and_verify(stage/ARCHIVE, Path(parent)/'payload', archive_identity, manifest)
         final, final_stamps = source_inventory(mappings)
         compare(expected, final, 'Original input bytes and modes after sealing')
         if final_stamps != stamps or bound_json(selection_path, args.selection_sha256)[1] != raw:
             raise ValueError('Original input identity changed while sealing')
         for name, entry in verifier.items():
-            if entry['type'] == 'file' and scanned_input(ROOT/name)[0]['.'] != entry:
-                raise ValueError(f'Retention checkout changed while sealing: {name}')
-        check_payload(target/VERIFIER, verifier)
-        if ((target.stat().st_dev, target.stat().st_ino) != (target_id.st_dev, target_id.st_ino)
-                or canonical(target) != target or regular_entry(target/ARCHIVE)[0] != archive_identity
-                or bound_json(target/MANIFEST, sha(manifest_raw))[1] != manifest_raw):
+            if entry['type'] == 'file':
+                require_checkout_file(name, entry)
+        check_payload(stage/VERIFIER, verifier)
+        if (canonical(stage) != stage or not os.path.samestat(stage_id, stage.lstat())
+                or regular_entry(stage/ARCHIVE)[0] != archive_identity
+                or bound_json(stage/MANIFEST, sha(manifest_raw))[1] != manifest_raw):
             raise ValueError('Retention object changed before publication')
         receipt = {'formatVersion': 1, 'status': 'SEALED', 'sealedAt': now(),
                    'manifestSha256': sha(manifest_raw), 'archive': archive_identity}
         receipt_raw = encoded(receipt)
         log = {'receiptSha256': sha(receipt_raw), 'archive': archive_identity, 'destination': str(target)}
-        new_file(target/RECEIPT, receipt_raw, 0o400)
-        target.chmod(0o500)
-        record_progress(work, 'sealed.json', log)
-        print(encoded(log).decode(), end='')
+        new_file(stage/RECEIPT, receipt_raw, 0o400)
+        stage.chmod(0o500)
+        record_progress(work, 'prepared.json', log)
+        with directory_fd(target.parent) as parent_fd:
+            if not os.path.samestat(target_parent, os.fstat(parent_fd)):
+                raise ValueError('Retention parent changed before publication')
+            publish_seal(stage, target, parent_fd, stage_id)
     except BaseException as error:
-        record_progress(work, 'failed.json', {'error': str(error), 'type': type(error).__name__})
+        record_progress(work, 'failed.json', {'error': str(error), 'type': type(error).__name__,
+                                              'stagingDirectory': str(stage) if stage else None})
         raise
+    print(encoded(log).decode(), end='')
 
 
 def extract_and_verify(archive, target, archive_identity, manifest):
@@ -353,24 +406,31 @@ def extract_and_verify(archive, target, archive_identity, manifest):
     if ({str(PurePosixPath(*PurePosixPath(name).parts[:2])) for name in members if name != 'inputs'}
             != set(mapping.values())):
         raise ValueError('Retained inventory and mapping cover different roots')
-    restore_members(archive, target, archive_identity, members, mapping.values())
+    archive_id, restore_id = restore_members(archive, target, archive_identity, members, mapping.values())
     locate = Mapping(mapping, target)
     selection, _ = bound_json(locate(manifest['selectionPath']), manifest['selectionSha256'])
     verify_supporting(selection, locate)
     chain = release_retention_inputs.verify_chain(selection['candidate'], locate)
-    if ci_inputs(selection, chain, locate) != manifest['identities']:
+    if ci_inputs(selection, chain, locate, verifier=manifest['verifier']) != manifest['identities']:
         raise ValueError('Retained semantic identities differ')
-    return locate(selection['candidate']['dmg']['path'])
+    return locate(selection['candidate']['dmg']['path']), archive_id, restore_id
 
 
 class ImageProbe:
     def __init__(self, logs):
         self.logs = logs
 
+    def write_logs(self, name, stdout, stderr):
+        new_file(self.logs/(name+'.stdout'), stdout or b'')
+        new_file(self.logs/(name+'.stderr'), stderr or b'')
+
     def command(self, name, argv):
-        result = subprocess.run(argv, cwd=self.logs, capture_output=True, timeout=300)
-        new_file(self.logs/(name+'.stdout'), result.stdout)
-        new_file(self.logs/(name+'.stderr'), result.stderr)
+        try:
+            result = subprocess.run(argv, cwd=self.logs, capture_output=True, timeout=300)
+        except subprocess.TimeoutExpired as error:
+            self.write_logs(name, error.stdout, error.stderr)
+            raise
+        self.write_logs(name, result.stdout, result.stderr)
         result.check_returncode()
         return result.stdout.decode()
 
@@ -399,11 +459,18 @@ def verify(args):
                 # Check uses the same safe extraction and semantic revalidation.
                 parent = temporary.enter_context(tempfile.TemporaryDirectory(prefix='check-', dir=work))
                 dest = Path(parent)/'payload'
-            dmg = extract_and_verify(archive, dest, receipt['archive'], manifest)
-            structure = {'status': 'NOT_RUN', 'reason': 'macOS image verification requires hdiutil and codesign'}
+            dmg, archive_id, restore_id = extract_and_verify(archive, dest, receipt['archive'], manifest)
+            structure = {'status': 'NOT_RUN', 'reason': 'The check operation verifies archive integrity'}
+            if restore:
+                structure['reason'] = 'macOS image verification requires hdiutil and codesign'
             if sys.platform == 'darwin' and restore:
                 structure = {'status': 'PASS', **package_dmg_image.verify_image(
                     ImageProbe(work), dmg, package_dmg_image.file_stamp(dmg))}
+            check_payload(dest, {'.': {'type': 'directory', 'mode': 0o700}, **manifest['members']})
+            if not os.path.samestat(restore_id, dest.lstat()):
+                raise ValueError('Verified destination differs from the restored directory')
+            if file_identity(archive.lstat()) != archive_id:
+                raise ValueError('Retained archive changed after extraction')
             if (bound_json(target/RECEIPT, args.receipt_sha256)[0] != receipt
                     or bound_json(target/MANIFEST, receipt['manifestSha256'])[1] != original_manifest):
                 raise ValueError('External retention records changed during verification')
@@ -412,11 +479,11 @@ def verify(args):
                       'archive': receipt['archive'], 'restoredDmg': str(dmg) if restore else None,
                       'imageStructure': structure, 'pythonPath': sys.executable, 'pythonVersion': sys.version,
                       'historicalAcceptance': 'MATCHED', 'newProductRuntime': 'NOT_RUN'}
-            record_progress(work, 'verification.json', report)
-            print(encoded(report).decode(), end='')
+        record_progress(work, 'verification.json', report)
     except BaseException as error:
         record_progress(work, 'failed.json', {'error': str(error), 'type': type(error).__name__})
         raise
+    print(encoded(report).decode(), end='')
 
 
 def main():

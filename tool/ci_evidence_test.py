@@ -1,3 +1,5 @@
+from contextlib import chdir, redirect_stderr
+import gzip
 import io
 import json
 import os
@@ -34,8 +36,15 @@ class CIEvidenceTest(unittest.TestCase):
             'checkout_parents': ['b' * 40], 'pull_request': None,
             'runner': {'label': 'ubuntu-latest', 'os': 'Linux', 'arch': 'X64',
                        'uname_machine': 'x86_64', 'os_version': 'Runner OS', 'kernel': 'Kernel'},
-            'toolchain': {'compiler': 'Compiler version', 'python': {'version': '3.15.2'},
-                          'flutter': {'version': 'Flutter version'}, 'dart': {'version': 'Dart version'}},
+            'toolchain': {
+                'compiler': 'Compiler version', 'compiler_path': '/usr/bin/cc',
+                'python': {'version': '3.15.2', 'executable': '/sdk/python3'},
+                'flutter': {'executable': '/sdk/flutter/bin/flutter',
+                            'version': {'frameworkVersion': '3.50.0', 'dartSdkVersion': '3.14.0',
+                                        'channel': 'stable'}},
+                'dart': {'version': 'Dart SDK version: 3.14.0 (stable)',
+                         'executable': '/sdk/flutter/bin/dart'},
+            },
             'checkout_inputs': {evidence.CAPTURE_TOOL: 'c' * 64, 'pubspec.lock': 'd' * 64},
             'artifact_retention_days_requested': evidence.RETENTION_DAYS,
             'evidence_errors': [],
@@ -46,14 +55,14 @@ class CIEvidenceTest(unittest.TestCase):
             row = {'id': name, 'outcome': 'success', 'conclusion': 'success',
                    'exit_code': None, 'log': None}
             if name in evidence.CHECKS[self.job]:
-                log = (name + '\n').encode()
+                log = ((json.dumps(self.report['toolchain']) if name == 'runner_toolchain' else name) + '\n').encode()
                 path = name + '.log'
                 self.logs[path] = log
                 row['log'] = {'path': path, 'sha256': evidence.sha256(log), 'size': len(log)}
                 row['exit_code'] = 0
             self.report['steps'].append(row)
 
-    def verify(self, *, extra_log=None, extra_zip_member=None):
+    def verify(self, *, extra_log=None, extra_zip_member=None, log_payload=None, report_payload=None):
         bundle = io.BytesIO()
         with tarfile.open(fileobj=bundle, mode='w:gz') as archive:
             members = list(self.logs.items())
@@ -66,8 +75,8 @@ class CIEvidenceTest(unittest.TestCase):
         download = io.BytesIO()
         with zipfile.ZipFile(download, 'w') as archive:
             archive.writestr('workflow.yml', self.workflow)
-            archive.writestr('report.json', json.dumps(self.report))
-            archive.writestr('logs.tar.gz', bundle.getvalue())
+            archive.writestr('report.json', json.dumps(self.report) if report_payload is None else report_payload)
+            archive.writestr('logs.tar.gz', bundle.getvalue() if log_payload is None else log_payload(bundle.getvalue()))
             if extra_zip_member is not None:
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore', UserWarning)
@@ -100,6 +109,9 @@ class CIEvidenceTest(unittest.TestCase):
             pull_request={'number': 47, 'head_sha': head, 'base_sha': base, 'merge_sha': self.sha},
         )
         self.assertEqual(self.verify()['pull_request']['head_sha'], head)
+        with patch.dict(self.report, {'checkout_parents': [head, base]}):
+            with self.assertRaisesRegex(ValueError, 'merge checkout and PR head'):
+                self.verify()
         for field, value in [('head_sha', self.sha), ('merge_sha', head)]:
             with self.subTest(field=field), patch.dict(self.report['pull_request'], {field: value}):
                 with self.assertRaisesRegex(ValueError, 'merge checkout and PR head'):
@@ -131,6 +143,38 @@ class CIEvidenceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing required logs'):
             self.verify()
 
+    def test_log_archive_checks_the_tar_terminator_and_gzip_footer(self):
+        def missing_end_block(data):
+            raw = gzip.decompress(data)
+            payload_end = len(raw.rstrip(b'\0'))
+            size = (payload_end + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE * tarfile.BLOCKSIZE
+            return gzip.compress(raw[:size + tarfile.BLOCKSIZE])
+
+        with self.assertRaisesRegex(ValueError, 'terminator or trailing data'):
+            self.verify(log_payload=lambda data: gzip.compress(gzip.decompress(data) + b'trailing content'))
+        with self.assertRaisesRegex(ValueError, 'terminator or trailing data'):
+            self.verify(log_payload=missing_end_block)
+        with self.assertRaisesRegex(ValueError, 'incomplete or malformed'):
+            self.verify(log_payload=lambda data: data[:-4])
+
+    def test_report_rejects_duplicate_json_fields(self):
+        with self.assertRaisesRegex(ValueError, 'Duplicate JSON field: schema'):
+            self.verify(report_payload='{"schema":2,' + json.dumps(self.report)[1:])
+
+    def test_toolchain_requires_observed_versions_and_paths(self):
+        toolchain = self.report['toolchain']
+        with patch.dict(toolchain['python'], {'executable': 'python3'}):
+            with self.assertRaisesRegex(ValueError, 'actual python executable path'):
+                self.verify()
+        with patch.dict(toolchain['dart'], {'version': 'Dart SDK version: 3.13.0 (stable)'}):
+            with self.assertRaisesRegex(ValueError, 'Dart version differs from the Flutter SDK'):
+                self.verify()
+
+    def test_report_toolchain_matches_captured_probe(self):
+        with patch.dict(self.report['toolchain']['python'], {'version': '3.15.1'}):
+            with self.assertRaisesRegex(ValueError, 'toolchain differs from the captured probe'):
+                self.verify()
+
     def test_wrapper_captures_pipeline_failure_and_skips_later_commands(self):
         with tempfile.TemporaryDirectory(prefix='meshchan CI ') as directory:
             root = Path(directory)
@@ -160,6 +204,80 @@ class CIEvidenceTest(unittest.TestCase):
             )
         self.assertEqual(errors, ['Successful step is missing complete capture: format'])
         self.assertEqual(steps[0]['outcome'], 'not_run')
+
+    def test_malformed_capture_preserves_log_for_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'format.log').write_bytes(b'captured output')
+            (root / 'format.json').write_text('{"exit_code":false}', encoding='utf-8')
+            steps, errors = evidence.step_report(
+                self.job, {'format': {'outcome': 'success', 'conclusion': 'success'}}, root,
+            )
+        self.assertIn('Malformed step exit code capture: format', errors)
+        row = next(step for step in steps if step['id'] == 'format')
+        self.assertIsNone(row['exit_code'])
+        self.assertEqual(row['log']['sha256'], evidence.sha256(b'captured output'))
+
+    def test_malformed_toolchain_metadata_can_be_reported_with_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'toolchain.json'
+            errors = []
+            self.assertIsNone(evidence.toolchain_report(path, self.job, 'failure', errors))
+            self.assertEqual(errors, [])
+            path.write_text('{')
+            self.assertIsNone(evidence.toolchain_report(path, self.job, 'failure', errors))
+            self.assertIn('Malformed toolchain probe report', errors[0])
+            path.write_text(json.dumps(self.report['toolchain']))
+            self.assertEqual(evidence.toolchain_report(path, self.job, 'success', []), self.report['toolchain'])
+
+    def test_missing_lockfile_still_publishes_failed_job_diagnostics(self):
+        capture_bytes = b'capture source'
+        capture_log = b'Flutter could not resolve locked dependencies\n'
+        for missing_from in ('checked-out commit', 'worktree'):
+            with self.subTest(missing_from=missing_from), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                capture = root / 'meshchan-ci-capture'
+                capture.mkdir()
+                (capture / 'locked_dependencies.log').write_bytes(capture_log)
+                checkout = root / 'worktree'
+                source = checkout / evidence.CAPTURE_TOOL
+                source.parent.mkdir(parents=True)
+                source.write_bytes(capture_bytes)
+                output = root / 'outputs'
+                context = {'locked_dependencies': {'outcome': 'failure', 'conclusion': 'failure'}}
+                env = {
+                    'GITHUB_JOB': self.job, 'RUNNER_TEMP': str(root), 'GITHUB_OUTPUT': str(output),
+                    'GITHUB_WORKFLOW_SHA': self.sha, 'GITHUB_WORKFLOW_REF': self.report['workflow_ref'],
+                    'GITHUB_REPOSITORY': self.identity['repository'], 'GITHUB_EVENT_NAME': 'push',
+                    'GITHUB_REF': self.ref, 'GITHUB_SHA': self.sha, 'GITHUB_RUN_ID': '123',
+                    'GITHUB_RUN_ATTEMPT': '1', 'MESHCHAN_CI_CHECK_RUN_ID': '456',
+                    'MESHCHAN_CI_STEPS': json.dumps(context), 'RUNNER_OS': 'Linux',
+                    'RUNNER_ARCH': 'X64', 'MESHCHAN_CI_RUNNER_LABEL': 'ubuntu-latest',
+                }
+
+                def git_show(command, **kwargs):
+                    name = command[-1].split(':', 1)[-1]
+                    if name == 'pubspec.lock' and missing_from == 'checked-out commit':
+                        raise subprocess.CalledProcessError(128, command)
+                    return {evidence.WORKFLOW: self.workflow, evidence.CAPTURE_TOOL: capture_bytes,
+                            'pubspec.lock': b'locked dependencies'}[name]
+
+                with (chdir(checkout), patch.dict(os.environ, env),
+                      patch.object(evidence.subprocess, 'check_output', side_effect=git_show),
+                      patch.object(evidence, 'command_output', side_effect=[self.sha, '', 'x86_64']),
+                      patch.object(evidence.platform, 'freedesktop_os_release', return_value={'PRETTY_NAME': 'Linux'}),
+                      redirect_stderr(io.StringIO()) as stderr):
+                    evidence.report_job()
+                artifact = root / 'meshchan-ci-evidence'
+                report = json.loads((artifact / 'report.json').read_bytes())
+                message = f'Could not read CI input from the {missing_from}: pubspec.lock'
+                self.assertIn(message, report['evidence_errors'])
+                self.assertIn(message, stderr.getvalue())
+                self.assertEqual('pubspec.lock' in report['checkout_inputs'], missing_from == 'worktree')
+                self.assertEqual((artifact / 'workflow.yml').read_bytes(), self.workflow)
+                self.assertIn('evidence_ok=false', output.read_text())
+                with tarfile.open(artifact / 'logs.tar.gz', 'r:gz') as archive:
+                    self.assertEqual(archive.extractfile('locked_dependencies.log').read(), capture_log)
 
 
 if __name__ == '__main__':

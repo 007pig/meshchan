@@ -15,6 +15,7 @@ MERGE = 'b' * 40
 WORKFLOW = b'name: CI\n'
 STARTED = '2026-11-21T12:00:00Z'
 COMPLETED = '2026-11-21T12:05:00Z'
+INPUTS = {'tool/ci_evidence.py': 'd' * 64, 'pubspec.lock': 'e' * 64}
 
 
 class EvidenceTest(unittest.TestCase):
@@ -23,11 +24,13 @@ class EvidenceTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
-    def responses(self, expected):
+    def responses(self, expected, *, checked_ref=None):
         run = {'id': expected.run_id, 'run_attempt': expected.attempt, 'event': expected.event,
                'head_sha': expected.head_sha, 'repository': {'id': 17, 'full_name': expected.repository},
                'path': evidence.WORKFLOW, 'status': 'completed', 'conclusion': 'success',
                'workflow_id': 123, 'check_suite_id': 23, 'head_branch': 'main', 'run_started_at': STARTED}
+        if checked_ref is None:
+            checked_ref = 'refs/remotes/pull/46/merge' if expected.event == 'pull_request' else 'refs/remotes/origin/main'
         jobs = []
         for identifier, (name, label) in enumerate(evidence.JOBS.items(), start=30):
             jobs.append({'id': identifier, 'name': name, 'run_id': expected.run_id,
@@ -38,10 +41,8 @@ class EvidenceTest(unittest.TestCase):
         logs = io.BytesIO()
         with ZipFile(logs, 'w') as archive:
             for identifier, job in enumerate(evidence.JOBS):
-                log = ''
-                if expected.event == 'pull_request':
-                    log += f'{STARTED} [command]/usr/bin/git checkout --force refs/remotes/pull/46/merge\n'
-                log += (f'{STARTED} [command]/usr/bin/git log -1 --format=%H\n'
+                log = (f'{STARTED} [command]/usr/bin/git checkout --force {checked_ref}\n'
+                       f'{STARTED} [command]/usr/bin/git log -1 --format=%H\n'
                         f'{STARTED} {expected.source}\n')
                 archive.writestr(f'{identifier}_{job}.txt', log)
         self.records = {expected.endpoint: run, expected.attempt_endpoint: dict(run),
@@ -85,11 +86,11 @@ class EvidenceTest(unittest.TestCase):
         return evidence.Attempt('007pig/meshchan', MERGE if event == 'pull_request' else SOURCE,
                                 event, SOURCE, evidence.sha256(WORKFLOW), 1000, 2, artifacts)
 
-    def verify(self, path, pin, expected):
+    def verify(self, path, pin, expected, **options):
         return evidence.verify_snapshot(path, pin, source=expected.source, event=expected.event,
                                         head_sha=expected.head_sha, workflow_sha256=expected.workflow_sha256,
                                         require_artifacts=expected.require_artifacts, run_id=expected.run_id,
-                                        attempt=expected.attempt)
+                                        attempt=expected.attempt, **options)
 
     def collect(self, path, expected, message=None):
         with patch.object(evidence.subprocess, 'run', side_effect=self.github):
@@ -128,8 +129,11 @@ class EvidenceTest(unittest.TestCase):
             records[expected.attempt_endpoint][field] = value
             self.collect(self.root / f'run-{index}', expected, 'completed with a success conclusion')
         records = self.responses(expected)
-        records[expected.endpoint]['run_attempt'] = 3
-        self.collect(self.root / 'mismatched attempt', expected, 'run or attempt')
+        records[expected.endpoint]['run_attempt'] = 1
+        self.collect(self.root / 'attempt unavailable', expected, 'different attempt number')
+        records = self.responses(expected)
+        records[expected.attempt_endpoint]['run_attempt'] = 1
+        self.collect(self.root / 'mismatched attempt', expected, 'different attempt number')
         records = self.responses(expected)
         jobs = records[expected.attempt_endpoint + '/jobs?per_page=100&page=1']
         jobs['jobs'][0]['run_attempt'] = 1
@@ -137,6 +141,17 @@ class EvidenceTest(unittest.TestCase):
         jobs['jobs'].pop(0)
         jobs['total_count'] = 1
         self.collect(self.root / 'missing job', expected, 'Missing or unexpected')
+
+    def test_earlier_successful_attempt_can_be_collected_after_rerun(self):
+        expected = self.expected()
+        for status, conclusion in [('queued', None), ('completed', 'failure')]:
+            records = self.responses(expected)
+            records[expected.endpoint].update(run_attempt=3, status=status, conclusion=conclusion,
+                                              run_started_at='2026-11-21T12:10:00Z')
+            target = self.root / status
+            pin = self.collect(target, expected)
+            result = self.verify(target, pin, expected)
+            self.assertEqual(result['attempt'], 2)
 
     def test_workflow_and_pr_checkout_are_bound_separately_from_head(self):
         expected = self.expected('pull_request')
@@ -174,7 +189,8 @@ class EvidenceTest(unittest.TestCase):
 
     @staticmethod
     def verified_report(archive, *, job, **identity):
-        return {'workflow_sha': SOURCE, 'job_id': {'check': 30, 'macos-app': 31}[job]}
+        return {'workflow_sha': SOURCE, 'job_id': {'check': 30, 'macos-app': 31}[job],
+                'checkout_inputs': dict(INPUTS)}
 
     @patch('ci_evidence.verify_job_zip', side_effect=verified_report)
     def test_artifact_transport_verifies_outer_zip_and_binds_ci_report(self, verify_job_zip):
@@ -183,6 +199,9 @@ class EvidenceTest(unittest.TestCase):
         target = self.root / 'current snapshot'
         pin = self.collect(target, expected)
         result = self.verify(target, pin, expected)
+        self.assertEqual(result, self.verify(target, pin, expected, checkout_inputs=INPUTS))
+        with self.assertRaisesRegex(ValueError, 'input digests disagree'):
+            self.verify(target, pin, expected, checkout_inputs=INPUTS | {'pubspec.lock': 'f' * 64})
         self.assertEqual([row['id'] for row in result['artifacts']], [100, 101])
         self.assertEqual(verify_job_zip.call_args.kwargs['checkout_sha'], SOURCE)
         self.assertEqual(verify_job_zip.call_args.kwargs['attempt'], 2)
@@ -192,6 +211,52 @@ class EvidenceTest(unittest.TestCase):
         verify_job_zip.reset_mock()
         self.collect(self.root / 'wrong download', expected, 'ZIP differs from its remote size or digest')
         verify_job_zip.assert_not_called()
+
+    @patch('ci_evidence.verify_job_zip', side_effect=verified_report)
+    def test_tag_ref_is_bound_to_checkout_logs_and_job_reports(self, verify_job_zip):
+        expected = self.expected(artifacts=True)
+        records = self.responses(expected, checked_ref='refs/tags/example-tag')
+        records[expected.endpoint]['head_branch'] = 'example-tag'
+        records[expected.attempt_endpoint]['head_branch'] = 'example-tag'
+        target = self.root / 'tag snapshot'
+        pin = self.collect(target, expected)
+        self.verify(target, pin, expected)
+        self.assertTrue(all(call.kwargs['requested_ref'] == 'refs/tags/example-tag'
+                            for call in verify_job_zip.call_args_list))
+        records[expected.endpoint]['head_branch'] = 'other-ref'
+        records[expected.attempt_endpoint]['head_branch'] = 'other-ref'
+        self.collect(self.root / 'wrong tag ref', expected, 'disagrees with the checked-out ref')
+
+    def test_jobs_must_agree_on_ci_input_digests(self):
+        expected = self.expected(artifacts=True)
+        self.responses(expected)
+
+        def report(archive, *, job, **identity):
+            result = self.verified_report(archive, job=job, **identity)
+            if job == 'macos-app':
+                result['checkout_inputs']['pubspec.lock'] = 'f' * 64
+            return result
+
+        with patch('ci_evidence.verify_job_zip', side_effect=report):
+            self.collect(self.root / 'mismatched input digests', expected, 'input digests disagree')
+
+    def test_pr_artifact_parents_must_match_github_merge_commit(self):
+        expected = self.expected('pull_request', artifacts=True)
+        self.responses(expected)
+        parents = ['c' * 40, expected.head_sha]
+
+        def report(archive, *, job, **identity):
+            result = self.verified_report(archive, job=job, **identity)
+            result.update(workflow_sha=expected.source, checkout_parents=parents,
+                          pull_request={'number': 46, 'head_sha': expected.head_sha,
+                                        'merge_sha': expected.source})
+            return result
+
+        with patch('ci_evidence.verify_job_zip', side_effect=report):
+            target = self.root / 'verified merge artifacts'
+            self.verify(target, self.collect(target, expected), expected)
+            parents[0] = 'f' * 40
+            self.collect(self.root / 'wrong merge parent', expected, 'checkout parent list differs')
 
     @patch('ci_evidence.verify_job_zip', side_effect=verified_report)
     def test_expired_missing_and_unsuccessful_artifacts_are_not_evidence(self, verify_job_zip):

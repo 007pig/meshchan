@@ -202,7 +202,10 @@ respectively. The restore used CPython 3.15.2, invoked via
 `/opt/homebrew/bin/python3`. It reported its resolved executable as
 `/opt/homebrew/opt/python@3.15/bin/python3.15`.
 
-These were the actual restore arguments. Repeat with fresh output names.
+These arguments record the historical restore from the locally created seal.
+For a new run, follow the
+[authenticated bootstrap procedure](../releases/phase-1e8-ci-retention.md#check-and-restore-from-the-sealed-object)
+and choose fresh output names.
 
 ```sh
 cd "$HOME/Documents/my_projects/Meshchan Engineering Archive"
@@ -248,3 +251,76 @@ download, clean install, and Beta upgrade. Quarantine, normal approval,
 data continuity, and the oldest supported macOS remain pending. Real
 USB and RF acceptance, existing serial stability limits, and public
 release gates carry forward unchanged.
+
+## Branch review revalidation
+
+The reviewed verifier restored the existing sealed object from an independent
+tool copy under the recorded read-isolation profile. It verified the
+original acceptance chain, exact archive inventory, and DMG structure.
+The temporary restore's DMG matched the original SHA-256. The retained
+`RC1 Build 8 - review restore evidence/verification.json` report has
+SHA-256 `0b02e28ab97958998be8f2a36dbdb3cf8be72459fdffa3e5e8c6a16e5f654c66`.
+
+The standalone bootstrap also verified the sealed historical verifier and
+completed an isolated check, with its scratch extraction removed. Its
+`RC1 Build 8 - review bootstrap evidence/verification.json` report has
+SHA-256 `1f1b97479098862ff2466d719c180c978b78c5d21b23b8c3d3632c639bc9d14f`.
+A separate bootstrap invocation rejected an output inside the original
+checkout before creating a work or restore directory.
+
+All four original CI snapshots verified again. Both job downloads for run
+`44918791179` matched the independently read commit digests for
+`pubspec.lock` and `tool/ci_evidence.py`. The historical seal and its
+external receipt SHA-256 remained intact.
+
+The final review changes passed all 543 local Python tool tests in 111.134
+seconds with CPython 3.15.2 at `/opt/homebrew/bin/python3`. The
+`build/phase-1e8/review-python-final-suite.log` SHA-256 is
+`6969b4cafe56b90a9a6086ba166e9b2c53a263d4258d46ca49b26efdca7c9052`.
+
+### Follow-up branch review
+
+The follow-up review reverified all four CI snapshots and the two previously
+downloaded job artifacts. The artifact toolchain descriptions matched their
+captured probes. Historical VM and replacement invocations were checked
+against the retained candidate paths and manifest pins without accessing
+the private staged VM configuration.
+
+The final verifier independently restored the same sealed object under the
+original read-isolation profile. The restored image matched the original
+SHA-256 and passed macOS UDIF/UDZO, HFS+, and CRC32 verification. The
+temporary restore was removed after verification. The
+`RC1 Build 8 - follow-up review recovery evidence/verification.json` report
+has SHA-256
+`366b8f77531101610c8a3a7b40a401172924003122c77a64b7ddece5e4881320`.
+The original external receipt pin matched after the restore.
+
+All 552 Python tool tests passed in 111.435 seconds with CPython 3.15.2 at
+`/opt/homebrew/bin/python3`. The
+`build/phase-1e8/followup-review-python-suite.log` SHA-256 is
+`dccf86cf1dcaad5a38583755b5437c8fbd00384614106124337f08d1358e5d22`.
+
+### Entry-point and historical image review
+
+The CI reporter preserved the captured failed-step log when the lockfile was
+absent from either the commit or the worktree. The reported evidence was
+invalid in both cases. All four pinned CI snapshots and both archived job
+downloads verified again. The revised standalone bootstrap authenticated
+the existing verifier tree and launched its CLI, which displayed the check
+and restore commands.
+
+The current verifier restored the existing sealed object under the original
+read-isolation profile. It checked the historical `hdiutil` and `diskutil`
+outputs against both the creation and independent acceptance receipts,
+including the selected image path, format, CRC, and mounted read-only
+volume. The restored DMG independently matched the original SHA-256 and
+passed native macOS image verification. The temporary restore was removed.
+The `RC1 Build 8 - entry-point review evidence/verification.json` report has
+SHA-256
+`d2a0bd54f602fcdf36e65c2e4f904aadd07d24965027ad12c5982c68403490fc`.
+The original external receipt pin matched after recovery.
+
+All 557 Python tool tests passed in 108.656 seconds with CPython 3.15.2 at
+`/opt/homebrew/bin/python3`. The
+`build/phase-1e8/entry-point-review-python-suite.log` SHA-256 is
+`8ae0ded7c0605a726c50f4b7ebc228627eba50c9618d433673ad6ca519f8132d`.

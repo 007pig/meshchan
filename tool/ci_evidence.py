@@ -3,6 +3,7 @@
 
 import argparse
 from datetime import datetime, timezone
+import gzip
 import hashlib
 import json
 import os
@@ -45,10 +46,23 @@ MEMBERS = {'report.json', 'workflow.yml', 'logs.tar.gz'}
 RETENTION_DAYS = 30
 SHA = re.compile(r'[0-9a-f]{40}')
 DIGEST = re.compile(r'[0-9a-f]{64}')
+VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.]+)*')
 
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def load_json(data):
+    def unique_object(pairs):
+        result = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError(f'Duplicate JSON field: {name}')
+            result[name] = value
+        return result
+
+    return json.loads(data, object_pairs_hook=unique_object)
 
 
 def write_json(path, data):
@@ -133,11 +147,19 @@ def step_report(job, context, root):
         }
         log = root / (stage + '.log')
         result_path = root / (stage + '.json')
-        if stage in CHECKS[job] and log.is_file():
+        # Reporting can still run with the runner's default interpreter
+        # when the pinned Python setup fails.
+        if stage in CHECKS[job] and not log.is_symlink() and log.is_file():
             with log.open('rb') as stream:
                 row['log'] = {'path': log.name, **measure(stream)}
-            if result_path.is_file():
-                row['exit_code'] = json.loads(result_path.read_bytes())['exit_code']
+            if not result_path.is_symlink() and result_path.is_file():
+                try:
+                    code = load_json(result_path.read_bytes())['exit_code']
+                    if type(code) is not int or not 0 <= code <= 255:
+                        raise ValueError('Expected a shell exit code')
+                    row['exit_code'] = code
+                except (OSError, ValueError, TypeError, KeyError):
+                    errors.append('Malformed step exit code capture: ' + stage)
         if (stage in CHECKS[job] and row['outcome'] == 'success'
                 and (row['log'] is None or row['exit_code'] != 0)):
             errors.append('Successful step is missing complete capture: ' + stage)
@@ -160,6 +182,20 @@ def pull_request_identity(event, ref, requested_sha):
     }
 
 
+def toolchain_report(path, job, outcome, errors):
+    try:
+        if not path.is_symlink() and path.is_file():
+            report = load_json(path.read_bytes())
+            _verify_toolchain(report, job)
+            return report
+    except (OSError, ValueError) as error:
+        errors.append(f'Malformed toolchain probe report: {error}')
+        return None
+    if outcome == 'success':
+        errors.append('Successful toolchain probe is missing its report')
+    return None
+
+
 def report_job():
     env = os.environ
     job = env['GITHUB_JOB']
@@ -175,9 +211,19 @@ def report_job():
     workflow = subprocess.check_output(['git', 'show', workflow_sha + ':' + WORKFLOW])
     checkout_inputs = {}
     for source in (CAPTURE_TOOL, 'pubspec.lock'):
-        original = subprocess.check_output(['git', 'show', checkout + ':' + source])
+        try:
+            original = subprocess.check_output(['git', 'show', checkout + ':' + source],
+                                               stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            errors.append('Could not read CI input from the checked-out commit: ' + source)
+            continue
         checkout_inputs[source] = sha256(original)
-        if Path(source).read_bytes() != original:
+        try:
+            actual = Path(source).read_bytes()
+        except OSError:
+            errors.append('Could not read CI input from the worktree: ' + source)
+            continue
+        if actual != original:
             errors.append('CI input differs from the checked-out commit: ' + source)
     runner = {
         'os': env['RUNNER_OS'], 'arch': env['RUNNER_ARCH'],
@@ -189,15 +235,13 @@ def report_job():
     }
     pr = pull_request_identity(env['GITHUB_EVENT_NAME'], env['GITHUB_REF'], env['GITHUB_SHA'])
     if checkout != env['GITHUB_SHA'] or (
-            pr is not None and (pr['merge_sha'] != checkout or pr['head_sha'] not in checkout_parents)):
+            pr is not None and (pr['merge_sha'] != checkout or len(checkout_parents) != 2
+                                or pr['head_sha'] != checkout_parents[1])):
         errors.append('Actual checkout does not match the workflow event checkout')
     if ((runner['os'], runner['arch'], runner['uname_machine'], runner['label'])
             != RUNNER_IDENTITY[job]):
         errors.append('Unexpected operating system or architecture for the configured job')
-    toolchain_path = root / 'toolchain.json'
-    toolchain = json.loads(toolchain_path.read_bytes()) if toolchain_path.is_file() else None
-    if steps[len(SETUP)]['outcome'] == 'success' and toolchain is None:
-        errors.append('Successful toolchain probe is missing its report')
+    toolchain = toolchain_report(root / 'toolchain.json', job, steps[len(SETUP)]['outcome'], errors)
     report = {
         'schema': 1,
         'kind': 'meshchan-ci-job',
@@ -232,6 +276,36 @@ def report_job():
         print(error, file=sys.stderr)
 
 
+def _verify_toolchain(toolchain, job):
+    def nonempty(value):
+        return isinstance(value, str) and bool(value.strip())
+
+    def version(value):
+        return isinstance(value, str) and VERSION.fullmatch(value) is not None
+
+    if not isinstance(toolchain, dict):
+        raise ValueError('CI report lacks the required actual toolchain versions')
+    for name in ('python', 'flutter', 'dart'):
+        tool = toolchain.get(name)
+        executable = tool.get('executable') if isinstance(tool, dict) else None
+        if not nonempty(executable) or not executable.startswith('/'):
+            raise ValueError(f'CI report lacks the actual {name} executable path')
+    if not version(toolchain['python'].get('version')):
+        raise ValueError('CI report lacks the actual Python version')
+    flutter = toolchain['flutter'].get('version')
+    if (not isinstance(flutter, dict) or not version(flutter.get('frameworkVersion'))
+            or not version(flutter.get('dartSdkVersion')) or not nonempty(flutter.get('channel'))):
+        raise ValueError('CI report lacks the actual Flutter SDK version information')
+    dart = toolchain['dart'].get('version')
+    if not nonempty(dart) or not dart.startswith(f"Dart SDK version: {flutter['dartSdkVersion']} "):
+        raise ValueError('CI report Dart version differs from the Flutter SDK version')
+    if (not nonempty(toolchain.get('compiler')) or not nonempty(toolchain.get('compiler_path'))
+            or not toolchain['compiler_path'].startswith('/')
+            or (job == 'macos-app' and not all(nonempty(toolchain.get(key))
+                    for key in ('xcode', 'xcode_selected', 'macos_sdk')))):
+        raise ValueError('CI report lacks the actual compiler or macOS SDK information')
+
+
 def _verify_report(report, identity):
     if not isinstance(report, dict) or any(report.get(key) != value for key, value in identity.items()):
         raise ValueError('CI report identity mismatch')
@@ -253,7 +327,7 @@ def _verify_report(report, identity):
         if (not isinstance(pr, dict) or type(pr.get('number')) is not int
                 or ref != f"refs/pull/{pr['number']}/merge"
                 or pr.get('merge_sha') != checkout or pr.get('head_sha') == checkout
-                or pr.get('head_sha') not in parents
+                or len(parents) != 2 or pr.get('head_sha') != parents[1]
                 or not isinstance(pr.get('base_sha'), str) or not SHA.fullmatch(pr['base_sha'])):
             raise ValueError('CI PR evidence does not identify the merge checkout and PR head')
     elif pr is not None or report['event'] not in ('push', 'workflow_dispatch'):
@@ -269,12 +343,7 @@ def _verify_report(report, identity):
             tuple(runner.get(key) for key in ('os', 'arch', 'uname_machine', 'label'))
             != RUNNER_IDENTITY[job] or not runner.get('os_version') or not runner.get('kernel')):
         raise ValueError('CI runner operating system or architecture is missing or incorrect')
-    toolchain = report.get('toolchain')
-    if (not isinstance(toolchain, dict)
-            or not all(toolchain.get(key) for key in ('python', 'flutter', 'dart', 'compiler'))
-            or (job == 'macos-app'
-                and not all(toolchain.get(key) for key in ('xcode', 'xcode_selected', 'macos_sdk')))):
-        raise ValueError('CI report lacks the required actual toolchain versions')
+    _verify_toolchain(report.get('toolchain'), job)
     inputs = report.get('checkout_inputs')
     if (not isinstance(inputs, dict) or set(inputs) != {CAPTURE_TOOL, 'pubspec.lock'}
             or not all(isinstance(value, str) and DIGEST.fullmatch(value) for value in inputs.values())
@@ -319,7 +388,7 @@ def verify_job_zip(archive, *, repository, event, checkout_sha, requested_sha,
                           ('logs.tar.gz', 256 * 1024 * 1024)):
         if archive.getinfo(name).file_size > maximum:
             raise ValueError('CI evidence ZIP member exceeds its size limit: ' + name)
-    report = json.loads(archive.read('report.json'))
+    report = load_json(archive.read('report.json'))
     identity = dict(schema=1, kind='meshchan-ci-job', repository=repository, event=event,
                     checkout_sha=checkout_sha, requested_sha=requested_sha, run_id=run_id,
                     attempt=attempt, job=job, workflow_path=WORKFLOW, workflow_sha256=workflow_sha256)
@@ -329,17 +398,40 @@ def verify_job_zip(archive, *, repository, event, checkout_sha, requested_sha,
     if sha256(archive.read('workflow.yml')) != workflow_sha256:
         raise ValueError('CI workflow bytes do not match the expected digest')
     logs = _verify_steps(report)
-    with archive.open('logs.tar.gz') as compressed, tarfile.open(fileobj=compressed, mode='r|gz') as members:
-        for member in members:
-            expected = logs.pop(member.name, None)
-            if (expected is None or not member.isfile() or member.size != expected['size']
-                    or member.size > 128 * 1024 * 1024):
-                raise ValueError('CI log archive has an unexpected, duplicate, or invalid member: ' + member.name)
-            with members.extractfile(member) as log:
-                if measure(log) != expected:
-                    raise ValueError('CI log digest mismatch: ' + member.name)
-        if logs:
-            raise ValueError('CI log archive is missing required logs: ' + ', '.join(logs))
+    try:
+        with (archive.open('logs.tar.gz') as compressed,
+              gzip.GzipFile(fileobj=compressed) as log_tar,
+              tarfile.open(fileobj=log_tar, mode='r:') as members):
+            for member in members:
+                expected = logs.pop(member.name, None)
+                if (expected is None or member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE)
+                        or member.sparse is not None or member.size != expected['size']
+                        or member.size > 128 * 1024 * 1024):
+                    raise ValueError('CI log archive has an unexpected, duplicate, or invalid member: ' + member.name)
+                with members.extractfile(member) as log:
+                    probe = member.name == 'runner_toolchain.log'
+                    if probe:
+                        if member.size > 256 * 1024:
+                            raise ValueError('CI toolchain log exceeds its size limit')
+                        raw = log.read()
+                        observed = {'size': len(raw), 'sha256': sha256(raw)}
+                    else:
+                        observed = measure(log)
+                    if observed != expected:
+                        raise ValueError('CI log digest mismatch: ' + member.name)
+                    if probe and load_json(raw) != report['toolchain']:
+                        raise ValueError('CI report toolchain differs from the captured probe')
+            if logs:
+                raise ValueError('CI log archive is missing required logs: ' + ', '.join(logs))
+            # tarfile stops after the first zero header. Verify the remaining
+            # terminator, record padding, and gzip end-of-stream as well.
+            log_tar.seek(members.offset)
+            limit = 2 * tarfile.BLOCKSIZE + tarfile.RECORDSIZE
+            tail = log_tar.read(limit + 1)
+            if not 2 * tarfile.BLOCKSIZE <= len(tail) <= limit or any(tail):
+                raise ValueError('CI log archive has an invalid terminator or trailing data')
+    except (EOFError, tarfile.TarError) as error:
+        raise ValueError('CI log archive is incomplete or malformed') from error
     return report
 
 

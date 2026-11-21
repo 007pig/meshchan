@@ -243,14 +243,17 @@ route uses locally available coding and image tools and an owned VM workspace.
 ## Remaining steps and handoff
 
 The [engineering handoff](#1e6-and-1e7-engineering-handoff) identifies the
-accepted 1E.6 and 1E.7 outputs. The next development step is 1E.8.
+accepted 1E.6 and 1E.7 outputs. See the
+[1E.8 validation record](../validation/phase-1e8-ci-retention.md) for the
+source-specific CI, the sealed and independently restored build 8, and
+the exact engineering image for 1E.9.
 
 | Step | Goal | Main dependencies and expected output |
 | --- | --- | --- |
 | 1E.1–1E.5 | Retain the completed release, version, materials, build, and engineering package foundations. | Preserve the original acceptance records and use this contract for the active signing and release policy. |
 | 1E.6 | [Close the explicit local signing profile](phase-1e6-signing.md). | Accepted upstream package, complete locally signed App/CLI and materials, exact signature and runtime checks, user library replacement, and a new pinned candidate manifest and independent receipt. Complete as the prerequisite to 1E.7. |
 | 1E.7 | [Build and independently accept the complete engineering DMG](phase-1e7-dmg.md). | Accepted local candidate, full image payload, read-only mount and complete extraction, owned detach, limited CLI and VM App runtime from the extracted copy, and final integrity and SHA-256. |
-| 1E.8 | Provide CI, a controlled engineering entry point, and candidate and evidence retention. | Source-specific CI, repeatable entry point, and immutable retention of the accepted image, App/CLI, materials, checksums, and evidence. |
+| 1E.8 | [Provide CI, controlled engineering handoff, and evidence retention](phase-1e8-ci-retention.md). | Source-specific CI, repeatable entry point, and immutable retention of the accepted image, App/CLI, materials, checksums, and evidence. |
 | 1E.9 | Accept actual engineering downloads, installation, and Beta upgrade. | Actual quarantine and prompts, tested user approval and offline use under normal security settings, preserved data and exclusive ownership, and support conclusions for tested environments. |
 | 1E.10 | Run limited real USB/RF acceptance on the final package. | Explicit device identity and selected-device Check, a finite exact round trip, Cancel or normal Quit, and verified resource and process release. Preserve known limits. |
 | 1E.11 | Finalize engineering release documentation and materials. | Local signing and notarization status, trusted source and checksum, tested installation and upgrade, full CLI, data directory and ownership, library replacement, and known limits. |

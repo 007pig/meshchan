@@ -16,7 +16,8 @@ engineering package. Start with the [Release build guide](releases/phase-1e4-bui
 and [engineering packaging guide](releases/phase-1e5-package.md).
 Use the [local signing guide](releases/phase-1e6-signing.md) to seal and
 accept that package. The [DMG guide](releases/phase-1e7-dmg.md) covers
-image creation, independent acceptance, and retention of the exact image.
+image creation and independent acceptance. Use the [CI and retention guide](releases/phase-1e8-ci-retention.md)
+for the selected accepted image, its evidence, and recovery.
 
 The dev.2 tools `package_dev_candidate.py` and `revise_dev_candidate.py` and the
 dev.3 tools `validate_dev_candidate.py` and `package_1c_candidate.py` are kept
@@ -1079,11 +1080,20 @@ session initialization and diagnostic commands.
 
 ## CI and SDK updates
 
-The existing single `ubuntu-latest` job remains pinned to Flutter `3.47.9` stable via `subosito/flutter-action@v2.23.0`, using its bundled Dart and read-only repository permissions. It runs locked dependency resolution, formatting, analysis, both full test suites, and sequential native builds for the product CLI, read-only observation example, and separate 1B.8 development datagram probe. The [shared smoke script](testing.md#shared-smoke-contract-and-ci) checks source/AOT entries, arguments, broken pipes, complete product-bundle relocation, native assets, and both executions of the five synthetic datagram scenarios. On Linux it also invokes real source and bundle `ports` commands and strictly requires exit `69`, empty stdout, the exact Linux safety diagnostic, and no stack trace. Any different failure or a successful enumeration fails smoke. It never runs a valid `port-check` and does not ignore native build failures. No platform matrix or release workflow was added.
+The read-only workflow runs `check` on `ubuntu-latest` and `macos-app`
+on `macos-15` arm64. Both jobs use Flutter 3.50.0 stable, bundled Dart,
+and CPython 3.15.2. They record the actual runner architecture and
+toolchain. The Ubuntu job checks locked resolution, generation, format,
+analysis, the test suites, and sequential native CLI and probe builds.
+The macOS job includes the App Debug and Release builds, XCTest, and App
+runtime and relocation. The [shared smoke script](testing.md#shared-smoke-contract-and-ci)
+checks source and native CLI entries. Linux `ports` must return exit 69
+with the expected diagnostic and empty stdout.
 
-This is an intentional restriction of the earlier Ubuntu enumeration acceptance check: with the pinned backend, successful enumeration would violate the no-open requirement. Ubuntu CI validates native compilation/packaging and the refusal to enumerate, not successful native enumeration or runtime native library loading. Actual enumeration remains locally validated on macOS. No fake enumeration or ignored failure is used in CI.
-
-CI configuration was updated; no remote workflow was run for these changes. Ubuntu results remain unverified. Local macOS success does not establish Linux, Windows, mobile, or clean-machine support.
+Each job publishes reports and logs tied to its actual checkout, run,
+attempt, and job. The [engineering retention guide](releases/phase-1e8-ci-retention.md)
+explains how to verify the completed run and download the artifacts before
+expiry. Consult the validation record for results at a given source cut.
 
 After a Homebrew SDK change, record the actual versions/channel, run every applicable check above, and review lockfile changes. Update the fixed CI baseline and this guide together only when the local SDK actually changed and compatibility checks pass. Do not upgrade Flutter, switch channels, or reinstall Homebrew packages as part of routine project validation.
 

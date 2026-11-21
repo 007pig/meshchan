@@ -52,6 +52,12 @@ Before handoff, follow the [Phase 1E.5 package guide](releases/phase-1e5-package
 to verify the accepted inputs, actual extraction, and offline CLI and VM App
 runtime. Reuse the accepted Release build for packaging-only changes.
 
+For CI and retention changes, run the full Python tool suite and check the
+workflow and affected Markdown. Use the [CI and retention guide](releases/phase-1e8-ci-retention.md)
+to verify exact-source remote CI, artifact downloads, selected inputs, and
+restoration in a separate directory. Use the archived verifier with the
+original inputs unavailable when validating the recovery boundary.
+
 ## Four-member sequential regression (1D.10)
 
 To repeat the historical Beta build 5 regression, use its matching checkout

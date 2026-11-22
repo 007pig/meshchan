@@ -404,7 +404,7 @@ void _writeHelp(CliOutput io, ArgParser parser) {
     '  profile     Manage complete operation presets.\n'
     '  settings    View, set or reset two typed settings.\n'
     '  history     Query, inspect, delete, prune or export one summary page.\n\n'
-    'info/watch send two initialization commands and may change device session state.\n'
+    'info/watch initialize the device and may change its session state.\n'
     'Run "meshctl <command> --help" for command usage.',
   );
 }

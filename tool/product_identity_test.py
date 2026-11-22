@@ -80,10 +80,9 @@ class ProductIdentityTest(unittest.TestCase):
                 apple_short_version(version)
 
     def test_source_template_and_explicit_build_progression(self):
-        # Recorded build progression after the App engine runpath change.
-        self.assertGreater(8, 7)
-        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', 8)['CFBundleVersion'], '8')
-        for build in (0, -1, True, '6'):
+        app_build = 9
+        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', app_build)['CFBundleVersion'], '9')
+        for build in (0, -1, True, '6', 8):
             with self.assertRaises(ValueError):
                 check_source_identity(c.ROOT, '0.1.0-rc.1', build)
         with tempfile.TemporaryDirectory() as directory:
@@ -100,7 +99,7 @@ class ProductIdentityTest(unittest.TestCase):
                 original = path.read_text()
                 path.write_text(original.replace(before, after))
                 with self.assertRaises(ValueError):
-                    check_source_identity(root, '0.1.0-rc.1', 8)
+                    check_source_identity(root, '0.1.0-rc.1', app_build)
                 path.write_text(original)
 
     def test_actual_app_missing_incomplete_and_each_wrong_or_missing_field(self):

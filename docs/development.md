@@ -57,7 +57,7 @@ SDK and validation sections below retain their historical versions.
 
 ## Product version and native identity (1E.2)
 
-The current Release build candidate is product `0.1.0-rc.1`, App build `8`.
+The current Release build candidate is product `0.1.0-rc.1`, App build `9`.
 Its embedded Flutter engine omits the host library runpath. Build `7` added
 automatic GPL notices, following the engineering build `6` recorded in 1E.2. This local progression does not establish a remote
 build allocator or imply final distribution acceptance. Never reuse a build for
@@ -76,7 +76,7 @@ A validated SemVer without build metadata maps its `major.minor.patch` to
 `MESHCHAN_PRODUCT_VERSION`, the Dart source identity and CLI. The positive integer
 `MESHCHAN_APP_BUILD` supplies `CFBundleVersion`; native `MeshchanProductVersion`
 preserves the full version for the standard About panel. App runtime and new
-App records use `0.1.0-rc.1+8`; CLI and new CLI records use `0.1.0-rc.1`.
+App records use `0.1.0-rc.1+9`; CLI and new CLI records use `0.1.0-rc.1`.
 Database schema, diagnostic format, JSON envelope and radio protocol do not change.
 
 Use ordinary `flutter run -d macos`, Debug/Release builds and source tests with
@@ -90,9 +90,9 @@ product source of truth. Dart runtime uses the checked source constants, so test
 and direct Dart processes share the compiled identity without SDK defines.
 
 ```bash
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 9
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8 \
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 9 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
@@ -225,7 +225,7 @@ Run these sequentially with the existing Flutter SDK and locked workspace:
 python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 (cd apps/meshchan_app && flutter build macos --debug --no-pub)
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 8 \
+python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 9 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 

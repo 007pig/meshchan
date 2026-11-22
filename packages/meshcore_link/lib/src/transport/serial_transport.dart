@@ -79,6 +79,8 @@ final class SerialTransport implements CompanionTransport {
   final _decoder = SerialFrameDecoder();
   _UsbStartupSync? _startup;
   late final StreamController<Uint8List> _frames;
+  int _emittedFrames = 0;
+  int? _completionReplyAfter;
   _State _state = _State.created;
   bool _listening = false;
   bool _sending = false;
@@ -201,15 +203,28 @@ final class SerialTransport implements CompanionTransport {
   void _decode(Uint8List chunk) {
     final result = _decoder.add(chunk);
     for (final frame in result.frames) {
-      _frames.add(frame);
+      _emitFrame(frame);
     }
     if (result.error case final error?) {
       _terminate(_protocolFailure(error), StackTrace.current);
     }
   }
 
+  void _emitFrame(Uint8List frame) {
+    _emittedFrames++;
+    _frames.add(frame);
+  }
+
+  bool _isAfterCompletionQuery(int frameNumber) {
+    final cutoff = _completionReplyAfter;
+    return cutoff != null && frameNumber > cutoff;
+  }
+
   void _readerDone() {
     if (_state != _State.open && _state != _State.opening) return;
+    if (_startup?.deferredUnsupportedFrame case final frame?) {
+      _emitFrame(frame);
+    }
     final error = _startup?.firstError ?? _decoder.finish().error;
     _terminate(
       error == null
@@ -230,18 +245,18 @@ final class SerialTransport implements CompanionTransport {
       );
 
   @override
-  Future<void> sendFrame(Uint8List content) async {
+  Future<void> sendFrame(Uint8List content) => _sendFrame(content);
+
+  Future<void> _sendFrame(
+    Uint8List content, {
+    bool completionQuery = false,
+  }) async {
     if (_state != _State.open) {
       throw StateError('The serial connection is not open.');
     }
     if (_sending) throw StateError('Another frame is already being sent.');
     // Encoder validates and copies before the first asynchronous yield.
     final bytes = encodeSerialFrame(content);
-    if (content.length == 2 &&
-        content[0] == 0x16 &&
-        content[1] == meshCoreSessionAppTargetVersion) {
-      _startup?.arm();
-    }
     final clock = _createClock();
     _sending = true;
     try {
@@ -276,6 +291,19 @@ final class SerialTransport implements CompanionTransport {
             count > 0 ? Duration.zero : (remaining < retry ? remaining : retry),
           );
         }
+      }
+      // Arm after every query byte is accepted. A short write can yield to
+      // the reader, and the caller may change its original buffer meanwhile.
+      if (bytes.length == 5 &&
+          bytes[3] == 0x16 &&
+          bytes[4] == meshCoreSessionAppTargetVersion) {
+        _startup?.arm();
+      }
+      if (completionQuery) {
+        // Exclude enqueued frames and any frame whose marker already arrived.
+        // The USB wrapper counts frames on delivery in the same wire order.
+        _completionReplyAfter =
+            _emittedFrames + (_decoder.hasPartialFrame ? 1 : 0);
       }
     } on SerialTransportFailure catch (failure, stack) {
       _terminate(failure, stack);

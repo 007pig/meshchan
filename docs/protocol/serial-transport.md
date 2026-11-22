@@ -106,6 +106,19 @@ waits, and a session may reach its request deadline. This observation does not
 justify treating a partial frame as a response or adding automatic flushes,
 queries, retries, or a fixed startup delay.
 
+The App and CLI session factory adds a startup-only compatibility path on the
+supported macOS USB interface. It searches a bounded window after the first
+query write completes for a complete Heltec V4.3 OLED reply. A candidate wholly
+contained in a valid aligned frame remains payload. If the enclosing frame
+fails Companion decoding, the scanner can recover the reply and resume strict
+framing on the bytes that follow it. Clean framing continues across the scan
+limit. When the request expires during lookahead, optional startup tracing
+retains the first framing or Companion decode error category.
+After synchronization, the connection uses the strict decoder for the remaining
+handshake and business traffic. For this Heltec path, the final `DEVICE_INFO`
+must start arriving after the completion query has been fully written and
+follow a valid `SELF_INFO`. See the [CLI handshake](../cli.md#commands-and-options).
+
 ## Reader ownership and shutdown evidence
 
 The actual resolved archive is `libserialport_plus` 1.0.5 (root lockfile and

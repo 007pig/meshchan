@@ -7,14 +7,15 @@ and Dart asynchronous primitives. It passes complete inner content directly to
 the transport and decoder; it never adds or searches for serial framing.
 
 Step 7 exposed initialization through the [info/watch CLI](../cli.md).
-The CLI owns one fresh transport/session per invocation, sends no extra commands,
-and awaits the shared cleanup result before returning.
+The CLI owns one fresh transport/session per invocation and awaits the shared
+cleanup result before returning. The [USB transport](serial-transport.md) adds
+one completion query on the supported macOS Heltec V4.3 OLED path.
 
 Phase 1B.3 adds ready-state `sendChannelData()` and explicit `readNextMessage()`
 through this same session. They share its single pending slot and one bounded
 FIFO. Phase 1B.4 adds explicitly enabled, finite reception through a separate
-single-subscription stream. Application PING/PONG and new CLI commands remain
-later work; existing `info/watch` still send only the initialization pair.
+single-subscription stream. Application PING/PONG and new CLI commands followed
+in later steps.
 
 ## API and ownership
 
@@ -234,7 +235,7 @@ failed and starts cleanup. A cleanup fault also enters failed if there was no
 earlier fault. A failed session stays failed after cleanup, preserving its reason.
 **Failed does not mean native resources have been released.**
 
-Initialization proceeds in this fixed order:
+At the `MeshCoreSession` layer, initialization proceeds in this fixed order:
 
 1. Subscribe once to the transport's single-subscription stream with error and
    done handlers. This subscription remains active and unpaused during cleanup.
@@ -245,8 +246,14 @@ Initialization proceeds in this fixed order:
 4. Send DEVICE_QUERY (`16 03`) and wait for DEVICE_INFO (`0D`).
 5. After both that send and its response succeed, send APP_START (`01`, seven
    reserved zero bytes, then the application name) and wait for SELF_INFO (`05`).
-6. After both sends and both parsed responses succeed with no terminal reason,
-   publish the complete info, enter ready, and complete `connect()`.
+6. After both `sendFrame()` calls succeed and both expected responses have been
+   parsed, publish the complete info, enter ready, and complete `connect()`.
+
+For a verified Heltec V4.3 OLED on the supported macOS USB interface, the CLI's
+transport sends a completion `DEVICE_QUERY` after `APP_START`. The transport
+completes the `APP_START` send only after a valid `SELF_INFO` followed by a
+complete `DEVICE_INFO` that starts arriving after the completion query has been
+fully written. The existing request and total initialization deadlines apply.
 
 `meshCoreSessionAppTargetVersion` is **3**, a named Meshchan policy based on the
 Step 5 single-device probe. It is not configurable in this session API and is not
@@ -260,9 +267,9 @@ gates and fixed wire baseline, without guessed older layouts.
 This order is the selected Meshchan policy, not a universal requirement for all
 clients or firmware. DEVICE_QUERY changes the device's application-target state;
 APP_START affects its connection initialization state. They have device-side
-effects. Ready means only that these two commands' local sends and corresponding
-parsed response types completed under this policy. It proves neither identity
-authentication, wireless reachability, LoRa TX/RX, nor all firmware functionality.
+effects. Ready confirms that the session's sends and parsed responses completed,
+including any completion query required by the transport. Device authentication,
+wireless reachability, and firmware functionality have their own validation.
 Initialization performs no flush, reset, DTR/RTS toggle, contact/channel polling,
 clock setting, message synchronization, or automatic response to a `0x83` push.
 

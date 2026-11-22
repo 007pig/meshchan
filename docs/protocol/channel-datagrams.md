@@ -483,9 +483,9 @@ fresh transport/session for each connection attempt; no automatic reconnect.
 At most one device command may be in flight, with a finite pending queue and
 explicit rejection when full. All sends and queue reads use that one scheduler.
 Future task deadlines must cover queue wait; command timeout starts only at
-dispatch. This fixes semantics, not a
-general scheduling framework. Existing `info/watch` continue sending only their
-two initialization commands; observing `0x83` never enables reception for them.
+dispatch. The CLI `info` and `watch` run their
+[USB handshake](../cli.md#commands-and-options). Observing `0x83` never enables
+reception for them.
 
 The following table describes receive integration after successful
 initialization. In 1B.4, typed delivery and drain scheduling require explicit

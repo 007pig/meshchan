@@ -241,8 +241,8 @@ open -n "$MESHCHAN_BUILD_ROOT/Derived/Build/Products/Release/Meshchan.app" \
 Only macOS platform files are generated. The minimum target is macOS 12.0.
 The product is `Meshchan`, Bundle identifier `org.meshchan.meshchan`. The package
 version is `0.1.0-rc.1+9`. Tracked `Configs/Version.xcconfig` supplies Apple's
-numeric `0.1.0` / `8` and the full `MeshchanProductVersion`. The standard About
-panel displays `0.1.0-rc.1` and build `8`. Native preflight rejects conflicting
+numeric `0.1.0` / `9` and the full `MeshchanProductVersion`. The standard About
+panel displays `0.1.0-rc.1` and build `9`. Native preflight rejects conflicting
 Flutter inputs; actual plist and compiled runtime are checked separately.
 The previous build 3 observed short version was `0.1.0.1`, build `3`; its Dart
 build defines retained `0.1.0-beta.1` and `3`. Build 4 was independently observed
@@ -513,8 +513,8 @@ Recorded diagnostics use the same App USB initialization wrapper as Check, a
 compatibility sequence introduced in Beta build 4 and retained in RC build 8.
 After initialization normal commands pass through once without additional
 queries. The historical Beta validation records preserve their tested cuts and
-outcomes. See the [RC hardware validation record](../../docs/validation/phase-1e10-hardware-acceptance.md)
-for the current acceptance status.
+outcomes. See the [host hardware workflow](../../docs/testing.md#finite-device-checks-1d6)
+for current checks.
 
 Cancel requests cancellation of that attempt only. It does not pause offline
 editing, retract transmission or release the device gate. Navigation retains the

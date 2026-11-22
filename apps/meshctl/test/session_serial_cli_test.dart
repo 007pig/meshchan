@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
@@ -12,7 +13,65 @@ import 'package:test/test.dart';
 import 'session_cli_test.dart'
     show ControlledSink, Outcome, deviceInfo, selfInfo;
 
-void main() {
+const _traceFixture = 'usb-trace-fixture';
+
+Future<void> main([List<String> arguments = const []]) async {
+  if (arguments.length == 1 && arguments.single == _traceFixture) {
+    await _runTraceFixture();
+    return;
+  }
+
+  for (final closePipe in [true, false]) {
+    test(
+      'optional USB trace leaves CLI info healthy (closed: $closePipe)',
+      () async {
+        final child = await Process.start(
+          Platform.resolvedExecutable,
+          ['run', 'test/session_serial_cli_test.dart', _traceFixture],
+          environment: {'MESHCHAN_USB_INITIALIZATION_TRACE': '1'},
+        );
+        final started = Completer<void>();
+        final stdoutLines = child.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .map((line) {
+              if (line == _traceFixture) started.complete();
+              return line;
+            })
+            .toList();
+        final diagnostics = StringBuffer();
+        final diagnosticsDone = Completer<void>();
+        final errors = child.stderr
+            .transform(utf8.decoder)
+            .listen(diagnostics.write, onDone: diagnosticsDone.complete);
+        try {
+          await started.future.timeout(const Duration(seconds: 20));
+          if (closePipe) await errors.cancel();
+          child.stdin.writeln('start');
+          await child.stdin.close();
+          final code = await child.exitCode.timeout(
+            const Duration(seconds: 10),
+          );
+          final lines = await stdoutLines;
+          expect(code, 0, reason: '$lines\n$diagnostics');
+          expect(jsonDecode(lines.last)['sessionClosed'], true);
+          if (!closePipe) {
+            await diagnosticsDone.future;
+            expect(
+              diagnostics.toString(),
+              contains('"usbInitialization":"deviceInfo"'),
+            );
+          }
+        } finally {
+          child.kill();
+          await child.exitCode;
+          await errors.cancel();
+        }
+      },
+      skip: Platform.isWindows ? 'Uses POSIX pipe behavior.' : false,
+    );
+  }
+
   test('info and watch share initialization across split bodies and blocked output', () async {
     for (final command in ['info', 'watch']) {
       for (final stage in ['device', 'self']) {
@@ -186,12 +245,49 @@ void main() {
   });
 }
 
+Future<void> _runTraceFixture() async {
+  stdout.writeln(_traceFixture);
+  await stdout.flush();
+  if (stdin.readLineSync() != 'start') {
+    throw StateError('Missing fixture start.');
+  }
+  late final SyntheticConnection connection;
+  connection = SyntheticConnection(
+    onWrite: (opcode) {
+      // Let an asynchronous stderr failure settle before completing the handshake.
+      Timer(const Duration(milliseconds: 25), () {
+        final reply = opcode == 0x16
+            ? deviceInfo(model: 'Heltec V4.3 OLED')
+            : selfInfo();
+        connection.receive(incoming(reply));
+      });
+    },
+  );
+  exitCode = await runCli(
+    ['info', '--port=synthetic', '--json'],
+    output: stdout,
+    error: stderr,
+    createTransport: (_) => usbInitializationTransportForTest(
+      metadata: const SerialPortDescription(
+        path: 'synthetic',
+        usbVid: 0x303a,
+        usbPid: 0x1001,
+      ),
+      connection: connection,
+      appCompletionQueries: false,
+    ),
+  );
+}
+
 Uint8List incoming(Uint8List content) =>
     Uint8List.fromList([0x3e, content.length, 0, ...content]);
 
 /// Replaces only the native connection; transport, framing, session, CLI, and
 /// asynchronous event delivery are the production implementations.
 final class SyntheticConnection implements NativeSerialConnection {
+  SyntheticConnection({this.onWrite});
+
+  final void Function(int opcode)? onWrite;
   final calls = <String>[];
   final writes = <Uint8List>[];
   late void Function(Uint8List) data;
@@ -216,6 +312,7 @@ final class SyntheticConnection implements NativeSerialConnection {
   int write(Uint8List bytes) {
     calls.add('write');
     writes.add(Uint8List.fromList(bytes));
+    onWrite?.call(bytes[3]);
     return bytes.length;
   }
 

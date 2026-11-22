@@ -78,6 +78,14 @@ final class SerialFrameDecoder {
   int _receivedLength = 0;
   Uint8List? _content;
 
+  /// Whether a frame marker has arrived and the frame is still incomplete.
+  bool get hasPartialFrame => switch (_state) {
+    _DecodeState.lengthLow ||
+    _DecodeState.lengthHigh ||
+    _DecodeState.content => true,
+    _ => false,
+  };
+
   /// Consumes the logical range of [chunk], returning complete content only.
   /// Empty input leaves pending state unchanged. No input storage is retained.
   /// An error preserves earlier frames but discards the rest of this chunk.

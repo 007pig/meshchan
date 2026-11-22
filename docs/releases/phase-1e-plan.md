@@ -128,12 +128,12 @@ publication/synchronization, and automatic retry/resend are outside this release
 
 ## Product identity, versions, and compatibility
 
-The selected products are App `0.1.0-rc.1+8` and CLI `0.1.0-rc.1`, with Apple short version `0.1.0` and build string `8`. A subsequent product version change requires its own candidate and acceptance.
+The 1E.9 install and upgrade acceptance used App `0.1.0-rc.1+8` and CLI `0.1.0-rc.1`, with Apple short version `0.1.0` and build string `8`. Each later candidate has its own frozen source, artifact hashes, and acceptance record.
 
 | Identity | Required correspondence |
 | --- | --- |
 | Full product version | Publish the actual embedded version, including the RC suffix if the selected product is an RC. The four member manifests, internal constraints, CLI constant, and App fallback/build definitions must agree on the product version. The root workspace has no product version. |
-| App build | A positive, increasing integer for each new distributable App build, never reused for changed content. The selected RC is build `8`, following Beta build `5` and RC builds `6` and `7`. App runtime/new App diagnostic records identify `<product-version>+<build>`. |
+| App build | A positive, increasing integer for each new distributable App build, never reused for changed content. The RC selected for 1E.9 was build `8`, following Beta build `5` and RC builds `6` and `7`. App runtime/new App diagnostic records identify `<product-version>+<build>`. |
 | Apple numeric versions | `CFBundleShortVersionString` uses the product version's numeric core. `CFBundleVersion` equals the App build. Preserve the full product version in App runtime identity and diagnostics. |
 | CLI version | `meshctl --version` reports the full product version, including an RC suffix when applicable. CLI records may omit App build metadata; `build-info.json` identifies the matching App/CLI pair. |
 | Source and Git tag | Select a full, frozen release commit. Final tag `v0.1.0` must point to that commit; any candidate tag uses its full version, such as `v0.1.0-rc.1`. Build metadata and acceptance identify that same commit and the exact artifacts, not just a branch name. |
@@ -178,7 +178,7 @@ The asset names and evidence below define the engineering release handoff.
 
 | Deliverable | Responsibility |
 | --- | --- |
-| `Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg` for the selected RC | Complete local candidate directory with the App, full CLI (`bin/meshctl` plus native libraries), licenses, corresponding source, and rebuild and replacement instructions. The outer volume includes an engineering README, DMG tool source, and a payload inventory. Build records verify actual architecture of executables/libraries; filename alone is insufficient. |
+| Local engineering DMG (1E.9 used `Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg`) | Complete local candidate directory with the App, full CLI (`bin/meshctl` plus native libraries), licenses, corresponding source, and rebuild and replacement instructions. The outer volume includes an engineering README, DMG tool source, and a payload inventory. Build records verify actual architecture of executables/libraries; filename alone is insufficient. |
 | `SHA256SUMS` | SHA-256 of the final DMG and other immutable download attachments, excluding the checksum file itself. |
 | `build-info.json` | Full source commit, product version, App build and Apple versions, root lockfile identity/hash, actual Flutter/Dart/Python/Xcode/compiler/SDK versions, architectures, build recipe, and product inventory reference. |
 | License and source materials | Maintainer-selected project license, third-party notices for actual App and CLI contents, and applicable native/runtime source, build, and relinking materials with provenance. Separate attachments are permitted. |

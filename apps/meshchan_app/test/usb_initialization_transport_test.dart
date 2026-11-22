@@ -112,6 +112,7 @@ void main() {
     () async {
       final raw = _Device()..writeBarrier = Completer<void>();
       final transport = UsbInitializationTransport(raw);
+      final frames = transport.frames.listen((_) {});
       await transport.open();
       final sending = transport.sendFrame(
         encodeDeviceQuery(appTargetVersion: 3),
@@ -120,6 +121,7 @@ void main() {
       await transport.close();
       raw.writeBarrier!.complete();
       await failed;
+      await frames.cancel();
       expect(raw.opcodes, [22]);
       expect(raw.closes, 1);
     },

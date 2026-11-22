@@ -41,6 +41,14 @@ final class NativeOpenCleanupFailure extends SerialPortFailure {
   final Object cleanupError;
 }
 
+/// Reads metadata for one explicit path without opening it.
+SerialPortDescription describeMacSerialPort(String path) {
+  if (!Platform.isMacOS || path.trim().isEmpty || path.contains('\u0000')) {
+    return SerialPortDescription(path: path);
+  }
+  return SerialPorts()._describe(path);
+}
+
 /// Synchronous diagnostics. Constructing this service does not access hardware.
 class SerialPorts {
   SerialPorts({

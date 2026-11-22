@@ -1,10 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import '../protocol/companion_messages.dart';
 import '../protocol/serial_framing.dart';
 import '../serial_ports.dart';
+import '../session/meshcore_session.dart' show meshCoreSessionAppTargetVersion;
 import 'companion_transport.dart';
 import 'native_serial_connection.dart';
+
+part 'usb_initialization_transport.dart';
+part 'usb_startup_sync.dart';
 
 enum SerialTransportFailureKind {
   platform,
@@ -57,8 +64,9 @@ final class SerialTransport implements CompanionTransport {
     this.writeTimeout,
     this._createConnection,
     this._operatingSystem,
-    this._createClock,
-  ) {
+    this._createClock, {
+    this._startup,
+  }) {
     _initializeStream();
   }
 
@@ -69,6 +77,7 @@ final class SerialTransport implements CompanionTransport {
   final String? _operatingSystem;
   final SerialWriteClock Function() _createClock;
   final _decoder = SerialFrameDecoder();
+  _UsbStartupSync? _startup;
   late final StreamController<Uint8List> _frames;
   _State _state = _State.created;
   bool _listening = false;
@@ -181,6 +190,15 @@ final class SerialTransport implements CompanionTransport {
 
   void _receive(Uint8List chunk) {
     if (_state != _State.open && _state != _State.opening) return;
+    final startup = _startup;
+    if (startup != null) {
+      startup.receive(this, chunk);
+      return;
+    }
+    _decode(chunk);
+  }
+
+  void _decode(Uint8List chunk) {
     final result = _decoder.add(chunk);
     for (final frame in result.frames) {
       _frames.add(frame);
@@ -192,7 +210,7 @@ final class SerialTransport implements CompanionTransport {
 
   void _readerDone() {
     if (_state != _State.open && _state != _State.opening) return;
-    final error = _decoder.finish().error;
+    final error = _startup?.firstError ?? _decoder.finish().error;
     _terminate(
       error == null
           ? SerialTransportFailure(
@@ -219,6 +237,11 @@ final class SerialTransport implements CompanionTransport {
     if (_sending) throw StateError('Another frame is already being sent.');
     // Encoder validates and copies before the first asynchronous yield.
     final bytes = encodeSerialFrame(content);
+    if (content.length == 2 &&
+        content[0] == 0x16 &&
+        content[1] == meshCoreSessionAppTargetVersion) {
+      _startup?.arm();
+    }
     final clock = _createClock();
     _sending = true;
     try {
@@ -275,6 +298,11 @@ final class SerialTransport implements CompanionTransport {
   void _terminate(SerialTransportFailure failure, StackTrace stack) {
     if (_state == _State.closing || _state == _State.closed) return;
     _primary = failure;
+    _startup?.report('transportError', {
+      'transportKind': failure.kind.name,
+      if (failure.protocolError case final error?)
+        'framingKind': error.kind.name,
+    });
     if (_listening) _frames.addError(failure, stack);
     _requestClose();
   }
@@ -288,6 +316,8 @@ final class SerialTransport implements CompanionTransport {
   @override
   Future<void> close() {
     if (_closing case final closing?) return closing;
+    _startup?.reportClose();
+    _startup = null;
     _state = _State.closing;
     return _closing = _cleanup();
   }

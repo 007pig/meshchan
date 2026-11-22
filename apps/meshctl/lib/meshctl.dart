@@ -150,7 +150,7 @@ Future<int> _run(
       );
     } else if (name == 'info' || name == 'watch') {
       io.out(
-        '\nSends two initialization commands (DEVICE_QUERY and APP_START).\nThese may change device session state; this is not passive observation.\nOpening/configuring a port may reset some boards. No retry or reconnect.\n--timeout is per initialization request; it does not bound cleanup or watch.\nStartup delay is diagnostic and is not an established USB delivery fix.',
+        '\nInitializes with DEVICE_QUERY and APP_START. Heltec V4.3 USB compatibility adds one completion query.\nThese may change device session state; this is not passive observation.\nOpening/configuring a port may reset some boards. No retry or reconnect.\n--timeout is per initialization request; it does not bound cleanup or watch.\nStartup delay is diagnostic and is not an established USB delivery fix.',
       );
     }
     return 0;
@@ -221,7 +221,7 @@ Future<int> _run(
       datagram!,
       io,
       open,
-      createTransport ?? (String path) => SerialTransport(portPath: path),
+      createTransport ?? _createUsbSessionTransport,
       stopRequests,
       elapsed: diagnosticElapsed,
       nonceFactory: diagnosticNonceFactory,
@@ -266,7 +266,7 @@ Future<int> _run(
     return runSessionCommand(
       sessionOptions,
       io,
-      createTransport ?? (path) => SerialTransport(portPath: path),
+      createTransport ?? _createUsbSessionTransport,
       stopRequests,
     );
   }
@@ -449,3 +449,6 @@ List<String> _literalOptionValues(ArgParser parser, List<String> arguments) {
   }
   return result;
 }
+
+CompanionTransport _createUsbSessionTransport(String path) =>
+    createUsbCompanionTransport(path, appCompletionQueries: false);

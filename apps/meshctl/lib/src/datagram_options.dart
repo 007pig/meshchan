@@ -161,7 +161,7 @@ String datagramHelp(ArgParser group, [String? operation]) => operation == null
           '  respond  Run a finite diagnostic responder.\n\n'
           'Put business options after the operation. Run "meshctl datagram <operation> --help".'
     : 'Usage: meshctl datagram $operation [options]\n\n${group.commands[operation]!.usage}\n\n'
-          'Initializes with DEVICE_QUERY then APP_START; opening may reset boards. No retry.\n'
+          'Initializes with DEVICE_QUERY and APP_START. Heltec V4.3 USB compatibility adds one completion query. Opening may reset boards. No retry.\n'
           'Protocol integers accept strict decimal or 0x/0X HEX; times/counts are decimal only.\n'
           'Route/path validity and the full encoded byte budget are checked before I/O.\n'
           'Values resolve from explicit options, then the selected/default profile, then program defaults.\n'

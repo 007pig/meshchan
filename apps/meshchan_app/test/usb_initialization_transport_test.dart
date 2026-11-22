@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meshchan_app/runtime/device_check.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
-import 'package:meshchan_app/runtime/usb_initialization_transport.dart';
 import 'package:meshcore_link/meshcore_link.dart';
 
 import '../tool/device_fixture.dart';
@@ -15,7 +14,7 @@ void main() {
     () {
       expect(
         createUsbCompanionTransport('/dev/never-open-in-unit-test'),
-        isA<UsbInitializationTransport>(),
+        isA<CompanionTransport>(),
       );
     },
   );
@@ -113,6 +112,7 @@ void main() {
     () async {
       final raw = _Device()..writeBarrier = Completer<void>();
       final transport = UsbInitializationTransport(raw);
+      await transport.open();
       final sending = transport.sendFrame(
         encodeDeviceQuery(appTargetVersion: 3),
       );

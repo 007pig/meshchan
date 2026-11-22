@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import build_release as b
-from release_materials import digest, encoded, repository_source_hashes, source_archive
+from release_materials import FRESH_HOOK_RECIPE, digest, encoded, repository_source_hashes, source_archive
 
 
 class StablePython(tuple):
@@ -2625,7 +2625,8 @@ with (patch.object(b, 'check_app'),
 """)
         evidence = self.out/'evidence'
         evidence.mkdir()
-        runner = b.Runner(self.root, evidence, {'steps': []}, b.controlled_environment(), timeout=3)
+        receipt = {'recipeVersion': FRESH_HOOK_RECIPE-1, 'steps': []}
+        runner = b.Runner(self.root, evidence, receipt, b.controlled_environment(), timeout=3)
         with b.checkout_lock(self.root):
             try:
                 with self.assertRaisesRegex(TimeoutError, 'validate-products'):

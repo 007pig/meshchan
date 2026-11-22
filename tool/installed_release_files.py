@@ -286,8 +286,10 @@ def mount_snapshot(vm):
     return parse_mount_snapshot(remote_text(vm, [disk.HDIUTIL, 'info', '-plist']))
 
 
-def observe_download_mount(vm, before, download_report, volume_name):
+def observe_download_mount(vm, before, download_report, volume_name, *, volume_uuid=None, manifest_sha256=None):
     """Bind the user-opened read-only volume to this exact downloaded file and run."""
+    expected_uuid = inputs.DMG_VOLUME_UUID if volume_uuid is None else volume_uuid
+    expected_manifest = inputs.CANDIDATE_PINS['image_payload'] if manifest_sha256 is None else manifest_sha256
     stamp = download_report['file']
     path = guest_path(stamp['path'])
     if guest_file_stamp(vm, path) != stamp:
@@ -315,7 +317,7 @@ def observe_download_mount(vm, before, download_report, volume_name):
     volume_uuid = details.get('VolumeUUID')
     if type(volume_uuid) is not str or GUID.fullmatch(volume_uuid) is None:
         raise ValueError('Guest read-only volume did not report a valid volume UUID')
-    if volume_uuid != inputs.DMG_VOLUME_UUID:
+    if volume_uuid != expected_uuid:
         raise ValueError('Guest volume UUID differs from the accepted engineering image')
     owner = remote_text(vm, ['/usr/bin/stat', '-f', '%u %g %p', mount]).strip()
     if re.fullmatch(r'[0-9]+ [0-9]+ 4[0-7]{4}', owner) is None:
@@ -323,7 +325,7 @@ def observe_download_mount(vm, before, download_report, volume_name):
     manifest = mount/VOLUME_MANIFEST
     guest_file_stamp(vm, manifest)
     digest = remote_text(vm, ['/usr/bin/shasum', '-a', '256', manifest]).split()
-    if not digest or digest[0] != inputs.CANDIDATE_PINS['image_payload']:
+    if not digest or digest[0] != expected_manifest:
         raise ValueError('Mounted image payload manifest differs from the trusted handoff')
     after = [other for other in mount_snapshot(vm).images if other.path == path
              or any(entity.mount == mount for entity in other.entities)]
@@ -335,8 +337,8 @@ def observe_download_mount(vm, before, download_report, volume_name):
             'mountOwner': owner}
 
 
-def detach_download_mount(vm, before, download_report, mount_report):
-    current = observe_download_mount(vm, before, download_report, mount_report['volumeName'])
+def detach_download_mount(vm, before, download_report, mount_report, **mount_pins):
+    current = observe_download_mount(vm, before, download_report, mount_report['volumeName'], **mount_pins)
     if current != mount_report:
         raise ValueError('Selected guest mount changed before detach')
     mount = guest_path(current['mountPoint'])

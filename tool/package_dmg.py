@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -35,6 +36,7 @@ PUBLIC_PAYLOAD = runtime.PUBLIC_PAYLOAD
 PUBLIC_MATERIAL_DIRS = ('licenses', 'rebuild', 'source-materials')
 PUBLIC_MATERIAL_FILES = ('THIRD_PARTY_NOTICES.md',)
 PUBLIC_PRODUCT_DIRS = ('Meshchan.app', 'meshctl', 'signing-materials', 'signing-source', 'packaging-source')
+CLI_SERIAL_INSTALL_NAME = '@rpath/lib/liblibserialport_plus.dylib'
 PUBLIC_PRODUCT_README = b"""# Meshchan macOS engineering release
 
 Keep Meshchan.app and the complete meshctl directory with these materials.
@@ -166,6 +168,17 @@ def public_candidate(info, full, materials_bytes, private_signed_pin):
         'sourceCommit': upstream['sourceCommit'], 'productVersion': info['identity']['productVersion'],
         'appBuild': info['identity']['appBuild'], 'openGates': [],
     }, 'Original accepted material identity')
+    serial = materials['native']['meshctl']['libserialport_plus']
+    loader = serial['loader'][0].strip()
+    sections = serial['sections']
+    if not re.fullmatch(re.escape(CLI_SERIAL_INSTALL_NAME)
+                        + r' \(compatibility version [\d.]+, current version [\d.]+\)', loader):
+        raise ValueError('Public CLI serial binding requires the bundled install name')
+    if set(sections) != {'16777228'} or not sections['16777228'] or any(
+            not re.fullmatch(r'[a-zA-Z0-9_]{1,16}/[a-zA-Z0-9_]{1,16}', name)
+            or not re.fullmatch(r'[a-f0-9]{64}', pin)
+            for name, pin in sections['16777228'].items()):
+        raise ValueError('Public CLI serial binding requires arm64 section hashes')
     material_files = {}
     for name, entry in materials['materials'].items():
         member = Path(safe(name))
@@ -183,6 +196,7 @@ def public_candidate(info, full, materials_bytes, private_signed_pin):
         'appBuild': materials['appBuild'], 'lockSha256': materials['lockSha256'],
         'privateMaterialManifestSha256': upstream['materialsManifestSha256'],
         'materials': material_files,
+        'native': {'meshctl': {'libserialport_plus': {'loader': [loader], 'sections': sections}}},
     }
     inventory = {name: entry for name, entry in full.items()
                  if name in ('.', 'materials') or Path(safe(name)).parts[0] in PUBLIC_PRODUCT_DIRS}

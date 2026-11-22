@@ -153,6 +153,13 @@ class LayoutTests(unittest.TestCase):
         materials = {
             **self.info['identity'], 'sourceCommit': '1'*40, 'lockSha256': '4'*64,
             'openGates': [], 'materials': material_entries,
+            'native': {'meshctl': {'libserialport_plus': {
+                'loader': ['\t'+dmg.CLI_SERIAL_INSTALL_NAME
+                           +' (compatibility version 0.0.0, current version 0.0.0)',
+                           self.HOST_PATH+'/private-tool.dylib'],
+                'sections': {'16777228': {'__TEXT/__text': '6'*64}},
+                'matches': [self.HOST_PATH+'/hook-output.dylib'],
+            }}},
         }
         raw = encoded(materials)
         (self.candidate/dmg.MATERIAL_MANIFEST).write_bytes(raw)
@@ -192,6 +199,10 @@ class LayoutTests(unittest.TestCase):
             self.assertNotIn(self.HOST_PATH.encode(), path.read_bytes())
         materials = json.loads((top/dmg.MATERIAL_MANIFEST).read_bytes())
         self.assertEqual(materials['materials'][archive], {'size': 23, 'sha256': sha(b'original source archive')})
+        original_serial = json.loads(raw)['native']['meshctl']['libserialport_plus']
+        self.assertEqual(materials['native'], {'meshctl': {'libserialport_plus': {
+            'loader': [original_serial['loader'][0].strip()], 'sections': original_serial['sections'],
+        }}})
         self.assertEqual(product_inventory(self.candidate), original)
         with self.assertRaisesRegex(ValueError, 'payload manifest'):
             dmg.mounted_layout(staging, original, self.info, self.args, self.tools, self.contents)
@@ -204,6 +215,19 @@ class LayoutTests(unittest.TestCase):
         original[key] = {**original[key], 'sha256': '7'*64}
         with self.assertRaisesRegex(ValueError, 'Public material inventory'):
             dmg.public_candidate(self.info, original, raw, self.args.candidate_sha256)
+
+    def test_public_serial_binding_rejects_paths_in_replacement_fields(self):
+        _, raw, original = self.public_fixture()
+        for invalid in ({'loader': [self.HOST_PATH+'/lib.dylib']},
+                        {'sections': {'16777228': {self.HOST_PATH: '6'*64}}}):
+            with self.subTest(invalid=invalid):
+                materials = json.loads(raw)
+                materials['native']['meshctl']['libserialport_plus'].update(invalid)
+                tampered = encoded(materials)
+                self.info['upstream']['materialsManifestSha256'] = sha(tampered)
+                original[dmg.MATERIAL_MANIFEST] = package.bytes_entry(tampered)
+                with self.assertRaisesRegex(ValueError, 'Public CLI serial binding'):
+                    dmg.public_candidate(self.info, original, tampered, self.args.candidate_sha256)
 
     def test_image_checks_extracted_signatures_before_detach_and_detaches_on_failure(self):
         signatures = [{'path': 'Meshchan.app'}]

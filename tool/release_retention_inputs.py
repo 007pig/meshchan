@@ -527,14 +527,17 @@ def frozen_build(reader, upstream, identity):
     inventories = json_object(proof['candidate-inventories.json'])
     reader.tree(app, inventories['app'])
     reader.tree(cli, inventories['cli'])
-    materials = run/'materials'
     verify_report_fields(info['materials'], {'status': 'PASS'}, 'Frozen materials phase')
-    equal(materials, original_path(info['materials']['arguments']['output']), 'Frozen materials output location')
+    materials = original_path(info['materials']['arguments']['output'])
+    if materials.parent != run:
+        raise ValueError('Frozen materials output must be a direct child of the selected build')
     refs = info['materials']['references']
     equal(upstream['materialsManifestSha256'], refs['materials-manifest.json']['sha256'], 'Bound material manifest')
     for name, ref in refs.items():
         path = relative_reference(source, ref['path'], scope=run)
         equal(name, path.name, 'Frozen material evidence name')
+        if name == 'materials-manifest.json':
+            equal(materials/name, path, 'Frozen material manifest location')
         reader.entry(path, {'sha256': ref['sha256']})
     material = package.material_inventory(reader.directory(materials), upstream['materialsManifestSha256'],
                                           sha(proof['build-receipt.json']), info['sourceCommit'])
@@ -886,8 +889,10 @@ def accepted_image(reader, refs, info, full):
     public = None
     if profile is not None:
         equal(dmg.PUBLIC_PAYLOAD, profile, 'Selected public payload profile')
+        public_pin = accepted['publicSignedInfoSha256']
+        verify_pin(public_pin)
         materials = reader.bytes(manifest_path.parent/dmg.MATERIAL_MANIFEST, info['upstream']['materialsManifestSha256'])
-        public = dmg.public_candidate(info, full, materials, manifest_pin)
+        public = dmg.public_candidate(info, full, materials, manifest_pin, retained_public_pin=public_pin)
     layout = dmg.layout(full, info, args, contents, tools, public=public)
     equal(top, layout.manifest['candidatePath'], 'Accepted DMG product location')
     payload_path = output/'evidence'/dmg.IMAGE_MANIFEST

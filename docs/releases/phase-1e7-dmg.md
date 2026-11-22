@@ -1,8 +1,15 @@
 # Phase 1E.7 engineering DMG
 
-The sample run paths and acceptance references in this guide come from the
-Build 8 handoff. For the selected Build 9 image and its pins, use the
-[1E.11 handoff](phase-1e11-release-materials.md).
+The sample run paths and historical acceptance references come from the
+Build 8 handoff. In the full release checkout, the
+[1E.11 handoff](phase-1e11-release-materials.md#build-10-replacement-candidate)
+identifies the held Build 10 public-layout image and its pins.
+
+If you are reading this guide under `dmg-source/`, use the full release
+checkout for `docs/releases/phase-1e11-release-materials.md`,
+`docs/releases/phase-1e-plan.md`, and `docs/validation/phase-1e7-dmg.md`.
+Run the separate payload privacy audit from that checkout with
+`tool/audit_release_payload.py`.
 
 The [current release contract](phase-1e-plan.md) selects local ad hoc signing
 for the complete Meshchan App and CLI. The read-only, compressed UDIF DMG
@@ -37,12 +44,14 @@ commands create their owned working paths below that parent. The example uses
 a private temporary parent. Retain the workspaces referenced by acceptance
 receipts with their evidence.
 
-For a distributable image, pass `--public-payload` in both the create and
-independent check commands. The accepted private signed root remains the
+For a distributable image, use `--public-payload` in both commands as shown
+below. The accepted private signed root remains the
 input. The tool generates an independent public signed-product manifest
-and a public materials inventory from the verified files. Maintainer
-receipts and build paths stay in the original private records. The earlier
-engineering-only layout remains available for rechecking existing images.
+and a public materials inventory from the verified files. The projection
+omits private receipts and provenance files. Check the actual extracted
+payload and native binaries for local paths before handing off a public
+image. The earlier engineering-only layout remains available for rechecking
+existing images.
 
 ## Create and independently check the image
 
@@ -72,10 +81,10 @@ meshchan_dmg() {
 }
 
 MESHCHAN_DMG_RUN=build/phase-1e7/local-dmg-001
-meshchan_dmg create --output "$MESHCHAN_DMG_RUN"
+meshchan_dmg create --public-payload --output "$MESHCHAN_DMG_RUN"
 ```
 
-The accepted Build 8 example yielded
+The historical Build 8 run used the engineering-only layout and yielded
 `Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg`. The image name comes from the
 selected product identity. In that example the App reported `0.1.0-rc.1+8`,
 the CLI reported `0.1.0-rc.1`, and the Apple short version and build string
@@ -88,7 +97,8 @@ a separate check. Preserve the recorded image SHA-256 to pin that check.
 MESHCHAN_DMG_IMAGE="$(jq -er 'select(.status == "CREATED") | .image.path' \
   "$MESHCHAN_DMG_RUN/image-record.json")"
 MESHCHAN_DMG_SHA=sha256_from_the_create_record
-meshchan_dmg check --output build/phase-1e7/local-dmg-check-001 \
+MESHCHAN_DMG_CHECK_RUN=build/phase-1e7/local-dmg-check-001
+meshchan_dmg check --public-payload --output "$MESHCHAN_DMG_CHECK_RUN" \
   --image "$MESHCHAN_DMG_IMAGE" --image-sha256 "$MESHCHAN_DMG_SHA"
 ```
 
@@ -105,6 +115,39 @@ storage and owner release, worker termination, PID absence, executor exit, and
 guest lock release. The final checks reread the inputs, extracted payload,
 image, and bound evidence. Use the independent `dmg-acceptance.json` and its
 recorded digest to identify the accepted image for retention.
+
+## Audit the independent public extraction
+
+Record `receiptSha256` from the independent `check` command's final JSON. Use
+that pin and the selected DMG SHA-256 to identify the extraction and its
+inventory. Run the audit from the checkout and retain its JSON output with
+the 1E.11 evidence. Include any additional absolute build roots as repeated
+`--local-prefix` arguments.
+
+```sh
+(
+  set -euC
+  receipt="$MESHCHAN_DMG_CHECK_RUN/dmg-acceptance.json"
+  receipt_sha=receipt_sha256_from_the_independent_check
+  audit_report="$MESHCHAN_DMG_WORKSPACE/public-payload-audit.json"
+  test "$(shasum -a 256 "$receipt" | cut -d ' ' -f 1)" = "$receipt_sha"
+  payload="$(jq -er --arg image_sha "$MESHCHAN_DMG_SHA" '
+    select(.status == "PASS" and .command == "check"
+      and .image.sha256 == $image_sha and .payloadProfile == "public-engineering-v1")
+    | .extraction.root' "$receipt")"
+  inventory_sha="$(jq -er .payloadManifest.sha256 "$receipt")"
+  /opt/homebrew/bin/python3 -B tool/audit_release_payload.py "$payload" \
+    --image-inventory-sha256 "$inventory_sha" > "$audit_report"
+  jq -e --arg inventory_sha "$inventory_sha" '
+    .status == "PASS" and .imageInventorySha256 == $inventory_sha' "$audit_report"
+)
+```
+
+The audit must report `PASS` for that exact payload before publication. Use a
+fresh report path for a repeat audit. File-level findings remain in the JSON
+when the audit exits with status 1.
+Retain earlier engineering images and their original integrity and runtime
+receipts for historical replay.
 
 Keep failed and interrupted runs with their command and cleanup evidence.
 Retry with a fresh output run and fresh owned workspace paths. Use the same

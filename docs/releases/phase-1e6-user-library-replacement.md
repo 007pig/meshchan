@@ -22,11 +22,14 @@ guides, or for first-time VM setup. The shipped VM workflow uses a configured
 guest and its existing authorized executor.
 Start with the SHA-256 of its `signed-product-info.json` from the release
 handoff. For a public engineering DMG, use the public signed manifest's SHA-256
-and the complete signed folder copied from that image. For a private signing
-handoff, use its private signed manifest SHA-256 and complete signed root.
-Keep its `materials/` and signature record, and choose a fresh output
-directory in an existing parent.
-The command below is the CLI and preparation portion of the experiment.
+and the complete signed folder copied from that image. Preserve any download
+quarantine on the copy and follow normal macOS item approval. Check that the
+candidate's replacement acceptance covers a quarantined installation. For a
+private signing handoff, use its private signed manifest SHA-256 and complete
+signed root. Keep its `materials/` and signature record, and choose a fresh
+output directory in an existing parent.
+The command below prepares both user copies. It also runs the CLI check
+automatically when the product input has no quarantine attributes.
 
 ```sh
 MESHCHAN_SIGNED_ROOT=/absolute/path/to/selected/signed/product
@@ -83,11 +86,28 @@ local entitlement policy preserves the same runtime allowances as the original
 engineering candidate.
 
 After running without a guest configuration, check
-`evidence/replacement-receipt.json` for `status: INCOMPLETE`,
-`cli.status: PASS`, and `finalIntegrity: PASS`. Those results confirm the
-prepared copies passed their final integrity checks and the copied CLI ran
-successfully. Open the prepared App with a fresh, separate data directory
-to confirm the synthetic list directly.
+`evidence/replacement-receipt.json` for `status: INCOMPLETE` and
+`finalIntegrity: PASS`. With a quarantined product, both runtime statuses are
+`NOT_RUN` so that you can approve and exercise the same prepared copies in
+macOS. An input without quarantine returns `cli.status: PASS` after the
+automated CLI check. The tool exits with status 1 for either `INCOMPLETE`
+receipt.
+
+For the quarantined copy, keep the quarantine in place and use normal macOS
+per-item approval if the first launch requests it. Retry the command with
+the same prepared copy. Record the foreground CLI result and compare the
+reported marker and PID with the receipt and printed process ID.
+
+```sh
+/usr/bin/plutil -extract marker raw -o - \
+  "$MESHCHAN_REPLACEMENT_OUTPUT/evidence/replacement-receipt.json" >&2
+/bin/sh -c 'printf "Replacement CLI PID %s\n" "$$" >&2; exec "$@"' meshchan-replacement \
+  "$MESHCHAN_REPLACEMENT_OUTPUT/user products/meshctl/bin/meshctl" ports --json
+```
+
+The CLI should exit zero and return an empty `ports` array. Open the
+prepared App with a fresh, separate data directory to confirm the synthetic
+list directly. Follow normal item approval on that same copy if prompted.
 
 ```sh
 "$MESHCHAN_REPLACEMENT_OUTPUT/user products/Meshchan.app/Contents/MacOS/Meshchan" \
@@ -96,24 +116,37 @@ to confirm the synthetic list directly.
 
 On **Device**, click **Refresh**, confirm the message **No available ports
 were reported**, and quit normally. The synthetic library also prints the
-current run marker to the launching terminal.
+current run marker to the launching terminal. Record the installed-copy
+runtime results with the preparation receipt.
 
 ## Verify both replacement products for release acceptance
 
-For maintainers repeating the paired experiment, read the VM skill at
+For maintainers repeating the paired experiment, use the private signed root
+or the independently checked engineering extraction for the exact public
+image. The paired VM transfer carries the product data and modes. Use the
+local procedure above for the normally quarantined installed copy, since the
+VM transfer cannot carry that download metadata.
+
+Read the VM skill at
 `signing-source/.agents/skills/macos-vm-gui-testing/SKILL.md` in the signed
 root or `.agents/skills/macos-vm-gui-testing/SKILL.md` in the working tree.
 Use the configured, identity-checked guest and previously authorized GUI executor.
 Connect the guest first. Set the path to the existing private configuration
-and use a new output path.
+and set the separate paired-test root, matching manifest digest and fresh
+output path. For an engineering extraction use that image's public signed
+manifest digest. For a private signed root use its private signed manifest
+digest.
 
 ```sh
+MESHCHAN_PAIRED_SIGNED_ROOT=/absolute/path/to/independent/signed/product
+MESHCHAN_PAIRED_SIGNED_INFO_SHA256=verified_manifest_sha256_for_paired_root
+MESHCHAN_PAIRED_SIGNING_TOOLS="$MESHCHAN_PAIRED_SIGNED_ROOT/signing-source"
 MESHCHAN_VM_CONFIG="$HOME/.config/meshchan-vm/config.json"
-MESHCHAN_REPLACEMENT_OUTPUT='/private/tmp/meshchan paired user library test'
-/opt/homebrew/bin/python3 -B "$MESHCHAN_SIGNING_TOOLS/tool/release_signed_replacement.py" \
-  --signed-root "$MESHCHAN_SIGNED_ROOT" \
-  --signed-info-sha256 "$MESHCHAN_SIGNED_INFO_SHA256" \
-  --output "$MESHCHAN_REPLACEMENT_OUTPUT" \
+MESHCHAN_PAIRED_REPLACEMENT_OUTPUT='/private/tmp/meshchan paired user library test'
+/opt/homebrew/bin/python3 -B "$MESHCHAN_PAIRED_SIGNING_TOOLS/tool/release_signed_replacement.py" \
+  --signed-root "$MESHCHAN_PAIRED_SIGNED_ROOT" \
+  --signed-info-sha256 "$MESHCHAN_PAIRED_SIGNED_INFO_SHA256" \
+  --output "$MESHCHAN_PAIRED_REPLACEMENT_OUTPUT" \
   --vm-config "$MESHCHAN_VM_CONFIG"
 ```
 
@@ -127,9 +160,10 @@ release, PID absence, the returned inventory, and release of the guest
 executor lock.
 
 Read `evidence/replacement-receipt.json` and its bound logs in the output.
-Without a guest configuration the receipt records the CLI result and remains
-`INCOMPLETE` after a successful CLI and final integrity check. The command
-exits 1 in that mode to distinguish it from paired release acceptance.
+Without a guest configuration the receipt remains `INCOMPLETE` after the
+local preparation and final integrity check. Its CLI result applies to the
+automated check when one was run. The manual observations for the
+quarantined copy remain with the installation evidence.
 Require `formatVersion: 2` and `signingProfile: local-adhoc` in the receipt.
 Both execution checks and the final product inventory and metadata checks
 must pass for an overall `PASS`. Keep failed evidence and pick fresh output

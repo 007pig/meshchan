@@ -32,7 +32,8 @@ from product_identity import check_app, check_source_identity, config_values
 from regression_1d10 import DeferredInterrupts, GateInterrupted, OwnedGate, process_table
 from release_materials import (HOOK_CACHE, MATERIAL_ICONS_FONT, NATIVE_HOOK_SNAPSHOT, NATIVE_SOURCE_PACKAGES, PACKAGE_CONFIG,
                                RELEASE_ENTRY_SOURCE_FILES, SHADER_INCLUDE_DIR, VALIDATION_REPORTS,
-                               Collector, compilation_inputs, controlled_environment, digest, encoded, flutter_asset_files,
+                               Collector, compilation_inputs, contains_macho_local_path, controlled_environment, digest,
+                               encoded, flutter_asset_files,
                                flutter_shader_includes, hosted_notice_identity,
                                hosted_notice_case_sensitive, input_parser_argv, native_source_hashes,
                                product_inventory as full_inventory,
@@ -42,7 +43,7 @@ from release_materials import (HOOK_CACHE, MATERIAL_ICONS_FONT, NATIVE_HOOK_SNAP
                                verify_build_receipt, verify_native_hook_cache, verify_product_path_steps)
 from release_sdk_sources import SPEC, dart_sdk_metadata_file, source_identity, validate_probe_write_paths
 
-RECIPE_VERSION = 56
+RECIPE_VERSION = 57
 PRIVATE_PATH_AUDIT_RECIPE = 56
 REPORT = 'docs/validation/phase-1e4-build.md'
 MACOS_FLUTTER = 'apps/meshchan_app/macos/Flutter'
@@ -97,6 +98,30 @@ HELPERS = ('build_release.py', 'candidate_common.py', 'product_identity.py',
 CLI_SQLITE_LIBRARY = 'lib/libsqlite3.dylib'
 CLI_LIBRARIES = ('lib/liblibserialport_plus.dylib', CLI_SQLITE_LIBRARY)
 CLI_RELEASE_ENTRY = 'lib/src/meshctl.dart'
+CLI_SNAPSHOT_LAUNCHER = '''#!/bin/sh
+set -eu
+if [ "$#" -ne 3 ] || [ "$1" != '--snapshot-kind=app-aot-macho-dylib' ]; then
+    echo 'Unexpected Dart CLI snapshot invocation' >&2
+    exit 2
+fi
+case "$2" in
+    --macho=/*/snapshot.aot) snapshot=${2#--macho=} ;;
+    *) echo 'Unexpected Dart CLI snapshot output' >&2; exit 2 ;;
+esac
+compiler=${0%/*}/gen_snapshot-sdk
+directory=${snapshot%/*}
+kernel=$3
+case "${directory##*/}" in
+    ''|.|..) echo 'Unexpected Dart CLI snapshot directory' >&2; exit 2 ;;
+esac
+if [ "${directory%/*}" != "$TMPDIR" ] || [ -L "$directory" ] ||
+   [ "$kernel" != "$directory/kernel.dill" ] || [ ! -f "$kernel" ] || [ -L "$kernel" ]; then
+    echo 'Unexpected Dart CLI snapshot workspace' >&2
+    exit 2
+fi
+cd "$directory"
+exec "$compiler" "$1" --macho=snapshot.aot "$kernel"
+'''
 CLI_SDK_RUNPATH = '@loader_path/../../..'
 APP_RUNNER = 'Contents/MacOS/Meshchan'
 APP_AOT_BINARY = 'Contents/Frameworks/App.framework/App'
@@ -104,8 +129,6 @@ APP_AOT_EXPORTS = ('_kDartSnapshotData', '_kDartSnapshotText')
 APP_ENGINE = 'Contents/Frameworks/FlutterMacOS.framework'
 APP_ENGINE_BINARY = APP_ENGINE+'/Versions/A/FlutterMacOS'
 APP_ENGINE_HOST_RUNPATH = '/usr/local/lib/.'
-LOCAL_BINARY_PATH_PREFIXES = (b'/Users/', b'/home/', b'/private/tmp/', b'/private/var/folders/',
-                              b'/opt/homebrew/', b'/Volumes/')
 RELATIVE_LOADER_ANCHORS = ('@loader_path', '@executable_path')
 APP_NATIVE_ASSETS = {
     'package:libserialport_plus/libserialport_plus_bindings.g.dart': 'libserialport_plus.framework/libserialport_plus',
@@ -1177,11 +1200,11 @@ def verify_app_aot(app, loaders, env):
 
 
 def audit_macho_paths(bundle, binary_names, root):
-    prefixes = (*LOCAL_BINARY_PATH_PREFIXES, os.fsencode(root)+b'/')
+    checkout = os.fsencode(root)+b'/'
     names = sorted(binary_names)
     for name in names:
         data = (bundle/name).read_bytes()
-        if any(prefix in data for prefix in prefixes):
+        if checkout in data or contains_macho_local_path(data):
             raise ValueError('Local build path remains in '+name)
     return names
 
@@ -1235,6 +1258,28 @@ def products(root, app, cli, ident, env, *, hook_cache=None, path_audit=False):
 
 def product_paths(out):
     return out/'app-derived/Build/Products/Release/Meshchan.app', out/'cli/bundle'
+
+
+def cli_dart_sdk(dart, overlay):
+    """Use the pinned SDK while giving its snapshot output a portable name."""
+    sdk = dart.parent.parent
+    launchers = ('dart', 'dartvm', 'dartaotruntime')
+    for directory, replaced in (('.', ('bin',)), ('bin', (*launchers, 'utils')),
+                                ('bin/utils', ('gen_snapshot',))):
+        target = overlay/directory
+        target.mkdir(exist_ok=True)
+        for entry in sorted((sdk/directory).iterdir()):
+            if entry.name not in replaced:
+                (target/entry.name).symlink_to(entry)
+    # DartDev derives the SDK root from the physical launcher location.
+    for name in launchers:
+        shutil.copy2(sdk/'bin'/name, overlay/'bin'/name)
+    utils = overlay/'bin/utils'
+    (utils/'gen_snapshot-sdk').symlink_to(sdk/'bin/utils/gen_snapshot')
+    compiler = utils/'gen_snapshot'
+    compiler.write_text(CLI_SNAPSHOT_LAUNCHER, encoding='utf-8')
+    compiler.chmod(0o700)
+    return overlay/'bin/dart'
 
 
 def candidate_inventories(out):
@@ -1360,9 +1405,18 @@ def build(args):
             compiler_dir = evidence/'compiler'
             compiler_dir.mkdir()
             cli_depfile = compiler_dir/'cli.d'
-            runner.command('cli-build', [dart, 'build', 'cli', '--packages', root/PACKAGE_CONFIG,
-                                         '--target', CLI_RELEASE_ENTRY, '--output', out/'cli', '--depfile', cli_depfile],
-                           root/'apps/meshctl')
+            cli_project = root/'apps/meshctl'
+            # Dart embeds the AOT scratch filename in the executable's debug map.
+            # Keep an absolute temporary directory for native hooks, which run
+            # in other working directories, and change only the snapshot name.
+            with tempfile.TemporaryDirectory(prefix='cli-sdk-', dir=compiler_dir) as scratch:
+                cli_tmp = Path(scratch)/'tmp'
+                cli_tmp.mkdir(mode=0o700)
+                cli_dart = cli_dart_sdk(dart, Path(scratch)/'dart-sdk')
+                runner.command('cli-build', ['/usr/bin/env', 'TMPDIR='+str(cli_tmp), cli_dart,
+                                             'build', 'cli', '--packages', root/PACKAGE_CONFIG,
+                                             '--target', CLI_RELEASE_ENTRY, '--output', out/'cli',
+                                             '--depfile', cli_depfile], cli_project)
             after_cli = inputs(root, dart, runner.command, 'snapshot-after-cli', flutter=flutter)
             write(evidence/'inputs-after-cli.json', after_cli)
             require_equal(before, after_cli, 'CLI build')

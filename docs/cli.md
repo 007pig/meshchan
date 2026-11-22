@@ -1,10 +1,12 @@
 # Meshctl diagnostics
 
-The engineering CLI version is `0.1.0-rc.1`. The retained Build 9 image pairs the
-complete `meshctl/` directory with App `0.1.0-rc.1+9`. Use the
-[engineering user guide](releases/rc1-engineering-guide.md) for the installed
-CLI, its bundled serial and SQLite libraries, and the selected image's scope.
-The source commands and protocol details below describe the repository checkout.
+The engineering CLI version is `0.1.0-rc.1`. The Build 10 candidate pairs the
+complete `meshctl/` directory with App `0.1.0-rc.1+10`. Use the
+[Build 10 user guide](releases/rc1-build10-engineering-guide.md) for the
+installed CLI and its bundled serial and SQLite libraries. The
+[Build 9 guide](releases/rc1-engineering-guide.md) applies to the retained
+original image. The source commands and protocol details below describe the
+repository checkout.
 
 The CLI includes the 1A `ports`, `port-check`, `info`, and `watch` diagnostics
 and the 1B.7 finite `datagram send/listen/ping/respond` commands. 1B.8 adds

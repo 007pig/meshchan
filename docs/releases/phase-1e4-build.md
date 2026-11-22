@@ -12,9 +12,10 @@ all four members, internal constraints, constants and native metadata. Current
 products are App `0.1.0-rc.1+10` and CLI `0.1.0-rc.1`, Apple short `0.1.0`, build
 string `10`. Rebuilding the same inputs does not allocate a build number.
 The commands below illustrate a local build. Use the
-[1E.11 handoff](phase-1e11-release-materials.md) to identify the already
-accepted image and its original inputs. A new distributable App with changed
-contents requires a higher build number.
+[1E.11 handoff](phase-1e11-release-materials.md#build-10-replacement-candidate)
+to identify the held image, its build inputs, and the open CLI build-path
+finding. A new distributable App with changed contents requires a higher build
+number.
 
 For review fixes to the build or verification tools, run the unit tests that
 cover the change. Complete the applicable real rebuilds, product checks, runtime
@@ -155,11 +156,21 @@ It then compares compilation inputs across
 before-build map before executing these commands.
 
 ```text
-# cwd: apps/meshctl; Dart is the selected Flutter SDK's bundled executable
-dart build cli --packages <repo>/.dart_tool/package_config.json --target lib/src/meshctl.dart --output <run>/cli --depfile <run>/evidence/compiler/cli.d
+# cwd: apps/meshctl; the builder stages a private view of the selected Dart SDK
+/usr/bin/env TMPDIR=<cli-workspace>/tmp <cli-workspace>/dart-sdk/bin/dart build cli --packages <repo>/.dart_tool/package_config.json --target lib/src/meshctl.dart --output <run>/cli --depfile <run>/evidence/compiler/cli.d
 # cwd: apps/meshchan_app/macos
 /usr/bin/xcrun xcodebuild -workspace Runner.xcworkspace -scheme Runner -configuration Release -destination generic/platform=macOS -derivedDataPath <run>/app-derived OBJROOT=<run>/app-derived/Build/Intermediates.noindex SYMROOT=<run>/app-derived/Build/Products COMPILER_INDEX_STORE_ENABLE=NO
 ```
+
+Recipe 57 keeps an absolute, run-owned temporary directory for libserialport and
+SQLite's native build hooks. The CLI snapshot launcher invokes the pinned
+`gen_snapshot` in Dart's temporary output directory with
+`--macho=snapshot.aot`. The embedded object-file debug symbol then contains
+the snapshot basename, without the host temporary path. Dart still embeds
+the resulting snapshot and bundles the native assets through its ordinary CLI
+build. The builder deletes the private SDK view after compilation and checks
+the final App and CLI Mach-O bytes for local path prefixes, including macOS's
+`/var/folders/` spelling.
 
 The map is independently recomputed after each compiler. It covers first-party
 compilation, declared resources including Flutter shaders, native configuration,

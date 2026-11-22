@@ -16,9 +16,9 @@ staging, archiving, and runtime acceptance.
 The commands below use example paths and an illustrative historical build
 pin. For a real package run, set the frozen checkout, build run, and pin
 from that candidate's accepted build handoff. See the
-[1E.11 handoff](phase-1e11-release-materials.md) for the original Build 9
-candidate. Run from the development checkout with the existing stable Python
-and configured, logged-in macOS test VM. The VM follows the
+[1E.11 handoff](phase-1e11-release-materials.md#build-10-replacement-candidate)
+for the exact Build 10 identity. Run from the development checkout with the
+existing stable Python and configured, logged-in macOS test VM. The VM follows the
 [guest executor guide](../macos-vm-gui-testing.md). The VM configuration stays
 private. Resolve paths to their canonical forms, including the existing parents
 of the external extraction directories.

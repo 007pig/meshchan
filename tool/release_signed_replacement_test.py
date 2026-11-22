@@ -149,6 +149,34 @@ class ReplacementEvidenceTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'manifest changed'):
                 replacement.serial_archive(root, inventory)
 
+    def test_unbound_cli_serial_asset_stops_before_copying_or_compiling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root/'signed'
+            manifest = original/'materials/materials-manifest.json'
+            manifest.parent.mkdir(parents=True)
+            copies = root/'user products'
+            command = mock.Mock()
+            materials = {'payloadProfile': replacement.PUBLIC_PAYLOAD, 'materials': {}}
+            manifest.write_bytes(encoded(materials))
+            inventory = product_inventory(original)
+            with self.assertRaisesRegex(ValueError, 'lacks a CLI serial native asset binding'):
+                replacement.prepare_copies(original, inventory, copies, root, None, None, None,
+                                           self.MARKER, command)
+            manifest.write_bytes(encoded({**materials, 'native': {replacement.CLI: {'libserialport_plus': {
+                'loader': ['\t'+replacement.CLI_SERIAL_INSTALL_NAME+' (compatibility version 0.0.0)'],
+                'sections': {'16777228': {'__TEXT/__text': '1'*64}},
+            }}}}))
+            with self.assertRaisesRegex(ValueError, 'Original materials manifest changed'):
+                replacement.prepare_copies(original, inventory, copies, root, None, None, None,
+                                           self.MARKER, command)
+            with (mock.patch.object(replacement, 'sections', return_value={'16777228': {'__TEXT/__text': '2'*64}}),
+                  self.assertRaisesRegex(ValueError, 'binding differs from its bundled serial library')):
+                replacement.prepare_copies(original, product_inventory(original), copies, root, None, None, None,
+                                           self.MARKER, command)
+            self.assertFalse(copies.exists())
+            command.assert_not_called()
+
     @unittest.skipUnless(Path('/usr/bin/xattr').is_file(), 'macOS metadata required')
     def test_original_payload_rejects_unexpected_metadata_without_content_change(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -162,6 +190,88 @@ class ReplacementEvidenceTest(unittest.TestCase):
             self.assertEqual(product_inventory(root), expected)
             with self.assertRaisesRegex(ValueError, 'Unsupported extended attributes'):
                 replacement.original_payload(root, expected)
+
+    @unittest.skipUnless(Path('/usr/bin/ditto').is_file(), 'macOS quarantine metadata required')
+    def test_public_replacement_preserves_quarantine_on_owned_copies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            original, output = root/'signed', root/'replacement'
+            policy = 'tool/release_signing_policy.json'
+            archived = original/'signing-source'/policy
+            archived.parent.mkdir(parents=True)
+            archived.write_bytes(replacement.signing.DEFAULT_POLICY.read_bytes())
+            for name in (replacement.APP_LIBRARY, replacement.CLI_LIBRARY, replacement.CLI_BINARY):
+                path = original/name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'unchanged candidate code')
+            alias = original/replacement.CLI/'asset-link'
+            alias.symlink_to('lib/liblibserialport_plus.dylib')
+            quarantine = '0083;5f123456;MeshchanFixture;12345678-1234-4234-8234-123456789abc'
+
+            def tag(path, value=quarantine, attr=replacement.QUARANTINE_ATTRIBUTE):
+                subprocess.run(['/usr/bin/xattr', '-w', '-s', attr, value, path], check=True, timeout=5)
+
+            tagged = (replacement.APP, replacement.APP_LIBRARY, replacement.CLI_LIBRARY,
+                      replacement.CLI_BINARY, alias.relative_to(original).as_posix())
+            for name in tagged:
+                tag(original/name)
+            inventory = product_inventory(original)
+            tag(archived, 'unapproved attribute', 'com.example.meshchan-fixture')
+            with self.assertRaisesRegex(ValueError, 'Unsupported extended attributes'):
+                replacement.original_payload(original, inventory, allow_quarantine=True)
+            subprocess.run(['/usr/bin/xattr', '-d', 'com.example.meshchan-fixture', archived],
+                           check=True, timeout=5)
+            info = local_manifest(inventory) | {
+                'payloadProfile': replacement.PUBLIC_PAYLOAD, 'compiledSource': '1'*40,
+                'privateSignedInfoSha256': '2'*64, 'policy': {'path': policy, 'sha256': digest(archived)},
+            }
+            manifest = original/replacement.MANIFEST
+            replacement.build.write(manifest, info)
+            source_quarantine = {name: quarantine.encode().hex() for name in tagged}
+            vm_output = root/'VM replacement'
+            with (mock.patch.object(replacement.vm_steps, 'checked_vm_configuration'),
+                  self.assertRaisesRegex(ValueError, 'Use local macOS approvals')):
+                replacement.run(original, vm_output, signed_info_sha256=digest(manifest),
+                                vm_config=root/'guest.json')
+            self.assertFalse(vm_output.exists())
+
+            def prepare(_original, _inventory, copies, _evidence, _archive, _sha, _policy, _marker, _command,
+                        *, quarantine):
+                self.assertEqual(quarantine, source_quarantine)
+
+                def copy(_label, argv):
+                    subprocess.run(argv, check=True, timeout=20)
+
+                replacement.copy_user_products(original, copies, copy, preserve_quarantine=True)
+                return {'verifiedInventory': product_inventory(copies), 'libraries': {
+                    name: {'signedReplacementSha256': digest(copies/name)}
+                    for name in (replacement.CLI_LIBRARY, replacement.APP_LIBRARY)
+                }}
+
+            with (mock.patch.object(replacement.signing, 'verify_signatures', return_value=info['signature']['items']),
+                  mock.patch.object(replacement, 'serial_archive', return_value=(None, {'sha256': '0'*64})),
+                  mock.patch.object(replacement, 'prepare_copies', side_effect=prepare),
+                  mock.patch.object(replacement, 'run_cli') as launch_cli,
+                  mock.patch.object(replacement, 'run_app') as launch_app):
+                result = replacement.run(original, output, signed_info_sha256=digest(manifest))
+            launch_cli.assert_not_called()
+            launch_app.assert_not_called()
+            self.assertEqual(result['status'], 'INCOMPLETE')
+            self.assertEqual(result['finalIntegrity'], 'PASS')
+            self.assertEqual(result['cli']['status'], 'NOT_RUN')
+            self.assertEqual(result['app']['status'], 'NOT_RUN')
+            self.assertEqual(result['cli']['path'], str(output/'user products'/replacement.CLI_BINARY))
+            self.assertEqual(result['app']['path'], str(output/'user products'/replacement.APP))
+            metadata = result['filesystemMetadata']['quarantine']
+            self.assertEqual(metadata['originalBefore'], source_quarantine)
+            self.assertEqual(metadata['originalAfter'], source_quarantine)
+            self.assertEqual(set(metadata['modifiedBefore']), set(tagged))
+            self.assertEqual(metadata['modifiedBefore'], metadata['modifiedAfter'])
+            for actual in ({}, {replacement.CLI_BINARY: quarantine.replace('12345678-', '87654321-').encode().hex()},
+                           {replacement.CLI_BINARY: quarantine.replace('0083;', '0000;', 1).encode().hex()}):
+                with self.assertRaisesRegex(ValueError, 'Public replacement copy quarantine'):
+                    replacement.verify_copied_quarantine({replacement.CLI_BINARY: source_quarantine[replacement.CLI_BINARY]},
+                                                         actual)
 
     def test_rebuild_rejects_wrong_install_name_in_one_slice_before_replacing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -193,6 +303,36 @@ class ReplacementEvidenceTest(unittest.TestCase):
                                        'app-library-rebuilt-id-arm64', 'app-library-rebuilt-id-x86_64'])
             self.assertEqual((copies/replacement.APP_LIBRARY).read_bytes(), b'original file')
 
+    @unittest.skipUnless(Path('/usr/bin/xattr').is_file(), 'macOS quarantine metadata required')
+    def test_replacing_library_preserves_exact_quarantine_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original, copies = root/'original', root/'copies'
+            path = replacement.CLI_LIBRARY
+            for product in (original, copies):
+                library = product/path
+                library.parent.mkdir(parents=True)
+                library.write_bytes(b'original library')
+            value = '0083;5f123456;MeshchanFixture;12345678-1234-4234-8234-123456789abc'
+            subprocess.run(['/usr/bin/xattr', '-w', replacement.QUARANTINE_ATTRIBUTE, value, copies/path],
+                           check=True, timeout=5)
+
+            def command(label, argv):
+                if label.endswith('-architectures'):
+                    return 'arm64\n'
+                if label.endswith('-compile'):
+                    argv[-1].write_bytes(b'rebuilt library')
+                    return ''
+                if label.endswith('-exports-arm64'):
+                    return '_sp_list_ports\n'
+                return f'{argv[-1]}:\n{replacement.CLI_SERIAL_INSTALL_NAME}\n'
+
+            replacement.replace_library(original, copies, path, root, '/usr/bin/clang', '/sdk',
+                                        command, 'cli-library', quarantined=True)
+            self.assertEqual((copies/path).read_bytes(), b'rebuilt library')
+            self.assertEqual(replacement.MacMetadata().quarantine(copies/path), value.encode())
+            self.assertEqual((original/path).read_bytes(), b'original library')
+
     def test_execution_rejects_changes_after_the_verified_copy_cut(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -202,7 +342,7 @@ class ReplacementEvidenceTest(unittest.TestCase):
             (original/'example').write_text('payload')
             manifest, signatures = self.write_candidate_manifest(original)
 
-            def prepare(_root, _original_inventory, copies, *_arguments):
+            def prepare(_root, _original_inventory, copies, *_arguments, **_options):
                 copies.mkdir()
                 resource = copies/'resource'
                 resource.write_text('checked')
@@ -320,7 +460,7 @@ class ReplacementEvidenceTest(unittest.TestCase):
                 (original/'example').write_text('payload')
                 manifest, signatures = self.write_candidate_manifest(original)
 
-                def prepare(_root, _original_inventory, copies, *_arguments):
+                def prepare(_root, _original_inventory, copies, *_arguments, **_options):
                     libraries = {}
                     for name in (replacement.CLI_LIBRARY, replacement.APP_LIBRARY):
                         library = copies/name

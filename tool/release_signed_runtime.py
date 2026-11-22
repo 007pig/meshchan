@@ -27,6 +27,8 @@ APP_FIXTURE = 'meshchan-1d3-package'
 CLI_TITLE = 'Signed release smoke'
 CLI_BODY = 'Offline sample 中文\r\nsecond line\n'
 METHOD = 'proc_pidinfo/PROC_PIDREGIONPATHINFO'
+PUBLIC_PAYLOAD = 'public-engineering-v1'
+CLI_SERIAL_INSTALL_NAME = '@rpath/lib/liblibserialport_plus.dylib'
 
 
 def image_probe_command(executable):
@@ -55,9 +57,6 @@ def image_report(data, executable, library, executable_sha, library_sha, exit_co
     return {**parsed, 'method': METHOD, 'observedReceiptSha256': build.sha(data),
             'executable': str(executable), 'executableSha256': executable_sha,
             'library': str(library), 'librarySha256': library_sha}
-
-
-PUBLIC_PAYLOAD = 'public-engineering-v1'
 
 
 def signed_info(path, pin):

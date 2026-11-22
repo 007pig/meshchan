@@ -36,7 +36,8 @@ PUBLIC_PAYLOAD = runtime.PUBLIC_PAYLOAD
 PUBLIC_MATERIAL_DIRS = ('licenses', 'rebuild', 'source-materials')
 PUBLIC_MATERIAL_FILES = ('THIRD_PARTY_NOTICES.md',)
 PUBLIC_PRODUCT_DIRS = ('Meshchan.app', 'meshctl', 'signing-materials', 'signing-source', 'packaging-source')
-CLI_SERIAL_INSTALL_NAME = '@rpath/lib/liblibserialport_plus.dylib'
+PUBLIC_VOLUME_README_RECIPE = 57
+CLI_SERIAL_INSTALL_NAME = runtime.CLI_SERIAL_INSTALL_NAME
 PUBLIC_PRODUCT_README = b"""# Meshchan macOS engineering release
 
 Keep Meshchan.app and the complete meshctl directory with these materials.
@@ -70,6 +71,25 @@ acceptance. Tested installation and upgrade instructions are a separate
 release step. See signing-materials inside the product folder for the user
 library replacement guide. The dmg-source folder contains the corresponding
 container tooling and license. Product materials remain in the product folder.
+"""
+PUBLIC_VOLUME_README = b"""# Meshchan engineering disk image
+
+The Meshchan product folder contains the complete Meshchan.app, meshctl,
+licenses and corresponding source. Keep meshctl/bin/meshctl with the rest
+of meshctl, including its bundled native libraries.
+
+Verify the image's SHA-256 against the checksum from the trusted release
+handoff. image-payload.json inventories this volume and binds the public
+signed-product-info.json inside the product folder. Maintainer acceptance
+receipts are held with the private release evidence.
+
+The App and CLI carry local ad hoc code signatures. This read-only disk
+image container is unsigned. Apple has not notarized this engineering
+release. Follow the release handoff's installation and approval instructions.
+
+See signing-materials in the product folder for the user library
+replacement procedure. The dmg-source folder contains the corresponding
+container tooling and license.
 """
 SOURCE_README = b"""# Meshchan engineering disk image tooling
 
@@ -156,7 +176,7 @@ def tool_identity(inputs):
                                        '--', *SOURCES).splitlines()}
 
 
-def public_candidate(info, full, materials_bytes, private_signed_pin):
+def public_candidate(info, full, materials_bytes, private_signed_pin, *, retained_public_pin=None):
     """Project a separately verified signed candidate without copying local receipts."""
     materials = json.loads(materials_bytes, object_pairs_hook=signing.policy_object)
     upstream = info['upstream']
@@ -196,7 +216,6 @@ def public_candidate(info, full, materials_bytes, private_signed_pin):
         'appBuild': materials['appBuild'], 'lockSha256': materials['lockSha256'],
         'privateMaterialManifestSha256': upstream['materialsManifestSha256'],
         'materials': material_files,
-        'native': {'meshctl': {'libserialport_plus': {'loader': [loader], 'sections': sections}}},
     }
     inventory = {name: entry for name, entry in full.items()
                  if name in ('.', 'materials') or Path(safe(name)).parts[0] in PUBLIC_PRODUCT_DIRS}
@@ -204,22 +223,40 @@ def public_candidate(info, full, materials_bytes, private_signed_pin):
         member = Path(safe('materials/'+name))
         inventory[member.as_posix()] = full[member.as_posix()]
         inventory.update({parent.as_posix(): full[parent.as_posix()] for parent in member.parents})
-    generated = {MATERIAL_MANIFEST: encoded(materials_public), 'README.md': PUBLIC_PRODUCT_README}
-    inventory.update({name: package.bytes_entry(data) for name, data in generated.items()})
     public_info = {
         **{key: info[key] for key in ('formatVersion', 'signingProfile', 'identity', 'policy',
                                      'signature', 'inventoryExclusions')},
         'payloadProfile': PUBLIC_PAYLOAD,
         'compiledSource': upstream['sourceCommit'],
         'privateSignedInfoSha256': private_signed_pin,
-        'payloadInventory': inventory,
     }
-    return PublicCandidate(public_info, {**generated, SIGNED_MANIFEST: encoded(public_info)})
+
+    def project(projected_materials):
+        generated = {MATERIAL_MANIFEST: encoded(projected_materials), 'README.md': PUBLIC_PRODUCT_README}
+        payload = inventory | {name: package.bytes_entry(data) for name, data in generated.items()}
+        manifest = {**public_info, 'payloadInventory': payload}
+        return PublicCandidate(manifest, {**generated, SIGNED_MANIFEST: encoded(manifest)})
+
+    current = project({**materials_public, 'native': {
+        'meshctl': {'libserialport_plus': {'loader': [loader], 'sections': sections}},
+    }})
+    if retained_public_pin is None or retained_public_pin == sha(current.manifest):
+        return current
+    # The first sealed v1 image predates the portable serial binding. Replay
+    # its exact pinned projection for retention only.
+    legacy = project(materials_public)
+    package.equal(retained_public_pin, sha(legacy.manifest), 'Retained public signed manifest pin')
+    return legacy
 
 
 def layout(candidate_inventory, info, args, sources, identity, *, public=None):
     top, filename, volume_name = volume_names(info)
-    outliers = {**sources, 'README-engineering.md': README, 'dmg-source/README.md': SOURCE_README}
+    # The build recipe is pinned in the upstream evidence. Keep the original
+    # volume text byte-for-byte when replaying historical public or private images.
+    readme = (PUBLIC_VOLUME_README
+              if public is not None and info['upstream']['buildRecipeVersion'] >= PUBLIC_VOLUME_README_RECIPE
+              else README)
+    outliers = {**sources, 'README-engineering.md': readme, 'dmg-source/README.md': SOURCE_README}
     image_candidate = candidate_inventory if public is None else public.inventory
     inventory = {'.': package.DIR, **prefixed(top, image_candidate)}
     for name, data in outliers.items():

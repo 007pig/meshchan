@@ -129,7 +129,7 @@ class LayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'dmg-source/tool/helper.py'):
             dmg.check_layout(self.staging, self.layout)
 
-    def public_fixture(self):
+    def public_fixture(self, *, recipe=57):
         source = 'source-materials/archives/libserialport_plus-1.0.5.tar.gz'
         members = {
             source: b'original source archive',
@@ -170,7 +170,7 @@ class LayoutTests(unittest.TestCase):
             'inventoryExclusions': [dmg.SIGNED_MANIFEST],
         })
         self.info['upstream'].update({
-            'materialsManifestSha256': sha(raw), 'buildRecipeVersion': 55, 'buildInfoSha256': '5'*64,
+            'materialsManifestSha256': sha(raw), 'buildRecipeVersion': recipe, 'buildInfoSha256': '5'*64,
             'sourceCheckout': self.HOST_PATH+'/source',
             'packageRun': self.HOST_PATH+'/packaging',
         })
@@ -188,6 +188,10 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(mounted.manifest['signedInfoSha256'], sha(public.manifest))
         self.assertEqual(mounted.manifest['privateSignedInfoSha256'], self.args.candidate_sha256)
         self.assertEqual(mounted.manifest['payloadProfile'], dmg.PUBLIC_PAYLOAD)
+        volume_readme = staging/'README-engineering.md'
+        self.assertEqual(volume_readme.read_bytes(), dmg.PUBLIC_VOLUME_README)
+        self.assertNotIn(b'accepted build and signing records', volume_readme.read_bytes())
+        self.assertEqual(mounted.inventory[volume_readme.name], package.bytes_entry(dmg.PUBLIC_VOLUME_README))
         top = staging/mounted.manifest['candidatePath']
         self.assertEqual((top/'materials'/archive).read_bytes(), b'original source archive')
         self.assertEqual((top/'Meshchan.app/Contents/MacOS/Meshchan').read_bytes(), b'app')
@@ -207,6 +211,24 @@ class LayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'payload manifest'):
             dmg.mounted_layout(staging, original, self.info, self.args, self.tools, self.contents)
 
+    def test_historical_public_volume_readme_reconstructs_byte_for_byte(self):
+        _, raw, original = self.public_fixture(recipe=56)
+        public = dmg.public_candidate(self.info, original, raw, self.args.candidate_sha256)
+        legacy = dmg.layout(original, self.info, self.args, self.contents, self.identity, public=public)
+        staging = self.root/'historical public staging'
+        dmg.stage(staging, self.candidate, legacy, public=public)
+        self.assertEqual((staging/'README-engineering.md').read_bytes(), dmg.README)
+        self.assertEqual(sha(dmg.README), '2c80047c788ab3d1314554c0a30e57980551aca77e981a066283b4581e2aee99')
+        self.assertEqual(legacy.inventory['README-engineering.md'], package.bytes_entry(dmg.README))
+        self.assertEqual(dmg.mounted_layout(staging, original, self.info, self.args, self.tools,
+                                           self.contents, public=public), legacy)
+        self.info['upstream']['buildRecipeVersion'] = 57
+        private = dmg.layout(original, self.info, self.args, self.contents, self.identity)
+        self.assertEqual(private.outliers['README-engineering.md'], dmg.README)
+        with self.assertRaisesRegex(ValueError, 'payload manifest'):
+            dmg.mounted_layout(staging, original, self.info, self.args, self.tools,
+                               self.contents, public=public)
+
     def test_public_projection_rejects_unbound_material_bytes(self):
         archive, raw, original = self.public_fixture()
         with self.assertRaisesRegex(ValueError, 'material manifest bytes'):
@@ -215,6 +237,28 @@ class LayoutTests(unittest.TestCase):
         original[key] = {**original[key], 'sha256': '7'*64}
         with self.assertRaisesRegex(ValueError, 'Public material inventory'):
             dmg.public_candidate(self.info, original, raw, self.args.candidate_sha256)
+
+    def test_retention_replays_both_pinned_v1_public_projections(self):
+        _, raw, original = self.public_fixture()
+        private_pin = self.args.candidate_sha256
+        current = dmg.public_candidate(self.info, original, raw, private_pin)
+        current_pin = sha(current.manifest)
+        legacy_materials = json.loads(current.generated[dmg.MATERIAL_MANIFEST])
+        del legacy_materials['native']
+        legacy_bytes = encoded(legacy_materials)
+        legacy_info = {**current.info, 'payloadInventory': {
+            **current.info['payloadInventory'], dmg.MATERIAL_MANIFEST: package.bytes_entry(legacy_bytes),
+        }}
+        legacy_manifest = encoded(legacy_info)
+
+        self.assertEqual(current, dmg.public_candidate(self.info, original, raw, private_pin,
+                                                       retained_public_pin=current_pin))
+        legacy = dmg.public_candidate(self.info, original, raw, private_pin,
+                                      retained_public_pin=sha(legacy_manifest))
+        self.assertEqual(legacy.manifest, legacy_manifest)
+        self.assertEqual(legacy.generated[dmg.MATERIAL_MANIFEST], legacy_bytes)
+        with self.assertRaisesRegex(ValueError, 'Retained public signed manifest pin'):
+            dmg.public_candidate(self.info, original, raw, private_pin, retained_public_pin='0'*64)
 
     def test_public_serial_binding_rejects_paths_in_replacement_fields(self):
         _, raw, original = self.public_fixture()

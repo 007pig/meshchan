@@ -535,7 +535,12 @@ exec /usr/bin/git "$@"
             if name in ('cli-build', 'app-build'):
                 self.assertTrue((self.out/'evidence/compilation-input-hashes.json').is_file())
                 if name == 'cli-build':
-                    self.assertEqual(argv[1:], ['build', 'cli', '--packages', package_config, '--target', 'lib/src/meshctl.dart',
+                    self.assertEqual(argv[0], '/usr/bin/env')
+                    self.assertTrue(argv[1].startswith('TMPDIR='))
+                    scratch = Path(argv[1].removeprefix('TMPDIR='))
+                    self.assertEqual(scratch.parent.parent, self.out/'evidence/compiler')
+                    self.assertTrue(scratch.is_dir())
+                    self.assertEqual(argv[3:], ['build', 'cli', '--packages', package_config, '--target', 'lib/src/meshctl.dart',
                                                 '--output', self.out/'cli', '--depfile', self.out/'evidence/compiler/cli.d'])
                 else:
                     self.assertIn('MESHCHAN_BUILD_PYTHON='+sys.executable, argv)
@@ -576,6 +581,7 @@ exec /usr/bin/git "$@"
                     ('configuration', configuration or (lambda *a: {}))]:
                 stack.enter_context(patch.object(b, name, replacement))
             stack.enter_context(patch.object(b, 'external_sources', external_sources or Mock(return_value={})))
+            stack.enter_context(patch.object(b, 'cli_dart_sdk', side_effect=lambda dart, overlay: dart))
             stack.enter_context(patch.object(b, 'normalize_app_engine_runpath'))
             stack.enter_context(patch.object(b, 'require_ready_flutter_launcher', side_effect=b.require_no_sdk_bootstrap))
             stack.enter_context(patch.object(b, 'release_framework_identity', release_framework or Mock(return_value={})))
@@ -2008,8 +2014,11 @@ except b.GateInterrupted:
             binary.parent.mkdir(parents=True)
             binary.write_bytes(b'package:meshctl/src/meshctl.dart\0/usr/lib/libSystem.B.dylib\0')
         self.assertEqual(b.audit_macho_paths(bundle, names, self.root), sorted(names))
-        for name, leak in zip(names, (b'file:///Users/example/work/build/native.c',
-                                      os.fsencode(self.root/'source.dart')), strict=True):
+        for name, leak in ((names[0], b'file:///Users/example/work/build/native.c'),
+                           (names[1], os.fsencode(self.root/'source.dart')),
+                           (names[1], b'file:///tmp/build/meshctl.dart'),
+                           (names[1], b'/var/folders/token/T/session/snapshot.aot'),
+                           (names[1], b'/tmp/session/snapshot.aot')):
             binary = bundle/name
             original = binary.read_bytes()
             binary.write_bytes(original+leak)
@@ -2017,6 +2026,36 @@ except b.GateInterrupted:
                 b.audit_macho_paths(bundle, names, self.root)
             self.assertIn(name, str(error.exception))
             binary.write_bytes(original)
+
+    def test_cli_sdk_rewrites_only_the_owned_snapshot_output(self):
+        sdk = self.root/'pinned sdk'
+        utils = sdk/'bin/utils'
+        utils.mkdir(parents=True)
+        (sdk/'version').write_text('pinned version')
+        for launcher in ('dart', 'dartvm', 'dartaotruntime'):
+            (sdk/'bin'/launcher).write_text(launcher)
+        original = utils/'gen_snapshot'
+        original.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > snapshot.aot\n')
+        original.chmod(0o755)
+        overlay = self.root/'private compiler'
+        dart = b.cli_dart_sdk(sdk/'bin/dart', overlay)
+        self.assertEqual(dart.read_bytes(), (sdk/'bin/dart').read_bytes())
+        self.assertEqual((overlay/'version').resolve(), sdk/'version')
+        scratch = self.root/'owned scratch'
+        work = scratch/'dart-created directory'
+        work.mkdir(parents=True)
+        kernel = work/'kernel.dill'
+        kernel.write_text('source kernel')
+        snapshot = work/'snapshot.aot'
+        compiler = overlay/'bin/utils/gen_snapshot'
+        command = [compiler, '--snapshot-kind=app-aot-macho-dylib', '--macho='+str(snapshot), kernel]
+        env = {**b.controlled_environment(), 'TMPDIR': str(scratch)}
+        self.assertNotEqual(subprocess.run([*command, '--macho=other'], env=env, capture_output=True).returncode, 0)
+        self.assertNotEqual(subprocess.run(command, env={**env, 'TMPDIR': str(work)},
+                                           capture_output=True).returncode, 0)
+        self.assertFalse(snapshot.exists())
+        subprocess.run(command, env=env, check=True)
+        self.assertEqual(snapshot.read_text().splitlines(), [command[1], '--macho=snapshot.aot', str(kernel)])
 
     def test_loader_checks_actual_loads_against_matching_macho_slices(self):
         bundle = self.root/'bundle'

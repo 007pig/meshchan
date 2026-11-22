@@ -1,21 +1,25 @@
 # Meshchan
 
-The retained macOS arm64 Build 9 engineering image pairs **Meshchan
-0.1.0-rc.1+9** with **meshctl 0.1.0-rc.1** from product commit
-`01cfacb7fc166a0078962a99d9e673750aabad65`. Build 10 is the replacement
-candidate under validation. Use the [Build 9 user guide](docs/releases/rc1-engineering-guide.md) for
-download verification, installation, data ownership, and limited USB use.
-See the [release notes](docs/releases/rc1-engineering-release-notes.md) and the
-[source and license index](docs/releases/rc1-engineering-source-materials.md)
-for the matching image and its materials.
+The held macOS arm64 Build 10 candidate pairs **Meshchan 0.1.0-rc.1+10**
+with **meshctl 0.1.0-rc.1** from frozen product commit
+`be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7`. Use the
+[Build 10 user guide](docs/releases/rc1-build10-engineering-guide.md),
+[release notes](docs/releases/rc1-build10-release-notes.md), and
+[source and license index](docs/releases/rc1-build10-source-materials.md)
+for the matching image and materials. Publication is blocked by local paths in
+the CLI and the embedded first-party source archive, the shipped replacement
+tool's quarantine handling, full Beta Finder replacement, and finite RF
+acceptance with active Cancel. The
+[release handoff](docs/releases/phase-1e11-release-materials.md#build-10-replacement-candidate)
+identifies the revised image and completed checks.
 
-The [Build 9 hardware record](docs/validation/phase-1e10-hardware-acceptance.md)
-identifies the original accepted image and its limited results. The subsequent
-`1152097eebd91b13b45d29dbd60cef794d7a5c3d` source includes additional USB
-initialization fixes and has its own software and offline checks. The
-[release handoff](docs/releases/phase-1e11-release-materials.md) records the
-remaining gates. The earlier [Build 8 install and upgrade](docs/validation/phase-1e9-install-upgrade.md)
-applies to the original pinned Build 8 image.
+The [Build 9 user guide](docs/releases/rc1-engineering-guide.md),
+[release notes](docs/releases/rc1-engineering-release-notes.md), and
+[source and license index](docs/releases/rc1-engineering-source-materials.md)
+apply to the original Build 9 image. The
+[Build 9 hardware record](docs/validation/phase-1e10-hardware-acceptance.md) and
+[Build 8 install and upgrade](docs/validation/phase-1e9-install-upgrade.md)
+preserve earlier candidate-specific results.
 
 The historical **0.1.0-beta.1** (app build **5**) remains the accepted 1D Beta.
 **Local beta accepted with documented limits** for macOS arm64 and the selected
@@ -81,7 +85,7 @@ Historical 1A evidence remains separate. On November 9, 2026, a fresh software g
 
 The complete archived 1A bundle passed extraction and integrity checks. The recommendation remains **development with known limitations**: historical intermittent USB delivery failures remain unresolved, and a successful info call did not establish stable initialization or a waiting/replug fix. The [channel-datagram contract](docs/protocol/channel-datagrams.md) is implemented in software. Its basic Direct real-device cases have passing records in the [November 10 matrix](docs/hardware-validation.md#direct-rf-matrix-on-november-10-2026) and the [November 11 H2/H7 follow-up](docs/hardware-validation.md#authorized-command-budget-comparison-on-november-11-2026), with earlier failures retained. Specified relay paths and ready-state physical USB unplug remain untested; public redistribution remains open.
 
-See the [testing guide](docs/testing.md) for the behavior audit and shared source/native smoke checks, including broken pipes and complete-bundle relocation. `meshctl info --port <path>` initializes one existing `MeshCoreSession`, awaits cleanup, and prints a complete closed-connection snapshot. `meshctl watch --port <path>` initializes once and observes session states and unassociated response summaries until duration, signal, or failure. Both commands send `DEVICE_QUERY` and `APP_START`. The later repository source includes additional completion response checks on the macOS USB path for Heltec V4.3 OLED. The [engineering release notes](docs/releases/rc1-engineering-release-notes.md) describe the packaged cut. The original `ports` and `port-check` commands remain available. All four commands support JSON, and watch uses NDJSON. See the [CLI guide](docs/cli.md) for options, schemas, cancellation, exit codes, and explicit-port hardware authorization.
+See the [testing guide](docs/testing.md) for the behavior audit and shared source/native smoke checks, including broken pipes and complete-bundle relocation. `meshctl info --port <path>` initializes one existing `MeshCoreSession`, awaits cleanup, and prints a complete closed-connection snapshot. `meshctl watch --port <path>` initializes once and observes session states and unassociated response summaries until duration, signal, or failure. Both commands send `DEVICE_QUERY` and `APP_START`. The repository source includes additional completion response checks on the macOS USB path for Heltec V4.3 OLED. The [release handoff](docs/releases/phase-1e11-release-materials.md) identifies the source and acceptance of each packaged cut. The original `ports` and `port-check` commands remain available. All four commands support JSON, and watch uses NDJSON. See the [CLI guide](docs/cli.md) for options, schemas, cancellation, exit codes, and explicit-port hardware authorization.
 
 See the [session contract and minimal caller example](docs/protocol/companion-session.md), [Companion codec layout](docs/protocol/companion-initialization.md), [serial transport contract and read-only example](docs/protocol/serial-transport.md), and [serial framing protocol](docs/protocol/serial-framing.md). Session software tests use a fake transport and synthetic responses. An [authorized Step 6 hardware follow-up](docs/hardware-validation.md#authorized-session-hardware-follow-up-on-november-9-2026) passed actual source and AOT initialization and cleanup on one selected macOS USB port. A [subsequent timeout investigation](docs/hardware-validation.md#session-timeout-investigation-on-november-9-2026) reproduced a delayed 64-byte response body with an independent POSIX client, outside Dart. Zero- and one-second sessions also passed; three seconds is not an established fix for this intermittent USB delivery problem. The product startup-delay default stays zero. Step 2/4 hardware results and the Step 5 probe remain separate historical evidence. Step 7 software acceptance uses synthetic transport tests and hardware-free process checks; the historical hardware runs do not validate the new CLI on a device.
 
@@ -151,7 +155,7 @@ Source execution and compilation run the dependency's build hook, so a working n
 # Run from the repository root.
 export PATH="/opt/homebrew/share/flutter/bin:/usr/bin:$PATH"
 cd apps/meshctl
-dart build cli --target=bin/meshctl.dart --output=build/dist
+dart build cli --target=lib/src/meshctl.dart --output=build/dist
 build/dist/bundle/bin/meshctl --version
 build/dist/bundle/bin/meshctl info --help
 build/dist/bundle/bin/meshctl watch --help

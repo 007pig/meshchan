@@ -48,28 +48,28 @@ class InstallCandidate:
         return files.verify_safari_download(reader, path, expected_asset=self.download_asset, url=url,
                                             started_at=started_at, finished_at=finished_at, user_home=user_home)
 
-    def check_download(self, download):
+    def check_download(self, vm, download):
         files.verify_safari_download_receipt(download)
         asset = self.download_asset
         verify_report_fields(download, {'sha256': asset['sha256']}, 'Admitted download')
-        verify_report_fields(download['file'], {'size': asset['size']}, 'Admitted download file')
-        if Path(download['file']['path']).name != asset['filename']:
-            raise ValueError('Admitted download has the wrong asset filename')
+        home = files.guest_path('/Users/'+vm.c['user'])
+        path = str(home/'Downloads'/asset['filename'])
+        verify_report_fields(download['file'], {'size': asset['size'], 'path': path}, 'Admitted download file')
 
     def observe_mount(self, vm, before, download):
-        self.check_download(download)
+        self.check_download(vm, download)
         return files.observe_download_mount(vm, before, download, self.report['volumeName'], **self.mount_pins)
 
     def detach_mount(self, vm, before, download, mount):
-        self.check_download(download)
+        self.check_download(vm, download)
         verify_report_fields(mount, {'volumeName': self.report['volumeName']}, 'Admitted volume name')
         return files.detach_download_mount(vm, before, download, mount, **self.mount_pins)
 
-    def verify_installation(self, vm, app, materials_root, *, scratch, include_volume_materials=True):
+    def verify_installation(self, vm, app, materials_root, *, scratch, include_volume_materials=True, unified=False):
         return files.verify_installation(
             vm, self.image_payload, self.mount_pins['manifest_sha256'], app, materials_root,
             scratch=scratch, policy=self.policy, signed_info=self.signed_info,
-            include_volume_materials=include_volume_materials,
+            include_volume_materials=include_volume_materials, unified=unified,
         )
 
 

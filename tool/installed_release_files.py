@@ -327,6 +327,8 @@ def observe_download_mount(vm, before, download_report, volume_name, *, volume_u
     digest = remote_text(vm, ['/usr/bin/shasum', '-a', '256', manifest]).split()
     if not digest or digest[0] != expected_manifest:
         raise ValueError('Mounted image payload manifest differs from the trusted handoff')
+    # The download receipt hashes the file using the authorized reader. This
+    # observation can run over SSH after the GUI download executor has stopped.
     after = [other for other in mount_snapshot(vm).images if other.path == path
              or any(entity.mount == mount for entity in other.entities)]
     if after != [item] or guest_file_stamp(vm, path) != stamp:
@@ -397,6 +399,10 @@ def verify_guest_tree(vm, path, expected, *, scratch, link_roots=None, quarantin
         stream.seek(0)
         with tarfile.open(fileobj=stream, mode='r:') as product:
             archive_members(product, prefixed(path.name, expected), roots)
+    return _guest_tree_report(vm, path, expected, quarantine_paths=quarantine_paths)
+
+
+def _guest_tree_report(vm, path, expected, *, quarantine_paths=()):
     return {'path': str(path), 'inventorySha256': sha(encoded(expected)),
             'entries': len(expected),
             'metadata': observe_metadata(vm, path, known_paths=expected, quarantine_paths=quarantine_paths)}
@@ -432,11 +438,15 @@ def verify_guest_signatures(vm, app, candidate, policy, signed_info):
 
 
 def verify_installation(vm, raw, manifest_sha256, app, materials_root, *, scratch, policy, signed_info,
-                        include_volume_materials=True):
+                        include_volume_materials=True, unified=False):
+    """Verify the split layout or the guide's complete copy under guest Applications."""
     app, materials_root = map(guest_path, (app, materials_root))
     home = guest_path('/Users/'+vm.c['user'])
-    if (app != home/'Applications'/APP
-            or materials_root.parent != home/'Library/Application Support/meshchan-engineering'):
+    if unified:
+        if not include_volume_materials or materials_root.parent != home/'Applications':
+            raise ValueError('Use a complete installation under Applications for the verified guest account')
+    elif (app != home/'Applications'/APP
+          or materials_root.parent != home/'Library/Application Support/meshchan-engineering'):
         raise ValueError('Use the Applications and engineering paths for the verified guest account')
     manifest = mount_manifest(raw, manifest_sha256)
     verify_report_fields(manifest, {'signedInfoSha256': sha(encoded(signed_info)),
@@ -445,19 +455,33 @@ def verify_installation(vm, raw, manifest_sha256, app, materials_root, *, scratc
         raw, manifest_sha256, include_volume_materials=include_volume_materials)
     candidate_root = materials_root/candidate if include_volume_materials else materials_root
     candidate_prefix = candidate_root.relative_to(materials_root)
+    cli_prefix = (candidate_prefix/'meshctl').as_posix()
+    if unified and app != candidate_root/APP:
+        raise ValueError('Use the App in the pinned candidate folder of the complete installation')
     quarantine_paths = []
     for item in signed_info['signature']['items']:
         binary = signing.relative_product_path(item['binary'])
         if binary.parts[0] == 'meshctl':
             quarantine_paths.append((candidate_prefix/binary).as_posix())
-    app_report = verify_guest_tree(vm, app, app_inventory, scratch=scratch)
+    if unified:
+        app_prefix = (candidate_prefix/APP).as_posix()
+        complete_inventory = materials | prefixed(app_prefix, app_inventory)
+        materials_report = verify_guest_tree(
+            vm, materials_root, complete_inventory, scratch=scratch,
+            link_roots=(app_prefix, cli_prefix), quarantine_paths=quarantine_paths)
+        # The complete inventory already verified the App bytes and modes.
+        app_report = _guest_tree_report(vm, app, app_inventory)
+    else:
+        app_report = verify_guest_tree(vm, app, app_inventory, scratch=scratch)
     plist = remote_text(vm, ['/usr/bin/plutil', '-convert', 'xml1', '-o', '-', app/'Contents/Info.plist'])
     apple_identity = disk.parse_plist(plist, 'installed Info.plist')
     verify_report_fields(apple_identity, manifest['identity']['apple'], 'Installed Apple identity')
+    if not unified:
+        materials_report = verify_guest_tree(vm, materials_root, materials, scratch=scratch, link_roots=(cli_prefix,),
+                                             quarantine_paths=quarantine_paths)
     return {'imageManifestSha256': manifest_sha256,
             'app': app_report, 'appleIdentity': manifest['identity']['apple'],
-            'materials': verify_guest_tree(vm, materials_root, materials, scratch=scratch, link_roots=[],
-                                           quarantine_paths=quarantine_paths),
+            'materials': materials_report,
             'signatures': verify_guest_signatures(vm, app, candidate_root, policy, signed_info),
             'layout': {'app': str(app), 'cli': str(candidate_root/'meshctl/bin/meshctl'),
                        'candidateMaterials': str(candidate_root),

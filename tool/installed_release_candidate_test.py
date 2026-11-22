@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -133,9 +134,21 @@ class InstallCandidateTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Public signed evidence privateSignedInfoSha256'):
             self.admit()
 
+    def test_complete_guide_install_uses_the_admitted_manifest_and_policy(self):
+        candidate = self.admit()
+        vm, scratch = object(), object()
+        destination = Path('/Users/guest/Applications/Meshchan Engineering Build 10')
+        app = destination/self.folder/'Meshchan.app'
+        with patch.object(installed.files, 'verify_installation', return_value={'status': 'PASS'}) as verify:
+            report = candidate.verify_installation(vm, app, destination, scratch=scratch, unified=True)
+        self.assertEqual(report, {'status': 'PASS'})
+        verify.assert_called_once_with(vm, candidate.image_payload, self.refs['image_payload']['sha256'], app,
+                                       destination, scratch=scratch, policy=candidate.policy,
+                                       signed_info=candidate.signed_info, include_volume_materials=True, unified=True)
+
     def test_actual_download_asset_is_passed_through_and_compared_before_mount(self):
         result = self.admit()
-        vm, baseline = object(), object()
+        vm, baseline = SimpleNamespace(c={'user': 'guest'}), object()
         asset = result.download_asset
         download = {'sha256': asset['sha256'], 'file': {'size': asset['size'],
                                                      'path': '/Users/guest/Downloads/'+asset['filename']}}
@@ -146,6 +159,22 @@ class InstallCandidateTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Admitted download sha256'):
                 result.observe_mount(vm, baseline, {**download, 'sha256': '1'*64})
             self.assertEqual(mount.call_count, 1)
+
+    def test_only_the_guest_downloads_path_is_used_for_mount_and_detach(self):
+        result = self.admit()
+        vm, baseline = SimpleNamespace(c={'user': 'guest'}), object()
+        asset = result.download_asset
+        download = {'sha256': asset['sha256'], 'file': {'size': asset['size'],
+                                                     'path': '/Users/other/Downloads/'+asset['filename']}}
+        with patch.object(installed.files, 'verify_safari_download_receipt'), \
+                patch.object(installed.files, 'observe_download_mount') as mount, \
+                patch.object(installed.files, 'detach_download_mount') as detach:
+            with self.assertRaisesRegex(ValueError, 'Admitted download file path'):
+                result.observe_mount(vm, baseline, download)
+            with self.assertRaisesRegex(ValueError, 'Admitted download file path'):
+                result.detach_mount(vm, baseline, download, {'volumeName': self.volume})
+            mount.assert_not_called()
+            detach.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -59,7 +59,7 @@ jobs:
 
       - name: Check explicit candidate versions and identity
         id: candidate_identity
-        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8
+        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 9
 
       - name: Generate production database and dependency probe
         id: generate_database
@@ -239,7 +239,7 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Check candidate source identity
         id: candidate_identity
-        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8
+        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 9
       - name: Test app without hardware
         id: flutter_tests
         working-directory: apps/meshchan_app
@@ -270,7 +270,7 @@ jobs:
           flutter build macos --release --no-pub
       - name: Check actual release plist identity
         id: release_plist
-        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 8 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
+        run: python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 9 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
       - name: Test native macOS runner host without hardware
         id: xctest
         working-directory: apps/meshchan_app
@@ -280,7 +280,7 @@ jobs:
           -derivedDataPath build/macos -parallel-testing-enabled NO test
       - name: Verify production runtime and relocated release without hardware
         id: macos_runtime
-        run: python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 8 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
+        run: python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 9 --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
       - name: Verify release SQLite across app processes without serial access
         id: macos_sqlite
         run: |

@@ -64,16 +64,18 @@ MESHCHAN_DMG_RUN=build/phase-1e7/local-dmg-001
 meshchan_dmg create --output "$MESHCHAN_DMG_RUN"
 ```
 
-The current RC yields `Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg`.
-The image name comes from the accepted product identity. App runtime identifies
-`0.1.0-rc.1+8`, CLI runtime identifies `0.1.0-rc.1`, and the App's Apple
-short version and build string are `0.1.0` and `8`. Record the generated
+The accepted Build 8 example yielded
+`Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg`. The image name comes from the
+selected product identity. In that example the App reported `0.1.0-rc.1+8`,
+the CLI reported `0.1.0-rc.1`, and the Apple short version and build string
+were `0.1.0` and `8`. Record the generated
 `image-record.json`, the image file, and its `SHA256SUMS` outside the image.
 `CREATED` indicates image creation and payload checks. Runtime acceptance is
 a separate check. Preserve the recorded image SHA-256 to pin that check.
 
 ```sh
-MESHCHAN_DMG_IMAGE="$MESHCHAN_DMG_RUN/Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg"
+MESHCHAN_DMG_IMAGE="$(jq -er 'select(.status == "CREATED") | .image.path' \
+  "$MESHCHAN_DMG_RUN/image-record.json")"
 MESHCHAN_DMG_SHA=sha256_from_the_create_record
 meshchan_dmg check --output build/phase-1e7/local-dmg-check-001 \
   --image "$MESHCHAN_DMG_IMAGE" --image-sha256 "$MESHCHAN_DMG_SHA"

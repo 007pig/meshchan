@@ -409,8 +409,9 @@ disconnect. Notifications such as `0x83` cause no additional queries and are not
 labeled as chat messages. There is no heartbeat, idle timeout, polling, retry,
 automatic reconnect, or radio round-trip test.
 
-**Both info and watch send DEVICE_QUERY and APP_START.** These two initialization
-commands can change device session state; neither command is passive observation.
+**Both info and watch send DEVICE_QUERY and APP_START.** On macOS, a verified
+Heltec V4.3 OLED on the supported USB interface also receives one completion
+query after APP_START. These commands can change device session state.
 Opening/configuring a port can also reset some boards through driver behavior.
 The session retains its fixed app target 3 and application name `Meshchan`.
 The device's raw protocol code and firmware version text remain separate fields.
@@ -550,8 +551,8 @@ meshctl watch --port "$MESHCHAN_PORT" --json --duration 5
 
 Record initialized/failed stage, command and expected response codes, final exit
 code, and actual cleanup result. Check Ctrl+C during initialization and ready
-only under that authorization. Ready proves the existing two-command USB
-initialization, not authenticated identity or LoRa. Software tests/builds alone
+under that authorization. Ready reports that the applicable USB handshake
+completed. Software tests/builds alone
 do not establish hardware acceptance. A separately authorized
 [Step 7 CLI hardware follow-up](hardware-validation.md#step-7-authorized-cli-hardware-follow-up-on-november-9-2026)
 passed source/bundle watch and ready-state signal cleanup; its initial info
@@ -569,8 +570,8 @@ remote Actions remain unverified.
 ## Finite datagram commands (1B.7)
 
 The nested commands below use a new transport/session for each invocation. They
-keep the existing initialization order, app target 3, version, dependencies,
-and the four older command schemas. Put business options after the leaf name:
+use the same USB initialization as `info` and `watch`, including the Heltec
+completion query on macOS. The app target is 3. Put business options after the leaf name:
 
 ```text
 meshctl datagram send [options]

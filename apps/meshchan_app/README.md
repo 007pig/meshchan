@@ -8,7 +8,7 @@ Navigation, rebuilds, focus and minimization do not reopen storage or recover ag
 The public core packages and CLI remain pure Dart. The application uses the same
 root Pub lockfile; do not resolve a separate member lockfile.
 
-The current Release build candidate is `0.1.0-rc.1+8`; see the
+The current Release build candidate is `0.1.0-rc.1+9`; see the
 [version input contract](../../docs/development.md#product-version-and-native-identity-1e2).
 Its RC identity does not inherit historical hardware acceptance.
 The historical complete `0.1.0-beta.1+5` Release has
@@ -240,9 +240,9 @@ open -n "$MESHCHAN_BUILD_ROOT/Derived/Build/Products/Release/Meshchan.app" \
 
 Only macOS platform files are generated. The minimum target is macOS 12.0.
 The product is `Meshchan`, Bundle identifier `org.meshchan.meshchan`. The package
-version is `0.1.0-rc.1+8`. Tracked `Configs/Version.xcconfig` supplies Apple's
-numeric `0.1.0` / `8` and the full `MeshchanProductVersion`. The standard About
-panel displays `0.1.0-rc.1` and build `8`. Native preflight rejects conflicting
+version is `0.1.0-rc.1+9`. Tracked `Configs/Version.xcconfig` supplies Apple's
+numeric `0.1.0` / `9` and the full `MeshchanProductVersion`. The standard About
+panel displays `0.1.0-rc.1` and build `9`. Native preflight rejects conflicting
 Flutter inputs; actual plist and compiled runtime are checked separately.
 The previous build 3 observed short version was `0.1.0.1`, build `3`; its Dart
 build defines retained `0.1.0-beta.1` and `3`. Build 4 was independently observed
@@ -449,12 +449,20 @@ initialization budget in milliseconds. Raw invalid input is retained. Check
 freezes the path/options; edits and selection changes affect only the next check.
 These values are neither profile fields nor settings and require no final Save.
 
-Each Check constructs a fresh `SerialTransport` and `MeshCoreSession`, subscribes
-to session events before calling `connect()` once, and sends only the existing
-DEVICE_QUERY (app target 3) and APP_START (`Meshchan`) initialization pair. Opening
-and configuration can reset some boards, and initialization changes device-side
-session state. It is not a passive read. No inbox, PING, RF configuration,
-recording, history entry, retry, reconnect or extra probe is involved.
+Each Check constructs a fresh `MeshCoreSession` and opens its App-owned USB
+transport once after subscribing to session events. The session requests
+DEVICE_QUERY (app target 3) and APP_START (`Meshchan`). The App sends a
+completion query after each command. On macOS, the shared USB transport
+recognizes Heltec V4.3 OLED by its USB VID/PID and a decoded DEVICE_INFO. It
+can synchronize past a bounded startup prefix and advance after a single
+valid DEVICE_INFO. It completes initialization after SELF_INFO and a
+following DEVICE_INFO. The installed CLI uses the same compatibility path,
+with one initial query. Existing request and initialization deadlines apply.
+Set `MESHCHAN_USB_INITIALIZATION_TRACE=1` in the process environment to write
+startup counts and failure categories as JSON to stderr.
+Port opening and configuration can reset some boards, and initialization
+changes device-side session state. Check uses no inbox reads, PING, RF
+configuration, diagnostic recording, or retries.
 
 Start acknowledges admission quickly. Cancel targets that check's host ID and
 acknowledges intent separately from worker application and resource release.
@@ -497,17 +505,16 @@ required. Preview resolves saved parameters without accessing hardware. Click
 **Start and record** to capture the request and selected path; the worker resolves
 again, freezes the effective parameters and calls public `CoreStorage.record()`.
 The core commits registration before invoking a fresh lazy transport factory.
-The current candidate records `0.1.0-rc.1+8`, using the source identity checked
+The current candidate records `0.1.0-rc.1+9`, using the source identity checked
 against manifests and raw native build inputs, including direct Dart processes.
 Historical runs retain their original app/build version.
 
-Build 4 applies a finite USB initialization compatibility sequence in the worker:
-DEVICE_QUERY, DEVICE_QUERY, APP_START, DEVICE_QUERY. It requires all extra
-DEVICE_INFO replies as well as the original SELF_INFO, uses one receive stream
-and preserves the original request/init deadlines. After initialization normal
-commands pass through once without additional queries. This is not an automatic
-reconnect/RF retry or permission to operate a hinted device. Actual current
-hardware results and limitations are in the beta validation record.
+Recorded diagnostics use the same App USB initialization wrapper as Check, a
+compatibility sequence introduced in Beta build 4 and retained in RC build 8.
+After initialization normal commands pass through once without additional
+queries. The historical Beta validation records preserve their tested cuts and
+outcomes. See the [host hardware workflow](../../docs/testing.md#finite-device-checks-1d6)
+for current checks.
 
 Cancel requests cancellation of that attempt only. It does not pause offline
 editing, retract transmission or release the device gate. Navigation retains the

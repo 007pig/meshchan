@@ -9,8 +9,8 @@ update dependencies to make a check pass. This recipe does not rebuild the SDK.
 
 The source version decision is `Runner/Configs/Version.xcconfig`, checked against
 all four members, internal constraints, constants and native metadata. Current
-products are App `0.1.0-rc.1+8` and CLI `0.1.0-rc.1`, Apple short `0.1.0`, build
-string `8`. Rebuilding the same inputs does not allocate a build number.
+products are App `0.1.0-rc.1+9` and CLI `0.1.0-rc.1`, Apple short `0.1.0`, build
+string `9`. Rebuilding the same inputs does not allocate a build number.
 
 For review fixes to the build or verification tools, run the unit tests that
 cover the change. Complete the applicable real rebuilds, product checks, runtime
@@ -44,7 +44,7 @@ Run from the repository root:
 Normal builds require a clean working tree. During implementation, add
 `--allow-dirty` explicitly; the receipt records Git status, commit, actual source
 hashes and helper hashes. This is engineering evidence, not a frozen release
-commit. Optional `--expected-version 0.1.0-rc.1 --app-build 8` asserts the source
+commit. Optional `--expected-version 0.1.0-rc.1 --app-build 9` asserts the source
 decision; these flags never edit source or override Flutter version inputs.
 For a clean build, the entry compares source bytes and executable modes with
 the recorded Git tree. Each first-party compilation input must match this

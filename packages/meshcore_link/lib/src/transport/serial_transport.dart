@@ -1,10 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import '../protocol/companion_messages.dart';
 import '../protocol/serial_framing.dart';
 import '../serial_ports.dart';
+import '../session/meshcore_session.dart' show meshCoreSessionAppTargetVersion;
 import 'companion_transport.dart';
 import 'native_serial_connection.dart';
+
+part 'usb_initialization_transport.dart';
+part 'usb_startup_sync.dart';
 
 enum SerialTransportFailureKind {
   platform,
@@ -57,8 +64,9 @@ final class SerialTransport implements CompanionTransport {
     this.writeTimeout,
     this._createConnection,
     this._operatingSystem,
-    this._createClock,
-  ) {
+    this._createClock, {
+    this._startup,
+  }) {
     _initializeStream();
   }
 
@@ -69,7 +77,10 @@ final class SerialTransport implements CompanionTransport {
   final String? _operatingSystem;
   final SerialWriteClock Function() _createClock;
   final _decoder = SerialFrameDecoder();
+  _UsbStartupSync? _startup;
   late final StreamController<Uint8List> _frames;
+  int _emittedFrames = 0;
+  int? _completionReplyAfter;
   _State _state = _State.created;
   bool _listening = false;
   bool _sending = false;
@@ -181,18 +192,40 @@ final class SerialTransport implements CompanionTransport {
 
   void _receive(Uint8List chunk) {
     if (_state != _State.open && _state != _State.opening) return;
+    final startup = _startup;
+    if (startup != null) {
+      startup.receive(this, chunk);
+      return;
+    }
+    _decode(chunk);
+  }
+
+  void _decode(Uint8List chunk) {
     final result = _decoder.add(chunk);
     for (final frame in result.frames) {
-      _frames.add(frame);
+      _emitFrame(frame);
     }
     if (result.error case final error?) {
       _terminate(_protocolFailure(error), StackTrace.current);
     }
   }
 
+  void _emitFrame(Uint8List frame) {
+    _emittedFrames++;
+    _frames.add(frame);
+  }
+
+  bool _isAfterCompletionQuery(int frameNumber) {
+    final cutoff = _completionReplyAfter;
+    return cutoff != null && frameNumber > cutoff;
+  }
+
   void _readerDone() {
     if (_state != _State.open && _state != _State.opening) return;
-    final error = _decoder.finish().error;
+    if (_startup?.deferredUnsupportedFrame case final frame?) {
+      _emitFrame(frame);
+    }
+    final error = _startup?.firstError ?? _decoder.finish().error;
     _terminate(
       error == null
           ? SerialTransportFailure(
@@ -212,7 +245,12 @@ final class SerialTransport implements CompanionTransport {
       );
 
   @override
-  Future<void> sendFrame(Uint8List content) async {
+  Future<void> sendFrame(Uint8List content) => _sendFrame(content);
+
+  Future<void> _sendFrame(
+    Uint8List content, {
+    bool completionQuery = false,
+  }) async {
     if (_state != _State.open) {
       throw StateError('The serial connection is not open.');
     }
@@ -254,6 +292,19 @@ final class SerialTransport implements CompanionTransport {
           );
         }
       }
+      // Arm after every query byte is accepted. A short write can yield to
+      // the reader, and the caller may change its original buffer meanwhile.
+      if (bytes.length == 5 &&
+          bytes[3] == 0x16 &&
+          bytes[4] == meshCoreSessionAppTargetVersion) {
+        _startup?.arm();
+      }
+      if (completionQuery) {
+        // Exclude enqueued frames and any frame whose marker already arrived.
+        // The USB wrapper counts frames on delivery in the same wire order.
+        _completionReplyAfter =
+            _emittedFrames + (_decoder.hasPartialFrame ? 1 : 0);
+      }
     } on SerialTransportFailure catch (failure, stack) {
       _terminate(failure, stack);
       await _closeIgnoringFailure();
@@ -275,6 +326,11 @@ final class SerialTransport implements CompanionTransport {
   void _terminate(SerialTransportFailure failure, StackTrace stack) {
     if (_state == _State.closing || _state == _State.closed) return;
     _primary = failure;
+    _startup?.report('transportError', {
+      'transportKind': failure.kind.name,
+      if (failure.protocolError case final error?)
+        'framingKind': error.kind.name,
+    });
     if (_listening) _frames.addError(failure, stack);
     _requestClose();
   }
@@ -288,6 +344,8 @@ final class SerialTransport implements CompanionTransport {
   @override
   Future<void> close() {
     if (_closing case final closing?) return closing;
+    _startup?.reportClose();
+    _startup = null;
     _state = _State.closing;
     return _closing = _cleanup();
   }

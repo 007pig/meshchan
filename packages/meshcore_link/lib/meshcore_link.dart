@@ -84,4 +84,9 @@ export 'src/session/meshcore_session.dart'
         MeshCoreSessionFailed;
 export 'src/transport/companion_transport.dart' show CompanionTransport;
 export 'src/transport/serial_transport.dart'
-    show SerialTransport, SerialTransportFailure, SerialTransportFailureKind;
+    show
+        SerialTransport,
+        SerialTransportFailure,
+        SerialTransportFailureKind,
+        UsbInitializationTransport,
+        createUsbCompanionTransport;

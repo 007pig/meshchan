@@ -9,7 +9,6 @@ import 'build_version.dart';
 import 'protocol.dart';
 import 'recording_adapter.dart';
 import 'device_check.dart';
-import 'usb_initialization_transport.dart';
 
 /// Production entry deliberately captures no host resources or closures.
 void runtimeWorkerEntry(WorkerBootstrap bootstrap) {

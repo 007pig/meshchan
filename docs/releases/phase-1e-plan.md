@@ -179,8 +179,8 @@ The asset names and evidence below define the engineering release handoff.
 | Deliverable | Responsibility |
 | --- | --- |
 | Local engineering DMG (1E.9 used `Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg`) | Complete local candidate directory with the App, full CLI (`bin/meshctl` plus native libraries), licenses, corresponding source, and rebuild and replacement instructions. The outer volume includes an engineering README, DMG tool source, and a payload inventory. Build records verify actual architecture of executables/libraries; filename alone is insufficient. |
-| `SHA256SUMS` | SHA-256 of the final DMG and other immutable download attachments, excluding the checksum file itself. |
-| `build-info.json` | Full source commit, product version, App build and Apple versions, root lockfile identity/hash, actual Flutter/Dart/Python/Xcode/compiler/SDK versions, architectures, build recipe, and product inventory reference. |
+| Checksums and asset manifest | Preserve the original DMG `SHA256SUMS`. The final `RELEASE-SHA256SUMS` covers the proposed attachments and `release-manifest.json`, with its own entry excluded. |
+| Build identity | Record the full source commit, product version, App build and Apple versions, root lock hash, actual toolchain, architectures, recipe, and inventory reference. Keep original path-bearing build evidence private and use a clearly identified public summary. |
 | License and source materials | Maintainer-selected project license, third-party notices for actual App and CLI contents, and applicable native/runtime source, build, and relinking materials with provenance. Separate attachments are permitted. |
 | User instructions | Installation, CLI layout/use, supported macOS/USB scope, Beta upgrade and data directory/ownership behavior, known limits, and support/reporting instructions. |
 | Acceptance summary | Gate results, exact test environments and limitations, bound to frozen compile source, original packaging inputs, current signing tools, DMG tools, accepted local candidate, and final DMG/asset hashes. Evidence can be retained separately with stable references; raw private evidence is not a release attachment. |
@@ -237,16 +237,16 @@ route uses locally available coding and image tools and an owned VM workspace.
 | Project license | Closed in 1E.3: GPL-3.0-only; Copyright (c) 2026 Meshchan Contributors. Root LICENSE/COPYRIGHT and the approved decision record preserve 007pig's authority/no-exceptions confirmation. | Maintainer / 1E.3 | License decision closed; GPL corresponding-source and later release gates remain. |
 | App and CLI third-party materials | Beta preserves notices for its graph; [earlier material gaps](phase-1c-dev3.md#materials-and-distribution-limits) and 1D.11 retain native source/build/relinking and AOT runtime correspondence work. Use the selected package receipts to bind actual Flutter/App and CLI coverage to the retained files. | 1E.3, integrated in 1E.5 | License gate and final distributable contents. |
 | Developer ID, Apple Team, secure timestamps, notarization, and stapling | Inapplicable to the current profile. Deferred until explicitly requested by the maintainer. | Future official route | None for the engineering release. |
-| Engineering macOS scope and clean test coverage | The independent first install and separate Beta upgrade passed on macOS 27.2.1 (26B131) arm64. Static floors are 12.0 in the App plist, 13.0 for the nested App code, and 14.0 for the full App and CLI. | Maintainer / 1E.9, carried forward in 1E.11 | Engineering installation gate is complete for the measured system. |
+| Engineering macOS scope and clean test coverage | The independent first install and separate Beta upgrade of Build 8 passed on macOS 27.2.1 (26B131) arm64. The selected Build 9 has extracted offline runtime and a separate host installation for USB/RF. | Maintainer / 1E.9, carried forward in 1E.11 | Candidate-specific clean download, install, and upgrade evidence for Build 9 remains open. |
 | Build, local signing, and retention environments | Consume the frozen 1E.4 build and accepted 1E.5 package. Record actual signing and DMG tools, the checked VM, source-specific CI, and artifact transfer and retention. | 1E.4–1E.8 | Traceable builds, local acceptance, and preservation of the accepted candidate. |
 
 ## Remaining steps and handoff
 
-The [engineering handoff](#1e6-and-1e7-engineering-handoff) identifies the
-accepted 1E.6 and 1E.7 outputs. See the
-[1E.8 validation record](../validation/phase-1e8-ci-retention.md) for the
-source-specific CI, the sealed and independently restored build 8, and
-the exact engineering image for 1E.9.
+The [1E.11 handoff](phase-1e11-release-materials.md) identifies the selected
+Build 9 image, source, and publication blockers. The historical
+[engineering handoff](#1e6-and-1e7-engineering-handoff) and
+[1E.8 validation record](../validation/phase-1e8-ci-retention.md) preserve the
+sealed and independently restored Build 8 used for 1E.9.
 
 | Step | Goal | Main dependencies and expected output |
 | --- | --- | --- |
@@ -255,9 +255,9 @@ the exact engineering image for 1E.9.
 | 1E.7 | [Build and independently accept the complete engineering DMG](phase-1e7-dmg.md). | Accepted local candidate, full image payload, read-only mount and complete extraction, owned detach, limited CLI and VM App runtime from the extracted copy, and final integrity and SHA-256. |
 | 1E.8 | [Provide CI, controlled engineering handoff, and evidence retention](phase-1e8-ci-retention.md). | Source-specific CI, repeatable entry point, and immutable retention of the accepted image, App/CLI, materials, checksums, and evidence. |
 | 1E.9 | [Accept engineering downloads, installation, and Beta upgrade](phase-1e9-install-upgrade.md). | Complete. The [validation record](../validation/phase-1e9-install-upgrade.md) covers the independent first install and the separate Beta build 5 upgrade on macOS 27.2.1 (26B131) arm64. Both used the pinned RC build 8 DMG. |
-| 1E.10 | Run limited real USB/RF acceptance on the final package. | Explicit device identity and selected-device Check, a finite exact round trip, Cancel or normal Quit, and verified resource and process release. Preserve known limits. |
-| 1E.11 | Finalize engineering release documentation and materials. | Local signing and notarization status, trusted source and checksum, tested installation and upgrade, full CLI, data directory and ownership, library replacement, and known limits. |
-| 1E.12 | Publish engineering assets and verify actual downloads. | Upload the accepted bytes and matching source and materials to GitHub Releases under the actual selected version and corresponding source tag. Compare actual downloads to accepted SHA-256 values. |
+| 1E.10 | Run limited real USB/RF acceptance on the final package. | The [Build 9 hardware record](../validation/phase-1e10-hardware-acceptance.md) binds the reviewed host results to the `01cfacb7` image and preserves earlier failures. |
+| 1E.11 | Finalize engineering release documentation and materials. | The [handoff](phase-1e11-release-materials.md) and [validation](../validation/phase-1e11-release-materials.md) record the proposed asset set, verified material locations, and unresolved distribution gates. |
+| 1E.12 | Publish engineering assets and verify actual downloads. | Blocked. Close the candidate-specific gates from 1E.11 before uploading matching bytes and corresponding source under the actual RC tag. Verify actual downloads afterward. |
 
 License materials and user documentation may advance in parallel. Prepare
 product changes, embedded materials, and user documentation before freezing the
@@ -297,14 +297,14 @@ The [package entry](phase-1e5-package.md) carries the complete accepted App,
 CLI, and materials through staging and actual extraction. The
 [package validation record](../validation/phase-1e5-package.md) identifies the
 staging paths, immutable package evidence, and runtime acceptance for 1E.6.
-The selected staging root is
+The historical Build 8 staging root is
 `build/phase-1e5/run-002/stage/Meshchan-0.1.0-rc.1-macos-arm64/`.
 Use an owned copy for local ad hoc signing and bind the resulting bytes and
 acceptance evidence in new receipts.
 
 ## 1E.6 and 1E.7 engineering handoff
 
-The selected build 8 candidate passed [independent local signing acceptance](../validation/phase-1e6-signing.md#independent-acceptance-and-1e7-handoff).
+The historical Build 8 candidate passed [independent local signing acceptance](../validation/phase-1e6-signing.md#independent-acceptance-and-1e7-handoff).
 The complete [engineering DMG passed independent acceptance](../validation/phase-1e7-dmg.md#independent-acceptance)
 after read-only mount, extraction, detach, and limited runtime from the
 extracted copy. 1E.8 consumes the exact accepted image, checksum, and

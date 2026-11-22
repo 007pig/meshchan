@@ -30,7 +30,7 @@ Future<void> main(List<String> args) async {
     final storage = await CoreStorage.open(dataDirectory: directory);
     final runs = (await storage.history.query()).items;
     for (final run in runs) {
-      require(run.appVersion == '0.1.0-rc.1+9', 'app version');
+      require(run.appVersion == '0.1.0-rc.1+10', 'app version');
       require(
         run.result is PingSummary || run.result is RespondSummary,
         'typed stored result',
@@ -265,7 +265,7 @@ Future<void> main(List<String> args) async {
       runs.single.recordState == DiagnosticRecordState.settled,
       'settled history',
     );
-    require(runs.single.appVersion == '0.1.0-rc.1+9', 'actual app version');
+    require(runs.single.appVersion == '0.1.0-rc.1+10', 'actual app version');
   }
   await storage.close();
   stdout.writeln(

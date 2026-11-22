@@ -2,5 +2,5 @@
 /// Flutter's platform-normalized build name is not the product version.
 /// Version overrides require an explicit source decision and synchronized fields.
 const String appBuildName = '0.1.0-rc.1';
-const String appBuildNumber = '9';
+const String appBuildNumber = '10';
 const String appVersion = '$appBuildName+$appBuildNumber';

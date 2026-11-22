@@ -11,7 +11,7 @@ import regression_1d10 as runner
 import smoke_cli
 
 RC = '0.1.0-rc.1'
-APP_BUILD = 9
+APP_BUILD = 10
 
 
 class CandidateVersionTest(unittest.TestCase):

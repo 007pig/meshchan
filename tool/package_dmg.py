@@ -16,7 +16,7 @@ import build_release as build
 import package_dmg_image as disk
 import package_release as package
 from package_release_vm import checked_vm_configuration
-from release_materials import controlled_environment, digest, encoded, product_inventory, require_material_file, sha
+from release_materials import controlled_environment, digest, encoded, product_inventory, require_material_file, safe, sha
 from release_package_archive import check_payload, metadata_observations, new_extraction_root, open_archive, prefixed
 import release_signed_runtime as runtime
 import release_signing as signing
@@ -30,6 +30,19 @@ SOURCES = tuple(sorted(set(sign_release.SIGNING_SOURCES) | {
 }))
 IMAGE_MANIFEST = 'image-payload.json'
 SIGNED_MANIFEST = 'signed-product-info.json'
+MATERIAL_MANIFEST = 'materials/materials-manifest.json'
+PUBLIC_PAYLOAD = runtime.PUBLIC_PAYLOAD
+PUBLIC_MATERIAL_DIRS = ('licenses', 'rebuild', 'source-materials')
+PUBLIC_MATERIAL_FILES = ('THIRD_PARTY_NOTICES.md',)
+PUBLIC_PRODUCT_DIRS = ('Meshchan.app', 'meshctl', 'signing-materials', 'signing-source', 'packaging-source')
+PUBLIC_PRODUCT_README = b"""# Meshchan macOS engineering release
+
+Keep Meshchan.app and the complete meshctl directory with these materials.
+Both products use local ad hoc signatures. The public signed-product-info.json
+binds the exact distributable files, license materials, and corresponding
+source to the locally accepted product. See signing-materials for the user
+library replacement instructions.
+"""
 SIGNATURE_POLICY = {
     'signingProfile': PROFILE,
     'productCodeSignature': 'AD_HOC',
@@ -74,6 +87,20 @@ class Layout:
     @property
     def inventory(self):
         return self.manifest['inventory'] | {IMAGE_MANIFEST: package.bytes_entry(encoded(self.manifest))}
+
+
+@dataclass(frozen=True)
+class PublicCandidate:
+    info: dict
+    generated: dict[str, bytes]
+
+    @property
+    def manifest(self):
+        return self.generated[SIGNED_MANIFEST]
+
+    @property
+    def inventory(self):
+        return sign_release.manifest_inventory(self.info, self.manifest)
 
 
 def output_path(path):
@@ -127,17 +154,67 @@ def tool_identity(inputs):
                                        '--', *SOURCES).splitlines()}
 
 
-def layout(candidate_inventory, info, args, sources, identity):
+def public_candidate(info, full, materials_bytes, private_signed_pin):
+    """Project a separately verified signed candidate without copying local receipts."""
+    materials = json.loads(materials_bytes, object_pairs_hook=signing.policy_object)
+    upstream = info['upstream']
+    package.verify_report_fields(full[MATERIAL_MANIFEST], {
+        'type': 'file', 'sha256': sha(materials_bytes), 'size': len(materials_bytes),
+    }, 'Original signed material manifest bytes')
+    package.equal(upstream['materialsManifestSha256'], sha(materials_bytes), 'Original material manifest pin')
+    package.verify_report_fields(materials, {
+        'sourceCommit': upstream['sourceCommit'], 'productVersion': info['identity']['productVersion'],
+        'appBuild': info['identity']['appBuild'], 'openGates': [],
+    }, 'Original accepted material identity')
+    material_files = {}
+    for name, entry in materials['materials'].items():
+        member = Path(safe(name))
+        if member.parts[0] not in PUBLIC_MATERIAL_DIRS and name not in PUBLIC_MATERIAL_FILES:
+            if member.parts[0] != 'evidence':
+                raise ValueError('Unclassified signed release material: '+name)
+            continue
+        pin = {key: entry[key] for key in ('size', 'sha256')}
+        package.verify_report_fields(full['materials/'+name], {'type': 'file', **pin},
+                                     'Public material inventory '+name)
+        material_files[name] = pin
+    materials_public = {
+        'formatVersion': 1, 'payloadProfile': PUBLIC_PAYLOAD,
+        'sourceCommit': upstream['sourceCommit'], 'productVersion': materials['productVersion'],
+        'appBuild': materials['appBuild'], 'lockSha256': materials['lockSha256'],
+        'privateMaterialManifestSha256': upstream['materialsManifestSha256'],
+        'materials': material_files,
+    }
+    inventory = {name: entry for name, entry in full.items()
+                 if name in ('.', 'materials') or Path(safe(name)).parts[0] in PUBLIC_PRODUCT_DIRS}
+    for name in material_files:
+        member = Path(safe('materials/'+name))
+        inventory[member.as_posix()] = full[member.as_posix()]
+        inventory.update({parent.as_posix(): full[parent.as_posix()] for parent in member.parents})
+    generated = {MATERIAL_MANIFEST: encoded(materials_public), 'README.md': PUBLIC_PRODUCT_README}
+    inventory.update({name: package.bytes_entry(data) for name, data in generated.items()})
+    public_info = {
+        **{key: info[key] for key in ('formatVersion', 'signingProfile', 'identity', 'policy',
+                                     'signature', 'inventoryExclusions')},
+        'payloadProfile': PUBLIC_PAYLOAD,
+        'compiledSource': upstream['sourceCommit'],
+        'privateSignedInfoSha256': private_signed_pin,
+        'payloadInventory': inventory,
+    }
+    return PublicCandidate(public_info, {**generated, SIGNED_MANIFEST: encoded(public_info)})
+
+
+def layout(candidate_inventory, info, args, sources, identity, *, public=None):
     top, filename, volume_name = volume_names(info)
     outliers = {**sources, 'README-engineering.md': README, 'dmg-source/README.md': SOURCE_README}
-    inventory = {'.': package.DIR, **prefixed(top, candidate_inventory)}
+    image_candidate = candidate_inventory if public is None else public.inventory
+    inventory = {'.': package.DIR, **prefixed(top, image_candidate)}
     for name, data in outliers.items():
         path = Path(name)
         for directory in path.parents:
             inventory.setdefault(directory.as_posix(), package.DIR)
         mode = identity['inputs'][name.removeprefix('dmg-source/')]['mode'] if name in sources else 0o644
         inventory[name] = {**package.bytes_entry(data), 'mode': mode}
-    return Layout({
+    manifest = {
         'formatVersion': 1, **SIGNATURE_POLICY, 'identity': info['identity'],
         'upstream': info['upstream'], 'signingTool': info['signingTool'], 'dmgTool': identity,
         'signedInfoSha256': args.candidate_sha256, 'localAcceptanceSha256': args.acceptance_sha256,
@@ -148,14 +225,33 @@ def layout(candidate_inventory, info, args, sources, identity):
             'rootMode': package.DIR['mode'], 'ownerPresentation': 'Observed separately from payload modes',
             'systemManagedExtendedAttributes': ['com.apple.provenance'], 'extraVolumeEntries': [],
         },
-    }, outliers)
+    }
+    if public is not None:
+        manifest.update({
+            'payloadProfile': PUBLIC_PAYLOAD,
+            'upstream': {key: info['upstream'][key] for key in ('sourceCommit', 'buildRecipeVersion',
+                                                               'buildInfoSha256', 'materialsManifestSha256')},
+            'privateSignedInfoSha256': args.candidate_sha256,
+            'signedInfoSha256': sha(public.manifest),
+        })
+    return Layout(manifest, outliers)
 
 
-def stage(staging, candidate, expected):
+def stage(staging, candidate, expected, *, public=None):
     staging.mkdir(mode=0o755)
     staging.chmod(expected.inventory['.']['mode'])
-    shutil.copytree(candidate, staging/expected.manifest['candidatePath'], symlinks=True, copy_function=shutil.copy)
-    files = {**expected.outliers, IMAGE_MANIFEST: encoded(expected.manifest)}
+    top = expected.manifest['candidatePath']
+    generated = {}
+    ignore = None
+    if public is not None:
+        selected = public.inventory.keys() - public.generated.keys()
+
+        def ignore(directory, names):
+            return [name for name in names if (Path(directory)/name).relative_to(candidate).as_posix() not in selected]
+
+        generated = {f'{top}/{name}': data for name, data in public.generated.items()}
+    shutil.copytree(candidate, staging/top, symlinks=True, copy_function=shutil.copy, ignore=ignore)
+    files = {**expected.outliers, **generated, IMAGE_MANIFEST: encoded(expected.manifest)}
     for name, data in files.items():
         path = staging/name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +269,7 @@ def check_layout(root, expected):
     return metadata_observations(root, expected.inventory)
 
 
-def mounted_layout(root, full, info, args, entries, contents):
+def mounted_layout(root, full, info, args, entries, contents, *, public=None):
     # The manifest's commit is recorded at image creation. A later checkout
     # can verify the same exact source bytes even if those files were committed
     # after image creation. Other manifest fields are independently rebuilt.
@@ -186,7 +282,8 @@ def mounted_layout(root, full, info, args, entries, contents):
         raise ValueError('Malformed DMG tool provenance')
     package.equal(encoded(entries), encoded(tools['inputs']), 'DMG source inputs used to create the image')
     expected = layout(full, info, args, contents,
-                      {'inputs': entries, 'gitCommit': tools['gitCommit'], 'workingTree': tools['workingTree']})
+                      {'inputs': entries, 'gitCommit': tools['gitCommit'], 'workingTree': tools['workingTree']},
+                      public=public)
     package.equal(encoded(expected.manifest), data, 'Reconstructed image payload manifest')
     return expected
 
@@ -259,7 +356,7 @@ def bind_runtime(output, evidence, candidate, info, manifest, vm, runner, record
 
 
 def accept_image(image, stamp, workspace, evidence, full, info, args, entries, contents, runner, record,
-                 *, policy, expected=None):
+                 *, policy, expected=None, public=None):
     record['imageIntegrityStatus'] = 'RUNNING'
     record['imageVerification'] = disk.verify_image(runner, image, stamp)
     record['imageIntegrityStatus'] = 'PASS'
@@ -267,7 +364,7 @@ def accept_image(image, stamp, workspace, evidence, full, info, args, entries, c
     extracted = workspace/'extracted payload'
     with disk.mounted_image(runner, image, stamp, mount, volume_names(info)[2], record):
         record['extractionStatus'] = 'RUNNING'
-        mounted = mounted_layout(mount, full, info, args, entries, contents)
+        mounted = mounted_layout(mount, full, info, args, entries, contents, public=public)
         if expected is not None:
             package.equal(expected, mounted, 'Mounted manifest and staged manifest')
         record['mountMetadata'] = check_layout(mount, mounted)
@@ -323,6 +420,10 @@ def run(args):
         root, args.candidate_sha256, receipt, args.acceptance_sha256)
     original = sign_release.accepted_upstream(info)
     full = sign_release.manifest_inventory(info, manifest)
+    public = (public_candidate(info, full, require_material_file(root, MATERIAL_MANIFEST).read_bytes(),
+                               args.candidate_sha256)
+              if getattr(args, 'public_payload', False) else None)
+    image_inventory = full if public is None else public.inventory
     local_workspace = package.real_directory(package.canonical(local_report['workspace']))
     workspace, vm = protect_inputs(output, args, original, root, receipt, local_workspace, image)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -345,6 +446,9 @@ def run(args):
     }
     if not create:
         record['selectedImage'] = {'path': str(image), 'sha256': args.image_sha256}
+    if public is not None:
+        record['payloadProfile'] = PUBLIC_PAYLOAD
+        record['publicSignedInfoSha256'] = sha(public.manifest)
     build.write(receipt_path, record)
     with build.DeferredInterrupts() as signals:
         runner = build.Runner(output, evidence, {'status': 'RUNNING', 'steps': []},
@@ -375,10 +479,10 @@ def run(args):
             if create:
                 record['stageStatus'] = 'RUNNING'
                 identity = tool_identity(entries)
-                expected = layout(full, info, args, contents, identity)
+                expected = layout(full, info, args, contents, identity, public=public)
                 record['dmgTool'] = identity
                 staging = output/'staging'
-                record['stageMetadata'] = stage(staging, root, expected)
+                record['stageMetadata'] = stage(staging, root, expected, public=public)
                 record['stageStatus'] = 'PASS'
                 image = output/filename
                 stamp = disk.create_image(runner, staging, image, volume)
@@ -389,17 +493,19 @@ def run(args):
                                'filesystem': disk.FILESYSTEM, 'volumeName': volume}
             mounted, extracted, extracted_stamp, signatures = accept_image(
                 image, stamp, workspace, evidence, full, info, args, entries, contents, runner, record,
-                policy=policy, expected=expected)
+                policy=policy, expected=expected, public=public)
             record['dmgTool'] = mounted.manifest['dmgTool']
             extracted_candidate = extracted/top
             record['staticStatus'] = 'RUNNING'
-            static = static_products(extracted_candidate, original, full, info, signatures, runner)
+            static = static_products(extracted_candidate, original, image_inventory, info, signatures, runner)
             record['staticReport'] = sign_release.publish_json(output, evidence/'static-products.json', static)
             record['staticStatus'] = 'PASS'
             if not create:
                 package.require_extraction_root(extracted, extracted_stamp)
                 check_layout(extracted, mounted)
-                check_runtime = bind_runtime(output, evidence, extracted_candidate, info, manifest,
+                image_info = info if public is None else public.info
+                image_manifest = manifest if public is None else public.manifest
+                check_runtime = bind_runtime(output, evidence, extracted_candidate, image_info, image_manifest,
                                              vm, runner, record, workspace=workspace)
             else:
                 sums = output/'SHA256SUMS'
@@ -455,6 +561,8 @@ def main():
         command.add_argument('--output', type=Path, required=True)
         command.add_argument('--workspace-parent', type=Path, required=True)
         command.add_argument('--vm-config', type=Path, required=True)
+        command.add_argument('--public-payload', action='store_true',
+                             help='Use the independently reproducible public image layout without private receipts')
         command.add_argument('--timeout', type=build.command_timeout, default=900)
         if name == 'check':
             command.add_argument('--image', type=Path, required=True)

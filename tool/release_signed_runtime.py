@@ -57,6 +57,9 @@ def image_report(data, executable, library, executable_sha, library_sha, exit_co
             'library': str(library), 'librarySha256': library_sha}
 
 
+PUBLIC_PAYLOAD = 'public-engineering-v1'
+
+
 def signed_info(path, pin):
     path = canonical(path)
     raw = require_material_file(path.parent, path.name).read_bytes()

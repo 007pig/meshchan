@@ -9,8 +9,12 @@ update dependencies to make a check pass. This recipe does not rebuild the SDK.
 
 The source version decision is `Runner/Configs/Version.xcconfig`, checked against
 all four members, internal constraints, constants and native metadata. Current
-products are App `0.1.0-rc.1+9` and CLI `0.1.0-rc.1`, Apple short `0.1.0`, build
-string `9`. Rebuilding the same inputs does not allocate a build number.
+products are App `0.1.0-rc.1+10` and CLI `0.1.0-rc.1`, Apple short `0.1.0`, build
+string `10`. Rebuilding the same inputs does not allocate a build number.
+The commands below illustrate a local build. Use the
+[1E.11 handoff](phase-1e11-release-materials.md) to identify the already
+accepted image and its original inputs. A new distributable App with changed
+contents requires a higher build number.
 
 For review fixes to the build or verification tools, run the unit tests that
 cover the change. Complete the applicable real rebuilds, product checks, runtime
@@ -44,7 +48,7 @@ Run from the repository root:
 Normal builds require a clean working tree. During implementation, add
 `--allow-dirty` explicitly; the receipt records Git status, commit, actual source
 hashes and helper hashes. This is engineering evidence, not a frozen release
-commit. Optional `--expected-version 0.1.0-rc.1 --app-build 9` asserts the source
+commit. Optional `--expected-version 0.1.0-rc.1 --app-build 10` asserts the source
 decision; these flags never edit source or override Flutter version inputs.
 For a clean build, the entry compares source bytes and executable modes with
 the recorded Git tree. Each first-party compilation input must match this
@@ -152,7 +156,7 @@ before-build map before executing these commands.
 
 ```text
 # cwd: apps/meshctl; Dart is the selected Flutter SDK's bundled executable
-dart build cli --packages <repo>/.dart_tool/package_config.json --target bin/meshctl.dart --output <run>/cli --depfile <run>/evidence/compiler/cli.d
+dart build cli --packages <repo>/.dart_tool/package_config.json --target lib/src/meshctl.dart --output <run>/cli --depfile <run>/evidence/compiler/cli.d
 # cwd: apps/meshchan_app/macos
 /usr/bin/xcrun xcodebuild -workspace Runner.xcworkspace -scheme Runner -configuration Release -destination generic/platform=macOS -derivedDataPath <run>/app-derived OBJROOT=<run>/app-derived/Build/Intermediates.noindex SYMROOT=<run>/app-derived/Build/Products COMPILER_INDEX_STORE_ENABLE=NO
 ```

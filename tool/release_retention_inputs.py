@@ -769,6 +769,9 @@ def verify_image_record(reader, record, output, info, layout, expected, policy, 
         **dict.fromkeys(('cliStatus', 'vmAppStatus'), 'PASS' if independent else 'NOT_RUN'),
         'residualAttachments': [],
     }
+    if layout.manifest.get('payloadProfile') == dmg.PUBLIC_PAYLOAD:
+        schema.update(payloadProfile=dmg.PUBLIC_PAYLOAD,
+                      publicSignedInfoSha256=layout.manifest['signedInfoSha256'])
     verify_report_fields(record, schema, 'Independent DMG acceptance' if independent else 'DMG creation')
     if independent:
         verify_report_fields(record, {'selectedImage': {key: expected['image'][key] for key in ('path', 'sha256')}},
@@ -879,7 +882,13 @@ def accepted_image(reader, refs, info, full):
     contents = {'dmg-source/'+name: reader.bytes(snapshot/name, entry['sha256'])
                 for name, entry in tools['inputs'].items()}
     args = SimpleNamespace(candidate_sha256=manifest_pin, acceptance_sha256=receipt_pin)
-    layout = dmg.layout(full, info, args, contents, tools)
+    profile = accepted.get('payloadProfile')
+    public = None
+    if profile is not None:
+        equal(dmg.PUBLIC_PAYLOAD, profile, 'Selected public payload profile')
+        materials = reader.bytes(manifest_path.parent/dmg.MATERIAL_MANIFEST, info['upstream']['materialsManifestSha256'])
+        public = dmg.public_candidate(info, full, materials, manifest_pin)
+    layout = dmg.layout(full, info, args, contents, tools, public=public)
     equal(top, layout.manifest['candidatePath'], 'Accepted DMG product location')
     payload_path = output/'evidence'/dmg.IMAGE_MANIFEST
     if 'image_payload' in refs:

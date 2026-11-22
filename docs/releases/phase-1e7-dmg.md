@@ -1,5 +1,9 @@
 # Phase 1E.7 engineering DMG
 
+The sample run paths and acceptance references in this guide come from the
+Build 8 handoff. For the selected Build 9 image and its pins, use the
+[1E.11 handoff](phase-1e11-release-materials.md).
+
 The [current release contract](phase-1e-plan.md) selects local ad hoc signing
 for the complete Meshchan App and CLI. The read-only, compressed UDIF DMG
 uses the `UDZO` format and an HFS+ volume. The image is unsigned and the
@@ -32,6 +36,13 @@ separate from candidate paths, caches, user data, and VM runtime paths. The
 commands create their owned working paths below that parent. The example uses
 a private temporary parent. Retain the workspaces referenced by acceptance
 receipts with their evidence.
+
+For a distributable image, pass `--public-payload` in both the create and
+independent check commands. The accepted private signed root remains the
+input. The tool generates an independent public signed-product manifest
+and a public materials inventory from the verified files. Maintainer
+receipts and build paths stay in the original private records. The earlier
+engineering-only layout remains available for rechecking existing images.
 
 ## Create and independently check the image
 
@@ -104,10 +115,15 @@ Preserve any attachment whose ownership cannot be established.
 ## Volume layout and release handoff
 
 The volume contains `README-engineering.md`, `dmg-source/`,
-`image-payload.json`, and the complete accepted candidate directory. The
-candidate includes `Meshchan.app`, the entire `meshctl/` folder, material
-and source archives, signed manifest, and build, packaging, and signing
-provenance. Keep `meshctl/bin/meshctl` with its bundled native libraries.
+`image-payload.json`, and the candidate directory. The candidate contains
+`Meshchan.app`, the entire `meshctl/` folder, license and corresponding-source
+materials, and signing and packaging tools. Keep `meshctl/bin/meshctl` with its
+bundled native libraries. The public layout records
+`payloadProfile: public-engineering-v1`. Its outer manifest binds the public
+signed-product manifest and the digest of the private signed-product manifest.
+Use the public manifest digest with the App and CLI in the copied public
+candidate. Use the private manifest and acceptance receipt to create or check
+the image and to retain the complete release evidence.
 The candidate's `signing-materials/` includes the user library replacement
 guide. The tooling and source records under `dmg-source/` identify the
 independent container tooling and applicable license. The outer inventory

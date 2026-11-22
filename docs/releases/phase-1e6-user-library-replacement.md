@@ -21,8 +21,11 @@ Use the full repository for cross-references in `AGENTS.md` and the release
 guides, or for first-time VM setup. The shipped VM workflow uses a configured
 guest and its existing authorized executor.
 Start with the SHA-256 of its `signed-product-info.json` from the release
-handoff. Use the full signed root, including its original `materials/` and
-signature record, and choose a fresh output directory in an existing parent.
+handoff. For a public engineering DMG, use the public signed manifest's SHA-256
+and the complete signed folder copied from that image. For a private signing
+handoff, use its private signed manifest SHA-256 and complete signed root.
+Keep its `materials/` and signature record, and choose a fresh output
+directory in an existing parent.
 The command below is the CLI and preparation portion of the experiment.
 
 ```sh

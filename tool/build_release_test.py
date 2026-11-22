@@ -535,7 +535,7 @@ exec /usr/bin/git "$@"
             if name in ('cli-build', 'app-build'):
                 self.assertTrue((self.out/'evidence/compilation-input-hashes.json').is_file())
                 if name == 'cli-build':
-                    self.assertEqual(argv[1:], ['build', 'cli', '--packages', package_config, '--target', 'bin/meshctl.dart',
+                    self.assertEqual(argv[1:], ['build', 'cli', '--packages', package_config, '--target', 'lib/src/meshctl.dart',
                                                 '--output', self.out/'cli', '--depfile', self.out/'evidence/compiler/cli.d'])
                 else:
                     self.assertIn('MESHCHAN_BUILD_PYTHON='+sys.executable, argv)
@@ -1999,6 +1999,24 @@ except b.GateInterrupted:
         for name in ('build-info.json.tmp', 'BUILD-INFO.JSON.TMP'):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'new dedicated directory'):
                 b.material_destination(self.out, name)
+
+    def test_path_audit_rejects_build_paths_in_executable_and_nested_library(self):
+        bundle = self.root/'product'
+        names = ('lib/native.dylib', 'bin/program')
+        for name in names:
+            binary = bundle/name
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'package:meshctl/src/meshctl.dart\0/usr/lib/libSystem.B.dylib\0')
+        self.assertEqual(b.audit_macho_paths(bundle, names, self.root), sorted(names))
+        for name, leak in zip(names, (b'file:///Users/example/work/build/native.c',
+                                      os.fsencode(self.root/'source.dart')), strict=True):
+            binary = bundle/name
+            original = binary.read_bytes()
+            binary.write_bytes(original+leak)
+            with self.assertRaisesRegex(ValueError, 'Local build path') as error:
+                b.audit_macho_paths(bundle, names, self.root)
+            self.assertIn(name, str(error.exception))
+            binary.write_bytes(original)
 
     def test_loader_checks_actual_loads_against_matching_macho_slices(self):
         bundle = self.root/'bundle'

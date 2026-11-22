@@ -42,7 +42,8 @@ from release_materials import (HOOK_CACHE, MATERIAL_ICONS_FONT, NATIVE_HOOK_SNAP
                                verify_build_receipt, verify_native_hook_cache, verify_product_path_steps)
 from release_sdk_sources import SPEC, dart_sdk_metadata_file, source_identity, validate_probe_write_paths
 
-RECIPE_VERSION = 55
+RECIPE_VERSION = 56
+PRIVATE_PATH_AUDIT_RECIPE = 56
 REPORT = 'docs/validation/phase-1e4-build.md'
 MACOS_FLUTTER = 'apps/meshchan_app/macos/Flutter'
 MACOS_EPHEMERAL = MACOS_FLUTTER+'/ephemeral'
@@ -95,6 +96,7 @@ HELPERS = ('build_release.py', 'candidate_common.py', 'product_identity.py',
            'release_materials_inputs.dart', 'release_sdk_sources.py', 'release_sdk_sources.json')
 CLI_SQLITE_LIBRARY = 'lib/libsqlite3.dylib'
 CLI_LIBRARIES = ('lib/liblibserialport_plus.dylib', CLI_SQLITE_LIBRARY)
+CLI_RELEASE_ENTRY = 'lib/src/meshctl.dart'
 CLI_SDK_RUNPATH = '@loader_path/../../..'
 APP_RUNNER = 'Contents/MacOS/Meshchan'
 APP_AOT_BINARY = 'Contents/Frameworks/App.framework/App'
@@ -102,6 +104,8 @@ APP_AOT_EXPORTS = ('_kDartSnapshotData', '_kDartSnapshotText')
 APP_ENGINE = 'Contents/Frameworks/FlutterMacOS.framework'
 APP_ENGINE_BINARY = APP_ENGINE+'/Versions/A/FlutterMacOS'
 APP_ENGINE_HOST_RUNPATH = '/usr/local/lib/.'
+LOCAL_BINARY_PATH_PREFIXES = (b'/Users/', b'/home/', b'/private/tmp/', b'/private/var/folders/',
+                              b'/opt/homebrew/', b'/Volumes/')
 RELATIVE_LOADER_ANCHORS = ('@loader_path', '@executable_path')
 APP_NATIVE_ASSETS = {
     'package:libserialport_plus/libserialport_plus_bindings.g.dart': 'libserialport_plus.framework/libserialport_plus',
@@ -1172,7 +1176,17 @@ def verify_app_aot(app, loaders, env):
     return {'binary': name, 'architecture': 'arm64', 'exports': list(APP_AOT_EXPORTS)}
 
 
-def products(root, app, cli, ident, env, *, hook_cache=None):
+def audit_macho_paths(bundle, binary_names, root):
+    prefixes = (*LOCAL_BINARY_PATH_PREFIXES, os.fsencode(root)+b'/')
+    names = sorted(binary_names)
+    for name in names:
+        data = (bundle/name).read_bytes()
+        if any(prefix in data for prefix in prefixes):
+            raise ValueError('Local build path remains in '+name)
+    return names
+
+
+def products(root, app, cli, ident, env, *, hook_cache=None, path_audit=False):
     check_app(app, ident['productVersion'], int(ident['appBuild']))
     required = {app: [APP_AOT_BINARY,
                       'Contents/Frameworks/FlutterMacOS.framework/FlutterMacOS',
@@ -1190,6 +1204,10 @@ def products(root, app, cli, ident, env, *, hook_cache=None):
     app_loaders, app_assets = inspect_loaders(app, app/APP_RUNNER, env, app_assets=True)
     app_aot = verify_app_aot(app, app_loaders, env)
     loaders = {'cli': cli_loaders, 'app': app_loaders}
+    audit = {}
+    if path_audit:
+        audit = {'pathAudit': {'app': audit_macho_paths(app, app_loaders, root),
+                               'cli': audit_macho_paths(cli, cli_loaders, root)}}
     signatures = {}
     signed_products = {'app': app, 'cli': executable,
                        **{'cli/'+name: cli/name for name in CLI_LIBRARIES}}
@@ -1212,7 +1230,7 @@ def products(root, app, cli, ident, env, *, hook_cache=None):
         if collector.blockers:
             raise ValueError('; '.join(collector.blockers))
     return {'status': 'PASS', 'loaders': loaders, 'native': native, 'signatures': signatures,
-            'appAotSnapshot': app_aot, 'appNativeAssets': app_assets, 'cliSQLite': sqlite}
+            'appAotSnapshot': app_aot, 'appNativeAssets': app_assets, 'cliSQLite': sqlite, **audit}
 
 
 def product_paths(out):
@@ -1343,13 +1361,13 @@ def build(args):
             compiler_dir.mkdir()
             cli_depfile = compiler_dir/'cli.d'
             runner.command('cli-build', [dart, 'build', 'cli', '--packages', root/PACKAGE_CONFIG,
-                                         '--target', 'bin/meshctl.dart', '--output', out/'cli', '--depfile', cli_depfile],
+                                         '--target', CLI_RELEASE_ENTRY, '--output', out/'cli', '--depfile', cli_depfile],
                            root/'apps/meshctl')
             after_cli = inputs(root, dart, runner.command, 'snapshot-after-cli', flutter=flutter)
             write(evidence/'inputs-after-cli.json', after_cli)
             require_equal(before, after_cli, 'CLI build')
             cli_sources, cli_hosted = compiler_inputs(
-                root, [(cli_depfile, cli/'bin/meshctl')], root/'apps/meshctl/bin/meshctl.dart',
+                root, [(cli_depfile, cli/'bin/meshctl')], root/'apps/meshctl'/CLI_RELEASE_ENTRY,
                 compiler_source, config, flutter, sdk_dart_sources, external)
             cli_executable = owned_path(cli/'bin/meshctl', out)
             if not cli_executable.is_file() or cli_executable.stat().st_nlink != 1:
@@ -1837,8 +1855,11 @@ def main():
             out = output_path(root, args.output)
             app, cli = (owned_path(path, out) for path in product_paths(out))
             path = owned_file(out/'evidence/build-receipt.json', out)
-            hooks = verify_native_hook_cache(path, read(path))
-            print(json.dumps(products(root, app, cli, identity(root), controlled_environment(), hook_cache=hooks)))
+            receipt = read(path)
+            hooks = verify_native_hook_cache(path, receipt)
+            report = products(root, app, cli, identity(root), controlled_environment(), hook_cache=hooks,
+                              path_audit=receipt['recipeVersion'] >= PRIVATE_PATH_AUDIT_RECIPE)
+            print(json.dumps(report))
             return 0
         result = {'build': build, 'check': check, 'materials': materials}[args.command](args)
         if args.command == 'build':

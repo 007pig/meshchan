@@ -2,9 +2,11 @@
 
 The release profile is `local-adhoc`. The complete macOS arm64 App and CLI
 carry local ad hoc code signatures. The DMG container is unsigned and Apple
-has not notarized it. Use the accepted build 8 bytes for retention and later
-engineering installation. The [release contract](phase-1e-plan.md) governs
-any future change to the signing profile.
+has not notarized it. The paths, pins, and commands in this guide show the
+historical Build 8 retention and installation handoff. For Build 9 inputs
+and remaining retention gates, use the [1E.11 handoff](phase-1e11-release-materials.md).
+The [release contract](phase-1e-plan.md) governs any future change to the signing
+profile.
 
 ## CI evidence
 

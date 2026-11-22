@@ -22,7 +22,7 @@ from release_materials import (ancestor_identities, controlled_environment, dige
                                product_inventory, require_material_file, require_product_disjoint, safe, sections, sha)
 from release_package_archive import check_payload, compare, metadata_observations
 import release_signing as signing
-from release_signed_runtime import manifest_profile, parse_signed_info
+from release_signed_runtime import PUBLIC_PAYLOAD, manifest_profile, parse_signed_info
 
 
 APP = 'Meshchan.app'
@@ -638,21 +638,28 @@ def run(signed_root, output, *, inventory=None, signed_info_sha256, vm_config=No
     info = parse_signed_info(manifest)
     if manifest_profile(info) != signing.LOCAL_PROFILE:
         raise ValueError('The replacement test requires a local-adhoc candidate manifest')
-    upstream = info['upstream']
-    source = Path(upstream['sourceCheckout'])
-    package_run = Path(upstream['packageRun'])
-    check_bytes = require_material_file(root, UPSTREAM_CHECK).read_bytes()
-    if sha(check_bytes) != upstream['upstreamCheckReceiptSha256']:
-        raise ValueError('Archived upstream check receipt differs from the selected candidate')
-    upstream_check = json.loads(check_bytes, object_pairs_hook=signing.policy_object)
-    extract_root = Path(upstream_check['extractRoot'])
-    if not all(path.is_absolute() for path in (source, package_run, extract_root)):
-        raise ValueError('Replacement input has malformed upstream product paths')
-    upstream_paths = [inspectable_upstream_path(path)
-                      for path in (source/safe(upstream['buildRun']), package_run, extract_root)]
-    source_guard = inspectable_upstream_path(source)
-    if directory_identity(source_guard) != directory_identity(build.ROOT):
-        upstream_paths.append(source_guard)
+    upstream_paths = []
+    if 'payloadProfile' in info:
+        if (info['payloadProfile'] != PUBLIC_PAYLOAD or 'upstream' in info
+                or not re.fullmatch(r'[0-9a-f]{64}', info.get('privateSignedInfoSha256', ''))
+                or not re.fullmatch(r'[0-9a-f]{40}', info.get('compiledSource', ''))):
+            raise ValueError('Malformed public candidate provenance')
+    else:
+        upstream = info['upstream']
+        source = Path(upstream['sourceCheckout'])
+        package_run = Path(upstream['packageRun'])
+        check_bytes = require_material_file(root, UPSTREAM_CHECK).read_bytes()
+        if sha(check_bytes) != upstream['upstreamCheckReceiptSha256']:
+            raise ValueError('Archived upstream check receipt differs from the selected candidate')
+        upstream_check = json.loads(check_bytes, object_pairs_hook=signing.policy_object)
+        extract_root = Path(upstream_check['extractRoot'])
+        if not all(path.is_absolute() for path in (source, package_run, extract_root)):
+            raise ValueError('Replacement input has malformed upstream product paths')
+        upstream_paths = [inspectable_upstream_path(path)
+                          for path in (source/safe(upstream['buildRun']), package_run, extract_root)]
+        source_guard = inspectable_upstream_path(source)
+        if directory_identity(source_guard) != directory_identity(build.ROOT):
+            upstream_paths.append(source_guard)
     require_product_disjoint({'Replacement output': output}, upstream_paths,
                              protected='an upstream release input')
     expected = info['payloadInventory']

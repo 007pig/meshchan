@@ -17,6 +17,8 @@ from release_materials import encoded, product_inventory, sha
 
 
 class LayoutTests(unittest.TestCase):
+    HOST_PATH = '/'+'/'.join(('Users', 'release-builder', 'local'))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -126,6 +128,82 @@ class LayoutTests(unittest.TestCase):
         path.chmod(0o600)
         with self.assertRaisesRegex(ValueError, 'dmg-source/tool/helper.py'):
             dmg.check_layout(self.staging, self.layout)
+
+    def public_fixture(self):
+        source = 'source-materials/archives/libserialport_plus-1.0.5.tar.gz'
+        members = {
+            source: b'original source archive',
+            'licenses/meshchan/LICENSE': b'license',
+            'rebuild/README.md': b'instructions',
+            'THIRD_PARTY_NOTICES.md': b'notices',
+            'evidence/serial/app-stdout.log': b'private test log',
+        }
+        material_entries = {}
+        for name, data in members.items():
+            path = self.candidate/'materials'/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            material_entries[name] = {'size': len(data), 'sha256': sha(data),
+                                      'originalPath': self.HOST_PATH+'/'+name}
+        # This is the fixture for the signed inventory's allowed subtrees.
+        (self.candidate/'materials/corresponding-source.tar').unlink()
+        diagnostics = self.candidate/'upstream-provenance'
+        diagnostics.mkdir()
+        (diagnostics/'package-check-receipt.json').write_text(self.HOST_PATH+'/case')
+        materials = {
+            **self.info['identity'], 'sourceCommit': '1'*40, 'lockSha256': '4'*64,
+            'openGates': [], 'materials': material_entries,
+        }
+        raw = encoded(materials)
+        (self.candidate/dmg.MATERIAL_MANIFEST).write_bytes(raw)
+        self.info.update({
+            'formatVersion': 2, 'signingProfile': dmg.PROFILE,
+            'signature': {'identity': {'adHoc': True}, 'items': []},
+            'policy': {'path': 'tool/release_signing_policy.json', 'sha256': '9'*64},
+            'inventoryExclusions': [dmg.SIGNED_MANIFEST],
+        })
+        self.info['upstream'].update({
+            'materialsManifestSha256': sha(raw), 'buildRecipeVersion': 55, 'buildInfoSha256': '5'*64,
+            'sourceCheckout': self.HOST_PATH+'/source',
+            'packageRun': self.HOST_PATH+'/packaging',
+        })
+        return source, raw, product_inventory(self.candidate)
+
+    def test_public_image_uses_pinned_materials_and_does_not_copy_private_evidence(self):
+        archive, raw, original = self.public_fixture()
+        public = dmg.public_candidate(self.info, original, raw, self.args.candidate_sha256)
+        public_layout = dmg.layout(original, self.info, self.args, self.contents, self.identity, public=public)
+        staging = self.root/'public staging'
+        dmg.stage(staging, self.candidate, public_layout, public=public)
+        mounted = dmg.mounted_layout(staging, original, self.info, self.args, self.tools,
+                                     self.contents, public=public)
+        self.assertEqual(mounted, public_layout)
+        self.assertEqual(mounted.manifest['signedInfoSha256'], sha(public.manifest))
+        self.assertEqual(mounted.manifest['privateSignedInfoSha256'], self.args.candidate_sha256)
+        self.assertEqual(mounted.manifest['payloadProfile'], dmg.PUBLIC_PAYLOAD)
+        top = staging/mounted.manifest['candidatePath']
+        self.assertEqual((top/'materials'/archive).read_bytes(), b'original source archive')
+        self.assertEqual((top/'Meshchan.app/Contents/MacOS/Meshchan').read_bytes(), b'app')
+        self.assertEqual((top/'meshctl/bin/meshctl').read_bytes(), b'cli')
+        for name in ('materials/evidence', 'provenance', 'upstream-provenance'):
+            self.assertFalse((top/name).exists())
+            self.assertTrue((self.candidate/name).exists())
+        for path in (top/dmg.SIGNED_MANIFEST, top/dmg.MATERIAL_MANIFEST, staging/dmg.IMAGE_MANIFEST):
+            self.assertNotIn(self.HOST_PATH.encode(), path.read_bytes())
+        materials = json.loads((top/dmg.MATERIAL_MANIFEST).read_bytes())
+        self.assertEqual(materials['materials'][archive], {'size': 23, 'sha256': sha(b'original source archive')})
+        self.assertEqual(product_inventory(self.candidate), original)
+        with self.assertRaisesRegex(ValueError, 'payload manifest'):
+            dmg.mounted_layout(staging, original, self.info, self.args, self.tools, self.contents)
+
+    def test_public_projection_rejects_unbound_material_bytes(self):
+        archive, raw, original = self.public_fixture()
+        with self.assertRaisesRegex(ValueError, 'material manifest bytes'):
+            dmg.public_candidate(self.info, original, raw+b' ', self.args.candidate_sha256)
+        key = 'materials/'+archive
+        original[key] = {**original[key], 'sha256': '7'*64}
+        with self.assertRaisesRegex(ValueError, 'Public material inventory'):
+            dmg.public_candidate(self.info, original, raw, self.args.candidate_sha256)
 
     def test_image_checks_extracted_signatures_before_detach_and_detaches_on_failure(self):
         signatures = [{'path': 'Meshchan.app'}]

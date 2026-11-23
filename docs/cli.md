@@ -3,7 +3,9 @@
 The engineering CLI version is `0.1.0-rc.1`. The Build 10 candidate pairs the
 complete `meshctl/` directory with App `0.1.0-rc.1+10`. Use the
 [Build 10 user guide](releases/rc1-build10-engineering-guide.md) for the
-installed CLI and its bundled serial and SQLite libraries. The
+co-located installation and native approval steps for the complete CLI. The
+[validation summary](releases/rc1-build10-validation-summary.md) records
+the installed SQLite and synthetic serial library checks. The
 [Build 9 guide](releases/rc1-engineering-guide.md) applies to the retained
 original image. The source commands and protocol details below describe the
 repository checkout.

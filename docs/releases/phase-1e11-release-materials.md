@@ -2,88 +2,82 @@
 
 ## Build 10 replacement candidate
 
-The revised Build 10 image replaced Build 9 as the 1E.11 review candidate. Its
-external review set is retained. Follow-up checks found two host-specific
-temporary path residues in both retained Build 10 images. The packaged CLI
-Mach-O embeds a `snapshot.aot` path, and `docs/development.md` inside the
-first-party source archive contains a macOS temporary-directory prefix.
-Publication remains **BLOCKED** and **NOT_PUBLISHED**.
-
-| Identity | Recorded value |
+| State | Recorded value |
 | --- | --- |
-| Products | App `0.1.0-rc.1+10` and meshctl `0.1.0-rc.1`, macOS arm64 |
-| Apple metadata | `0.1.0`, build `10`, bundle `org.meshchan.meshchan` |
-| Frozen compiled source | `be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7` |
-| Revised DMG tool snapshot | `fefc67caa5097b12bbb5e60b86fa2a7eefdb9f7a` |
-| Image | `Meshchan-0.1.0-rc.1-build10-macos-arm64-local.dmg`, 669,238,209 bytes |
-| Image SHA-256 | `4fbb88c824d696e688e8d049db94ba1f408ff03dc7872607a9f115c049bc937a` |
+| Materials status | **COMPLETE**. The candidate, documents, corresponding-material index, and nine proposed attachments are pinned and verified. |
+| Publication readiness | **BLOCKED**. The remaining gates apply to the exact selected image. |
+| Publication state | **NOT_PUBLISHED**. The approved upload list is empty. |
+
+The selected candidate supersedes the earlier Build 10 review images.
+Recipe 57 built both products. The DMG tool used the same frozen commit.
+The DMG privacy audit and the independent extraction audit reported zero
+findings across 693 image entries, 403 first-party source-archive entries,
+and eight Mach-O files.
+
+| Identity | Selected value |
+| --- | --- |
+| Products | Meshchan App `0.1.0-rc.1+10` and complete `meshctl 0.1.0-rc.1`, macOS arm64 |
+| Apple metadata | Short version `0.1.0`, build `10`, bundle `org.meshchan.meshchan` |
+| Compiled source and DMG tooling | `c5cd5021da5e62c60127678b650d970721263296` |
+| Image | `Meshchan-0.1.0-rc.1-build10-macos-arm64-local.dmg`, 669,400,332 bytes |
+| Image SHA-256 | `0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb` |
 | Signing and image | `local-adhoc` App and CLI, unsigned and unnotarized read-only UDIF/UDZO with HFS+ |
-| Public signed-product manifest SHA-256 | `21c5cdf04678cefa29a4ff09c7e80d3dbceb5c8dd86c3fcacab2904447db7228` |
-| Original proposed tag and target | `v0.1.0-rc.1` at `be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7` |
+| Public signed-product manifest SHA-256 | `11ce81325adf10da9a571167f3db42087d6ca7d03ca212631ab815827889e04e` |
+| Public image inventory SHA-256 | `3c133cb18451e9c9b32997d571138ec9e85f51b556cf7b775985f1bbff7686ff` |
+| Proposed tag and target | `v0.1.0-rc.1` at `c5cd5021da5e62c60127678b650d970721263296` |
+| Proposed release title | Meshchan 0.1.0-rc.1 Build 10 engineering release |
 
-The frozen product CI and revised DMG tool CI both passed on attempt 1. The
-revised DMG retained all 80 App and CLI inventory entries from the first Build
-10 image. The acceptance below applies to the recorded source, tools, and image
-bytes. Later code and tool revisions require their own applicable validation.
-[Product CI](https://github.com/007pig/meshchan/actions/runs/45014763866),
-[DMG tool CI](https://github.com/007pig/meshchan/actions/runs/45044813094)
+An independent Host Only macOS 27.2.1 arm64 VM downloaded the exact image in
+Safari and verified the co-located install, native App, CLI, and SQLite
+approvals, offline Save, storage ownership, normal Quit, and reopen.
+The maintainer used the shipped rebuild and signing code and same-guest
+copies of that installation to verify the synthetic serial libraries under
+the original Safari quarantine event.
+The CLI returned an empty port list, and the App showed empty ports after
+Refresh and released its fixture on normal Quit. The end-to-end shipped
+command was exercised on the engineering extraction. Direct invocation of
+the shipped preparation command on the quarantined Safari installation
+remains unverified. The separate closed Beta data fixture passed continuity
+checks.
 
-| Build 10 gate | Recorded outcome |
-| --- | --- |
-| Frozen build, corresponding source and original package | The strict materials check and independent extracted App and CLI runtime passed. Recipe 56's original build-path check reported PASS for eight Mach-O files. |
-| Image integrity and public payload privacy | Local signatures and read-only extraction passed. The original audit reported PASS after checking 693 image inventory entries, 403 first-party source-archive entries, and eight Mach-O files. The later CLI and source-archive path findings supersede the original privacy conclusion for publication. The privacy gate is OPEN. |
-| Shipped libserialport replacement | PASS on the maintainer's independent extraction. The re-signed CLI and VM App copies loaded the synthetic replacements and exited. The held tool rejects quarantine attributes on otherwise matching signed inputs. |
-| Quarantined download and clean install | PASS for the tested split placement on macOS 27.2.1 (26B131) arm64. Finder copied the App to `~/Applications`. The complete CLI and materials were copied into a separate support directory. Safari download, individual approvals, offline Save, GUI-held CLI exit 69, normal Quit, and independent reopen passed. The co-located layout in the user guide awaits separate verification. |
-| Beta CLI-closed data continuity | PASS. The revised App opened the owned fixture, saved a draft and quit. The exact CLI independently verified drafts, profiles, settings and History. |
-| Full Beta Finder replacement | BLOCKED. The retained signed Beta App lacked 15 required entries. A complete historical signed App and verified close evidence are still needed. |
-| Installed USB Device Check | PASS. The host App completed one selected Heltec V4.3 OLED Check, released the session and port, and quit normally. |
-| Finite RF and active Cancel | NOT RUN. Native screenshot evidence could not be saved for the planned sequence. No application-layer RF sends occurred. |
-| Durable retention and restoration | PASS. The independently restored DMG matched the selected image SHA-256. |
-
-The ignored `build/phase-1e11/20261122-rc1-build10/public/` review set in the
-release workspace retains the image, corresponding documents, inventories,
-original `SHA256SUMS`, `release-manifest.json`, and `RELEASE-SHA256SUMS` from
-before the follow-up path findings. The private handoff retains the exact
-source, receipt and asset pins for that set. The tracked
-[user guide](rc1-build10-engineering-guide.md),
-[source and license index](rc1-build10-source-materials.md),
-[release notes](rc1-build10-release-notes.md), and
-[validation summary](rc1-build10-validation-summary.md) incorporate the
-follow-up findings. The original staged documents retain their pinned bytes.
+The [user guide](rc1-build10-engineering-guide.md),
+[release notes](rc1-build10-release-notes.md),
+[source and license index](rc1-build10-source-materials.md), and
+[validation summary](rc1-build10-validation-summary.md) match the staged
+review attachments. The [closeout validation](../validation/phase-1e11-release-materials.md#frozen-build-10-closeout)
+binds the attachment and acceptance records to this candidate.
 
 ### Build 10 handoff to 1E.12
 
-Working-tree recipe 57 review build `review-recipe57-1795369879006` passed
-App and CLI product verification, including the path scan across all eight
-Mach-O files. The replacement still needs a frozen build and its own exact
-image acceptance.
-
-| Replacement gate | Evidence to retain |
+| Open gate | Closing evidence |
 | --- | --- |
-| Frozen build, materials, package and signing | Capture the exact compiled source, strict materials, independent package check and `local-adhoc` signing receipt. Run CI on the frozen compiled source and DMG tools with their exact attempts. [Build](phase-1e4-build.md#candidate-specific-validation-and-materials), [package](phase-1e5-package.md), [signing](phase-1e6-signing.md#independent-acceptance), [CI](phase-1e8-ci-retention.md#ci-evidence) |
-| Image integrity and privacy | Retain the independent image check for the selected DMG hash. Record a passing privacy audit against that check's extraction and pinned inventory. [Privacy audit](phase-1e7-dmg.md#audit-the-independent-public-extraction) |
-| Shipped native library replacement | Bind both tests to the exact public signed manifest. Run the local CLI and App procedure on the complete installed copy with its quarantine and normal approvals. Repeat the paired VM experiment from the independently checked engineering extraction. Record both loads and normal App Quit with each procedure's evidence. [Replacement procedure](phase-1e6-user-library-replacement.md#verify-both-replacement-products-for-release-acceptance) |
-| Installation and Beta upgrade | Repeat the quarantined clean install using the release guide's exact placement, normal macOS item approvals, offline Save, contention, normal Quit and independent reopen. Verify full Finder replacement of a complete historical Beta App and its closed data. [Install and upgrade](phase-1e9-install-upgrade.md) |
-| Installed USB and finite RF | Verify the selected device Check, exact finite round trip with the authorized peer, active Cancel, normal Quit, and resource and process release. |
-| Retention and restoration | Seal the selected image, products, corresponding source and exact evidence. Restore independently and compare the image and its material pins. [Retention and restore](phase-1e8-ci-retention.md#check-and-restore-from-the-sealed-object) |
+| Exact-source CI | Retain the successful runs, exact attempts, job reports, and pinned artifacts for the frozen product and tool commit. [CI evidence](phase-1e8-ci-retention.md#ci-evidence) |
+| Durable archive and independent restore | Seal the selected image, products, corresponding source and materials, and accepted evidence using the eligible CI chain. Independently restore and verify the candidate pins. [Retention and restore](phase-1e8-ci-retention.md#check-and-restore-from-the-sealed-object) |
+| Full historical Beta Finder upgrade | Recover the complete historical signed Beta App and verified close evidence. The retained signed App is missing 15 required entries. Run Finder replacement and data continuity against the selected image. [Install and upgrade](phase-1e9-install-upgrade.md) |
+| Same-image hardware | Record a selected USB Device Check and a finite RF round trip, active Cancel, normal Quit, and resource release on the exact image with the authorized hardware configuration. |
 
-For the guide's co-located layout, use the admitted candidate's
-`verify_installation(vm, app, destination, scratch=host_evidence_dir, unified=True)`
-on the actual guest installation. Set `destination` to the selected direct
-child of the verified guest user's `~/Applications` and `app` to its candidate
-folder's `Meshchan.app`. Retain the full inventory, signatures, and quarantine
-observations with the separate approval and runtime records.
+Use the reviewed private asset map at this path relative to the release
+workspace.
+
+```text
+build/phase-1e11/20261122-rc1-build10-frozen-c5cd502/private/safari-first-install-20261123/handoff-doc-review-51f1b2d091c80a86/after/handoff.json
+```
+
+It records PASS for both
+`quarantinedSafariInstallAndRuntime` and
+`quarantinedInstalledReplacementRuntime`. The map pins the name, size,
+and SHA-256 of the original image, four documents, derived materials
+inventory, original `SHA256SUMS`, proposed `release-manifest.json`, and
+outer `RELEASE-SHA256SUMS`.
 
 ### Stage and verify the release attachments
 
-Use a fresh attachment directory for the selected replacement. Copy the
-original DMG and its `SHA256SUMS` from the image run with status `CREATED`, then
-compare the DMG to the independent check's pinned SHA-256. Stage the
-matching external documents and derive the material inventory from the
-independently checked `image-payload.json`. Record the size and SHA-256 of
-each staged file in `release-manifest.json`. Build `RELEASE-SHA256SUMS`
-from those files and the completed manifest. Exclude `RELEASE-SHA256SUMS`
-itself and record its digest with the manifest digest in the private handoff.
+Use a fresh attachment directory. Stage the exact DMG and the eight
+external records from the private asset map. The DMG stays at its original
+packaging output path. The staged `SHA256SUMS` preserves the original
+creation-run checksum bytes. `release-manifest.json` pins the seven leaf
+assets. `RELEASE-SHA256SUMS` covers those seven and the manifest, with its own
+digest recorded in the private handoff.
 
 Set the directory, source commit, image SHA-256 and both outer-file SHA-256
 pins from the replacement's private handoff. Use the same checks on the
@@ -132,6 +126,49 @@ tag resolves to the frozen compiled source. Upload the verified manifest
 entries, `release-manifest.json` and `RELEASE-SHA256SUMS` unchanged.
 Download the actual release assets to a clean directory, run the checks above,
 and verify the tag target, image layout and usable corresponding sources.
+
+## Earlier Build 10 candidates
+
+The original and revised Build 10 images used product commit
+`be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7`. Follow-up review found a CLI
+Mach-O `snapshot.aot` path and a macOS temporary-directory prefix in
+`docs/development.md` inside their first-party source archives. The results
+below apply to the earlier revised image. Its image, original public review
+set, and receipts remain pinned in the earlier private handoff.
+
+The first Build 10 image SHA-256 is
+`3456cd579b9a0c553967a01034dcdd8a905f9e4b46592bce5cdd9737698a8bf1`.
+
+| Identity | Recorded value |
+| --- | --- |
+| Products | App `0.1.0-rc.1+10` and meshctl `0.1.0-rc.1`, macOS arm64 |
+| Apple metadata | `0.1.0`, build `10`, bundle `org.meshchan.meshchan` |
+| Frozen compiled source | `be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7` |
+| Revised DMG tool snapshot | `fefc67caa5097b12bbb5e60b86fa2a7eefdb9f7a` |
+| Image | `Meshchan-0.1.0-rc.1-build10-macos-arm64-local.dmg`, 669,238,209 bytes |
+| Image SHA-256 | `4fbb88c824d696e688e8d049db94ba1f408ff03dc7872607a9f115c049bc937a` |
+| Signing and image | `local-adhoc` App and CLI, unsigned and unnotarized read-only UDIF/UDZO with HFS+ |
+| Public signed-product manifest SHA-256 | `21c5cdf04678cefa29a4ff09c7e80d3dbceb5c8dd86c3fcacab2904447db7228` |
+| Original proposed tag and target | `v0.1.0-rc.1` at `be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7` |
+
+The frozen product CI and revised DMG tool CI both passed on attempt 1. The
+revised DMG retained all 80 App and CLI inventory entries from the first Build
+10 image. The acceptance below applies to the recorded source, tools, and image
+bytes. Later code and tool revisions require their own applicable validation.
+[Product CI](https://github.com/007pig/meshchan/actions/runs/45014763866),
+[DMG tool CI](https://github.com/007pig/meshchan/actions/runs/45044813094)
+
+| Earlier revised Build 10 gate | Recorded outcome |
+| --- | --- |
+| Frozen build, corresponding source and original package | The strict materials check and independent extracted App and CLI runtime passed. Recipe 56's original build-path check reported PASS for eight Mach-O files. |
+| Image integrity and public payload privacy | Local signatures and read-only extraction passed. The original audit reported PASS after checking 693 image inventory entries, 403 first-party source-archive entries, and eight Mach-O files. The later CLI and source-archive path findings supersede the original privacy conclusion for publication. The privacy gate is OPEN. |
+| Shipped libserialport replacement | PASS on the maintainer's independent extraction. The re-signed CLI and VM App copies loaded the synthetic replacements and exited. That image’s tool rejects quarantine attributes on otherwise matching signed inputs. |
+| Quarantined download and clean install | PASS for the tested split placement on macOS 27.2.1 (26B131) arm64. Finder copied the App to `~/Applications`. The complete CLI and materials were copied into a separate support directory. Safari download, individual approvals, offline Save, GUI-held CLI exit 69, normal Quit, and independent reopen passed. |
+| Beta CLI-closed data continuity | PASS. The revised App opened the owned fixture, saved a draft and quit. The exact CLI independently verified drafts, profiles, settings and History. |
+| Full Beta Finder replacement | BLOCKED. The retained signed Beta App lacked 15 required entries. A complete historical signed App and verified close evidence are still needed. |
+| Installed USB Device Check | PASS. The host App completed one selected Heltec V4.3 OLED Check, released the session and port, and quit normally. |
+| Finite RF and active Cancel | NOT RUN. Native screenshot evidence could not be saved for the planned sequence. No application-layer RF sends occurred. |
+| Durable retention and restoration | PASS. The independently restored DMG matched the selected image SHA-256. |
 
 ## Historical Build 9 handoff
 

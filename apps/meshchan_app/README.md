@@ -9,9 +9,10 @@ The public core packages and CLI remain pure Dart. The application uses the same
 root Pub lockfile; do not resolve a separate member lockfile.
 
 Use the [Build 10 user guide](../../docs/releases/rc1-build10-engineering-guide.md)
-for installation, normal Quit and backup. The
+for the verified co-located installation, normal macOS approvals, Quit and
+backup. The
 [release handoff](../../docs/releases/phase-1e11-release-materials.md#build-10-replacement-candidate)
-identifies the exact candidate.
+identifies the frozen candidate and the scope of its VM acceptance.
 The [Build 9 user guide](../../docs/releases/rc1-engineering-guide.md) and
 [hardware record](../../docs/validation/phase-1e10-hardware-acceptance.md)
 apply to the original Build 9 image. See the

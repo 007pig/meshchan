@@ -1,7 +1,7 @@
 # Meshchan RC1 Build 10 source and license materials
 
 Use this index with `Meshchan-0.1.0-rc.1-build10-macos-arm64-local.dmg` and
-compiled source `be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7`. Use the matching
+compiled source `c5cd5021da5e62c60127678b650d970721263296`. Use the matching
 release manifest for the actual DMG bytes and public signed-product digest.
 
 ## Where to find the files
@@ -43,10 +43,11 @@ Flutter subsets that font for the App. [Original Flutter font archive](https://s
 
 ## Rebuild or replace libserialport
 
-The held Build 10 tool passed on the maintainer's independent extraction. It
-rejects `com.apple.quarantine` on an otherwise matching signed input. Keep
-download quarantine in place. A replacement candidate needs a separate test
-of its shipped tool on a complete, normally quarantined installation.
+For quarantined inputs, the shipped tool checks that the prepared copies
+retain their original download quarantine event. Use normal macOS item
+approval for those same copies. The [validation summary](rc1-build10-validation-summary.md)
+describes the engineering-extraction run and the separate installed-copy
+runtime test.
 
 Use an arm64 Mac with Xcode's SDK, Clang, and Python 3.15 or later. Work from
 a writable copy of the complete signed folder. The shipped procedure and
@@ -55,15 +56,14 @@ script are at `signing-materials/phase-1e6-user-library-replacement.md` and
 public signed input and source archive, compiles a synthetic replacement,
 and re-signs separate App and CLI copies.
 
-To repeat the historical maintainer check, set `SIGNED_ROOT` to a writable
-copy of the independently verified engineering extraction. Use the retained
-Build 10 `release-manifest.json` and choose a new `REPLACEMENT_OUTPUT` in an
-existing folder. The normally quarantined installation needs the replacement
-candidate's shipped tool and procedure.
+Set `SIGNED_ROOT` to the complete candidate folder from the verified
+installation, `RELEASE_MANIFEST` to the matching release manifest, and
+`REPLACEMENT_OUTPUT` to a new path in an existing folder. Keep the
+download attributes on the installation and copied products.
 
 ```sh
-SIGNED_ROOT=/absolute/path/to/verified-copy/Meshchan-0.1.0-rc.1-macos-arm64
-RELEASE_MANIFEST=/absolute/path/to/retained/release-manifest.json
+SIGNED_ROOT="$HOME/Applications/Meshchan Engineering Build 10/Meshchan-0.1.0-rc.1-macos-arm64"
+RELEASE_MANIFEST="$HOME/Downloads/release-manifest.json"
 REPLACEMENT_OUTPUT="$HOME/Downloads/Meshchan Build 10 replacement test"
 
 (
@@ -77,8 +77,9 @@ REPLACEMENT_OUTPUT="$HOME/Downloads/Meshchan Build 10 replacement test"
 ```
 
 The expected digest is the release manifest's `publicSignedInfoSha256` for the
-in-image `signed-product-info.json`. The separate private receipt pin in the
-public record identifies the preserved maintainer evidence.
+in-image `signed-product-info.json`. The in-image manifest’s
+`privateSignedInfoSha256` identifies the original private signed-product
+manifest.
 
 The output evidence records the actual compiler arguments and signing
 commands. The original archive includes `serialport.c`, `timing.c`,
@@ -97,9 +98,15 @@ copies. Sign the changed framework before its enclosing App and the CLI dylib
 before the CLI executable. Use the generated user entitlements for the main
 executables. No maintainer signing keys are needed.
 
-Without guest configuration, a successful CLI and preparation run records
-`cli.status: PASS` and `finalIntegrity: PASS` with overall `INCOMPLETE`
-and exits 1. See the shipped guide for an optional local App check and the
-paired VM procedure. The synthetic replacement returns an empty port list
-and exercises library loading. The Build 10 release manifest carries the
-separate replacement and device acceptance results.
+A successful run on a quarantined installation prepares the separate
+products and records `finalIntegrity: PASS`, `cli.status: NOT_RUN`, and
+`app.status: NOT_RUN`. The overall preparation result is `INCOMPLETE`
+and the command exits 1. Use the exact prepared paths and normal approval
+sequence in the shipped guide. The report and separate runtime evidence
+determine the observed result. App approval can open the copy using the
+account’s default Meshchan data directory, as it did during the VM test.
+Use a separate macOS account or VM to isolate the approval from normal
+Meshchan data. If approval opens the App, quit it normally and relaunch
+the same approved copy with the fixture argument from the shipped guide.
+An unquarantined engineering extraction can execute the CLI automatically
+and supports a paired VM test.

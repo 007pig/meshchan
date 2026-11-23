@@ -2,16 +2,14 @@
 
 The held macOS arm64 Build 10 candidate pairs **Meshchan 0.1.0-rc.1+10**
 with **meshctl 0.1.0-rc.1** from frozen product commit
-`be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7`. Use the
+`c5cd5021da5e62c60127678b650d970721263296`. Use the
 [Build 10 user guide](docs/releases/rc1-build10-engineering-guide.md),
 [release notes](docs/releases/rc1-build10-release-notes.md), and
 [source and license index](docs/releases/rc1-build10-source-materials.md)
-for the matching image and materials. Publication is blocked by local paths in
-the CLI and the embedded first-party source archive, the shipped replacement
-tool's quarantine handling, full Beta Finder replacement, and finite RF
-acceptance with active Cancel. The
-[release handoff](docs/releases/phase-1e11-release-materials.md#build-10-replacement-candidate)
-identifies the revised image and completed checks.
+for the matching image and materials. The privacy audit, independent Safari
+first install and installed App and CLI replacement runtime passed. The
+[release handoff](docs/releases/phase-1e11-release-materials.md#build-10-handoff-to-1e12)
+lists the publication gates still open.
 
 The [Build 9 user guide](docs/releases/rc1-engineering-guide.md),
 [release notes](docs/releases/rc1-engineering-release-notes.md), and

@@ -4,12 +4,13 @@ This guide applies to Meshchan App `0.1.0-rc.1+10` and `meshctl 0.1.0-rc.1`
 from the same Apple silicon disk image. About Meshchan shows `0.1.0-rc.1 (10)`.
 The Apple bundle short version is `0.1.0`, its build is `10`, and its identifier
 is `org.meshchan.meshchan`. The Build 10 candidate uses compiled source
-`be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7`.
+`c5cd5021da5e62c60127678b650d970721263296`.
 
-This image is held for local review. See the
-[Build 10 release notes](rc1-build10-release-notes.md) for the CLI and
-source-archive privacy findings. Use the guide supplied with the matching
-release if a replacement is published.
+This proposed engineering image is **held for review**. It is 669,400,332
+bytes with SHA-256
+`0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`.
+The [validation summary](rc1-build10-validation-summary.md) records the
+evidence and release gates.
 
 Use Drafts, Profiles and saved diagnostic presets, Settings, and diagnostic
 History offline. History can export one page of redacted summaries. For device
@@ -23,13 +24,14 @@ mobile platforms, and Intel Macs.
 
 Both installed products carry local ad hoc code signatures. The read-only DMG
 is unsigned and unnotarized. macOS may require approval for individual items.
-Use the Build 10 release manifest for the installation, upgrade, and device
-checks recorded for this image. Build 8 and Build 9 records describe their
-respective images.
+The independent Safari first install and installed replacement library
+checks for this image ran on macOS 27.2.1 (26B131) arm64. The release
+manifest records the measured installation, upgrade, and device scope.
+Build 8 and Build 9 records cover their respective images.
 
 ## Verify the download
 
-For local review, use the files staged together for this exact candidate. For
+Use the files listed for this exact candidate. For
 the complete attachment check, put `RELEASE-SHA256SUMS` and every file it lists
 in the same directory. That includes the DMG
 `Meshchan-0.1.0-rc.1-build10-macos-arm64-local.dmg`, the image's `SHA256SUMS`,
@@ -69,11 +71,9 @@ Find the attachment whose `image-path` is the exact downloaded file. Confirm
 that `writeable` is false and note the `mount-point` under `/Volumes`. If the
 attachment is ambiguous or writable, stop before copying.
 
-The example below illustrates a fresh installation that keeps the App, CLI,
-and materials in one folder. This layout awaits separate verification. The
-retained clean-install test placed the App in `~/Applications` and copied the
-CLI and materials to a separate support directory. See the
-[validation summary](rc1-build10-validation-summary.md) for that scope.
+The example below installs the App, CLI, and materials together. See the
+[validation summary](rc1-build10-validation-summary.md) for the measured
+installation and approval scope.
 
 Set `MESHCHAN_VOLUME` to the mount point just verified.
 For a custom installation, set `MESHCHAN_INSTALL_PARENT` to an absolute folder
@@ -148,10 +148,12 @@ Integrity Protection, and download quarantine in place. If the system reports
 damage or malware, or there is no permitted exception, stop and report the
 exact alert. [Safely open apps on your Mac](https://support.apple.com/en-us/102445)
 
-Earlier guest testing needed separate approvals for the App, CLI executable,
-and CLI SQLite library. Expect approvals to vary with system policy, the source
-of the download, and the individual item. The Build 10 release manifest
-describes its observed approval and installation scope.
+The independent Safari first install of this image needed separate approvals
+for Meshchan.app, `meshctl`, and `libsqlite3.dylib`. The App entry offered
+**Open Anyway**. For the executable and library, **Allow Anyway** enabled a
+separate **Open Anyway** confirmation when the same CLI command was retried.
+The SQLite prompt appeared on the first draft read after the App had quit.
+Prompts vary with the item, system policy, and download source.
 
 If the system moved a CLI executable or library to Trash, treat that CLI as
 incomplete. Use the verified DMG to copy the entire installation into a fresh
@@ -230,10 +232,11 @@ when recording is off. Put `--data-dir` before `datagram` if you need an overrid
    the matching installed CLI, or reopen the App and check the saved change.
    Quit normally again.
 
-The earlier Beta build 5 to RC build 8 upgrade was measured on macOS 27.2.1
-(26B131) arm64. Consult the Build 10 release manifest for fixtures and platforms
-verified for this image. Keep a closed backup for recovery. Downgrade, automatic
-restore, and import are outside this engineering procedure. To remove the
+The selected Build 10 passed continuity checks using a closed Beta data
+fixture. Full Finder replacement of the historical Beta App is still pending
+for this image. The earlier Beta build 5 to RC build 8 upgrade was measured
+on macOS 27.2.1 (26B131) arm64. Keep a closed backup for recovery. Downgrade,
+automatic restore, and import are outside this engineering procedure. To remove the
 installation, first quit and wait for exit, then remove your chosen App and CLI
 installation. Keep the separate data directory for future use or backup.
 

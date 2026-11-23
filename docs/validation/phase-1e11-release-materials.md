@@ -1,5 +1,45 @@
 # Phase 1E.11 release materials validation
 
+## Frozen Build 10 closeout
+
+The November 23, 2026 documentation closeout binds the selected macOS arm64
+engineering image to the frozen product and DMG tool commit
+`c5cd5021da5e62c60127678b650d970721263296`. The original 669,400,332-byte DMG has SHA-256
+`0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`. The four candidate-facing repository documents use the exact
+bytes of the private review attachments. The tracked navigation now
+points to this candidate. The frozen source and in-image materials retain
+their original pins.
+
+| Evidence | Result |
+| --- | --- |
+| Exact candidate build and privacy | Recipe 57, strict corresponding materials, independent package and DMG checks, and local ad hoc signatures passed. The two privacy audits reported zero findings across 693 image entries, 403 first-party archive entries, and eight Mach-O files. |
+| Independent Safari first install | PASS on macOS 27.2.1 (26B131) arm64 in the Host Only VM. The native Safari quarantine event, complete co-located installation, separate App/CLI/SQLite approval, offline Save, owner contention, normal Quit, and reopen were verified. |
+| Installed App and CLI replacement | PASS for native runtime from same-guest copies of that Safari installation, using libraries rebuilt and signed on the host with the shipped code. Both mapped their synthetic libraries under normal protections. The CLI returned zero ports, and the App showed empty ports after Refresh and released the fixture on normal Quit. The direct preparation command on the quarantined installation remains unverified. |
+| Historical evidence | The original Build 9 and both earlier Build 10 image identities and receipts remain retained. The closed Beta data fixture passed on the selected Build 10. The full historical Beta Finder upgrade remains blocked. |
+| Exact-source local tests | The retained frozen-build run passed 719 Python tool tests on Python 3.15.2 under umask 022. |
+
+The private handoff pins the first-install and installed-replacement
+receipts at SHA-256 `2a222774f641440c47e67babcd8a4e154afc0ef3c1fbba944a12e1d91c867edf` and `f228916ea9e95920ef826984fbd22a5cb2a9a73f9a95a70c3958710ff9177c36`.
+Its release manifest has SHA-256 `cb06e35c3d3bf813f090434aacb6cb3f53e1835f21d75b96d47316e2af096862`.
+The outer attachment checksum has SHA-256 `78d914eab58cb4cfe3611e95f880fd399fa9c8f791bb21e4dfd7be694229002e`.
+
+The closeout used `/opt/homebrew/bin/python3` 3.15.2. It checked 202 local
+links and anchors and parsed 35 shell examples across the affected
+repository pages and the attachment layout. The documented attachment
+verification command passed on a temporary staging directory containing
+all nine pinned assets. The four tracked user documents matched their
+staged bytes, both runtime receipts matched the frozen image, and all
+13 historical preservation pins rehashed successfully. The user guide’s
+copy and signature checks also passed from the exact independent extraction
+under umask 022 and 077, with all 693 payload entries including the root
+matched. The exact extracted CLI passed version, six help commands, and
+four offline reads against a fresh test data directory. The remaining exact-source
+CI, durable restore, historical Beta Finder, and same-image USB/RF gates are
+in the [maintainer handoff](../releases/phase-1e11-release-materials.md#build-10-handoff-to-1e12). Materials status is **COMPLETE**. Publication
+readiness is **BLOCKED**, and publication state is **NOT_PUBLISHED**.
+
+## Historical Build 9 review
+
 Validation took place on November 22, 2026 from a clean starting checkout at
 `183f906fa82831c4af2a708c9ad47251b497328e`, after PR #49 merged. The original
 image was compiled from `01cfacb7fc166a0078962a99d9e673750aabad65`. The
@@ -8,7 +48,7 @@ These are independent from this working-tree documentation revision.
 The [maintainer handoff](../releases/phase-1e11-release-materials.md) lists the
 status and next actions. [PR #49](https://github.com/007pig/meshchan/pull/49)
 
-## Original candidate and inputs
+### Original candidate and inputs
 
 | Check | Result |
 | --- | --- |
@@ -28,7 +68,7 @@ The first-party archive digest is
 The [source and license index](../releases/rc1-engineering-source-materials.md)
 maps the actual installed and in-image paths and the two separate SDK runtimes.
 
-## GitHub and durable retention
+### GitHub and durable retention
 
 The read-only repository checks found PR #49 merged, with base
 `9941ec57dbd3e921e0bf6ebc5dc38bd20e44733b` and the two recorded commits.
@@ -49,7 +89,7 @@ was a working-tree change relative to the base tool commit. Build 9 still
 needs the retention tool's CI and committed-tool identity inputs and a separate
 successful durable recovery attempt.
 
-## User material and boundary checks
+### User material and boundary checks
 
 The actual complete candidate CLI passed version and help checks from outside
 its installation directory. Covered entry points include directory option
@@ -84,7 +124,7 @@ INCOMPLETE`, `publicationReadiness: BLOCKED`, and
 `publicationState: NOT_PUBLISHED`. The private map records no approved upload
 files.
 
-## Local verification commands
+### Local verification commands
 
 Python checks used `/opt/homebrew/bin/python3`, Python 3.15.2. The installed
 candidate tests used macOS built-in shell, disk image and signature tools.

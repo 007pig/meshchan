@@ -1,61 +1,40 @@
-# Meshchan RC1 Build 10 validation summary
+# Meshchan RC1 Build 10 candidate validation
 
-This summary applies to Meshchan App `0.1.0-rc.1+10` and the complete
-`meshctl 0.1.0-rc.1` bundle for macOS arm64. Both products are built from
-`be88abba92c47e3814e5bca4b8cc1e8c1efd6ad7`. The engineering distribution
-uses local ad hoc code signatures. The matching staged `release-manifest.json`
-lists the image size, SHA-256, and acceptance recorded before the follow-up
-privacy findings.
+This receipt summary applies to compiled source `c5cd5021da5e62c60127678b650d970721263296` and
+the 669,400,332-byte DMG with SHA-256
+`0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`. The candidate uses the local-adhoc profile
+for Meshchan App `0.1.0-rc.1+10` and `meshctl 0.1.0-rc.1`.
 
-The exact-source CI run passed on attempt 1. The complete local Release
-build independently checked the App and CLI identity and all eight delivered
-Mach-O files for local build paths. Strict materials verification bound the
-corresponding source, dependency archives and rebuild inputs to the same
-build. The build-time synthetic libserialport replacement exercised the CLI
-loader and a separate VM App probe. [Exact Build 10 CI](https://github.com/007pig/meshchan/actions/runs/45014763866)
+| Gate | Status | Observed scope |
+| --- | --- | --- |
+| Frozen build and product path scan | PASS | Clean Recipe 57 source, exact App and CLI identity, native paths checked across eight Mach-O files. |
+| Strict materials and frozen recheck | PASS | SDK and build-time native replacement, strict corresponding-source and materials, and independent frozen recheck. |
+| Package and independent extraction | PASS | Exact archive producer and independent check, each with extracted offline CLI and VM App runtime verification. |
+| Independent local-adhoc signing | PASS | Independent private signed product, exact CLI runtime, guest App offline runtime and signed synthetic replacement. |
+| DMG and payload privacy | PASS | Creation and independent read-only extraction with code signatures, offline CLI and VM App runtime. Both audits report 693 image entries, 403 first-party archive entries, eight Mach-O files and zero findings. |
+| Candidate admission | PASS | The exact independently checked public engineering image passed candidate admission. |
+| Exact extracted CLI help and version | PASS | Exact independently extracted App plist matched the public manifest. CLI version and global help returned exit 0, with empty stderr. |
+| Public native replacement on engineering extraction | PASS | The exact signed App and CLI were separately re-signed, loaded the shipped tool’s synthetic serial library and exited normally. The App was measured in a paired VM from the engineering extraction. |
+| Co-located installation layout | PASS | In the registered macOS VM, the complete unquarantined independent extraction matched 693 image entries and eight code-signature policy items in a fresh co-located Applications fixture. The owned fixture was cleaned up. |
+| Quarantined clean download, approval and runtime | PASS | The exact image was downloaded with Safari and installed together in a fresh independent host-only macOS 27.2.1 (26B131) arm64 VM. Native download quarantine, App item approval, CLI and SQLite approval dispositions, offline Save, owner contention, and normal Quit and reopen were verified. |
+| Normal approval and runtime of quarantined replacement copies | PASS | The maintainer used the shipped rebuild and signing code and same-guest copies of the exact Safari installation. Both products loaded their mapped synthetic libraries and exited normally. The CLI returned empty ports, and the App showed empty ports after Refresh. The receipt confirms the original Safari quarantine event and normal system protections. |
+| Beta CLI-closed fixture | PASS | The exact App opened an owned closed Beta data fixture, added one draft and quit normally. The exact CLI completed 28 independent reads, confirming five drafts, six profiles, one settings row and 12 History entries. |
+| Full historical Beta Finder upgrade | BLOCKED | The retained signed historical Beta App lacks 15 required entries. The closed Beta data fixture result has different scope. |
+| Exact-image real USB Device Check | NOT_RUN | Requires separate accepted exact-image hardware evidence. |
+| Exact-image finite RF and active Cancel | NOT_RUN | Requires a separate accepted finite run on this image. |
+| Exact-source local Python tests | PASS | 719 tests on Python 3.15.2 under standard umask 022, 338.690 seconds. |
+| Exact-source CI | OPEN | No remote exact-source CI in the local frozen workflow. |
+| Durable retention and independent restore | OPEN | Seal with the exact eligible CI chain and independently restore the selected image. |
+| Publication and actual public downloads | HELD | No tag or publication authorization in this run. |
 
-The held 669,238,209-byte image has SHA-256
-`4fbb88c824d696e688e8d049db94ba1f408ff03dc7872607a9f115c049bc937a`.
-Its independent checks covered 693 image inventory entries, 403 entries in
-the first-party source archive, and eight Mach-O files. The actual shipped
-replacement tool built and locally signed synthetic App and CLI copies from
-the maintainer's independent extraction. Both copies loaded the expected
-replacement and exited normally. A separate review found that the held tool
-rejects signed inputs carrying download quarantine. The original
-path audit missed a local temporary `snapshot.aot` path in the CLI Mach-O
-and a macOS temporary-directory prefix in `docs/development.md` inside the
-first-party source archive. Both findings were reproduced in both retained
-Build 10 images. The privacy gate remains open for publication.
+The shipped replacement command was exercised end to end on the engineering
+extraction. The quarantined runtime test used host preparation and native
+execution on same-guest copies. Direct invocation of the shipped preparation
+command against the quarantined Safari installation remains unverified.
 
-The signed App also opened an owned data snapshot closed by the retained
-Beta CLI, saved one draft, and quit normally. The exact Build 10 CLI
-independently confirmed the preserved drafts, profiles, settings and
-History, including the new draft. Full replacement of the historical Beta
-App remains pending recovery of that App and its close evidence.
+Earlier Build 9 and Build 10 receipts retain their own image identities.
+Publication remains blocked. The proposed attachment manifest maps the
+available files and records the candidate state.
 
-On an isolated macOS 27.2.1 (26B131) arm64 guest, Safari preserved the revised
-download's quarantine and source metadata. Finder installed the App from a
-verified read-only mount to `~/Applications`. The complete CLI and materials
-were copied to a separate support directory and matched the image inventory.
-The co-located layout in the engineering guide awaits separate verification.
-In the tested split layout, the guest used individual approvals for
-`meshctl`, `libsqlite3.dylib`, and Meshchan. The installed App saved a
-draft and a setting offline. The CLI returned exit 69 while the App held
-the data directory. Normal Quit, the independent CLI read, and a second
-App launch confirmed both changes. SIP and Gatekeeper stayed enabled.
-
-On the arm64 host, the installed App listed the selected USB port and
-completed one Check on a Heltec V4.3 OLED with protocol code 14. The
-session and host observer released their resources, and the App quit
-normally. The finite RF round trip and active Cancel remain open.
-
-Earlier observations apply to their respective images. The full quarantined
-Safari install and Beta build 5 replacement were exercised with Build 8.
-Build 9 hardware acceptance used source
-`01cfacb7fc166a0078962a99d9e673750aabad65`. The Build 10 asset manifest
-records the earlier acceptance against the independently verified Build 10 image.
-
-Use the [engineering guide](rc1-build10-engineering-guide.md) for the
-download, approval and normal Quit sequence. The
-[source materials guide](rc1-build10-source-materials.md) maps the shipped
-corresponding sources and the user library replacement procedure.
+See the [engineering guide](rc1-build10-engineering-guide.md) and the
+[source and license index](rc1-build10-source-materials.md).

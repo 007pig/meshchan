@@ -8,11 +8,14 @@ Navigation, rebuilds, focus and minimization do not reopen storage or recover ag
 The public core packages and CLI remain pure Dart. The application uses the same
 root Pub lockfile; do not resolve a separate member lockfile.
 
-Use the [Build 10 user guide](../../docs/releases/rc1-build10-engineering-guide.md)
-for the verified co-located installation, normal macOS approvals, Quit and
-backup. The
-[release handoff](../../docs/releases/phase-1e11-release-materials.md#build-10-replacement-candidate)
+The published Build 10 guide covers co-located installation, normal macOS
+approvals, Quit, and backup. [Engineering guide](https://github.com/007pig/meshchan/releases/download/v0.1.0-rc.1/rc1-build10-engineering-guide.md) ·
+[Download Build 10](https://github.com/007pig/meshchan/releases/tag/v0.1.0-rc.1)
+
+The [release handoff](../../docs/releases/phase-1e11-release-materials.md#build-10-replacement-candidate)
 identifies the frozen candidate and the scope of its VM acceptance.
+See the [1E.12 validation record](../../docs/validation/phase-1e12-publication.md)
+for Build 10 acceptance and public-download evidence.
 The [Build 9 user guide](../../docs/releases/rc1-engineering-guide.md) and
 [hardware record](../../docs/validation/phase-1e10-hardware-acceptance.md)
 apply to the original Build 9 image. See the

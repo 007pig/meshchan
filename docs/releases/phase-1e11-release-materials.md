@@ -2,7 +2,10 @@
 
 ## Build 10 replacement candidate
 
-| State | Recorded value |
+The selected Build 10 was subsequently published and verified in 1E.12.
+[Publication and public-download evidence](../validation/phase-1e12-publication.md#public-release-and-anonymous-download)
+
+| State at the 1E.11 handoff | Recorded value |
 | --- | --- |
 | Materials status | **COMPLETE**. The candidate, documents, corresponding-material index, and nine proposed attachments are pinned and verified. |
 | Publication readiness | **BLOCKED**. The remaining gates apply to the exact selected image. |
@@ -40,24 +43,28 @@ the shipped preparation command on the quarantined Safari installation
 remains unverified. The separate closed Beta data fixture passed continuity
 checks.
 
-The [user guide](rc1-build10-engineering-guide.md),
-[release notes](rc1-build10-release-notes.md),
-[source and license index](rc1-build10-source-materials.md), and
-[validation summary](rc1-build10-validation-summary.md) match the staged
-review attachments. The [closeout validation](../validation/phase-1e11-release-materials.md#frozen-build-10-closeout)
-binds the attachment and acceptance records to this candidate.
+The original document attachments and acceptance records are pinned in the
+1E.11 closeout. The repository copies of the guide, release notes, source
+and license index, and validation summary now match the final 1E.12
+attachments. [Original closeout](../validation/phase-1e11-release-materials.md#frozen-build-10-closeout) ·
+[Published attachments](https://github.com/007pig/meshchan/releases/tag/v0.1.0-rc.1)
 
 ### Build 10 handoff to 1E.12
 
-| Open gate | Closing evidence |
+1E.12 closed these four handoff gates and published the selected Build 10
+as a GitHub engineering prerelease.
+[1E.12 publication record](../validation/phase-1e12-publication.md) ·
+[Build 10 on GitHub Releases](https://github.com/007pig/meshchan/releases/tag/v0.1.0-rc.1)
+
+| Gate at handoff | Closing evidence |
 | --- | --- |
 | Exact-source CI | Retain the successful runs, exact attempts, job reports, and pinned artifacts for the frozen product and tool commit. [CI evidence](phase-1e8-ci-retention.md#ci-evidence) |
 | Durable archive and independent restore | Seal the selected image, products, corresponding source and materials, and accepted evidence using the eligible CI chain. Independently restore and verify the candidate pins. [Retention and restore](phase-1e8-ci-retention.md#check-and-restore-from-the-sealed-object) |
 | Full historical Beta Finder upgrade | Recover the complete historical signed Beta App and verified close evidence. The retained signed App is missing 15 required entries. Run Finder replacement and data continuity against the selected image. [Install and upgrade](phase-1e9-install-upgrade.md) |
 | Same-image hardware | Record a selected USB Device Check and a finite RF round trip, active Cancel, normal Quit, and resource release on the exact image with the authorized hardware configuration. |
 
-Use the reviewed private asset map at this path relative to the release
-workspace.
+The original private asset map is at the following path relative to the
+release workspace.
 
 ```text
 build/phase-1e11/20261122-rc1-build10-frozen-c5cd502/private/safari-first-install-20261123/handoff-doc-review-51f1b2d091c80a86/after/handoff.json
@@ -72,19 +79,25 @@ outer `RELEASE-SHA256SUMS`.
 
 ### Stage and verify the release attachments
 
-Use a fresh attachment directory. Stage the exact DMG and the eight
-external records from the private asset map. The DMG stays at its original
-packaging output path. The staged `SHA256SUMS` preserves the original
-creation-run checksum bytes. `release-manifest.json` pins the seven leaf
-assets. `RELEASE-SHA256SUMS` covers those seven and the manifest, with its own
-digest recorded in the private handoff.
+To reproduce the original review set, use a fresh attachment directory and
+stage the exact DMG and the eight external records from the private asset
+map. The original DMG stays at its packaging output path. The staged
+`SHA256SUMS` preserves the original creation-run checksum bytes.
+`release-manifest.json` pins the seven leaf assets. `RELEASE-SHA256SUMS`
+covers those seven and the manifest, with its own digest recorded in the
+private handoff.
 
-Set the directory, source commit, image SHA-256 and both outer-file SHA-256
-pins from the replacement's private handoff. Use the same checks on the
-staged and downloaded files.
+For the original review set, take the source, image, and outer-file pins
+from the private handoff above. For public downloads, use the same checks
+with the final manifest and outer checksum pins and point the directory
+variable to the nine downloaded files. Keep the quotes around the
+directory path. Run the checker on macOS with `jq` available on your
+`PATH`. It verifies the downloaded `SHA256SUMS` against the pinned outer
+list before using its entries.
+[Final public pins](../validation/phase-1e12-publication.md#public-release-and-anonymous-download)
 
 ```sh
-MESHCHAN_RELEASE_ASSETS=/absolute/path/to/replacement/review-assets
+MESHCHAN_RELEASE_ASSETS='/absolute/path/to/replacement/review-assets'
 MESHCHAN_RELEASE_SOURCE=frozen_compiled_source_commit
 MESHCHAN_RELEASE_DMG_SHA=accepted_dmg_sha256
 MESHCHAN_RELEASE_MANIFEST_SHA=pinned_release_manifest_sha256
@@ -106,8 +119,8 @@ MESHCHAN_RELEASE_SUMS_SHA=pinned_release_checksums_sha256
   printf '%s\n' "$names" | while IFS= read -r name; do
     test -f "./$name" && test ! -L "./$name" || exit 1
   done
-  /usr/bin/shasum -a 256 -c SHA256SUMS
   /usr/bin/shasum -a 256 -c RELEASE-SHA256SUMS
+  /usr/bin/shasum -a 256 -c SHA256SUMS
   test "$(jq -er .candidate.compiledSource release-manifest.json)" = "$MESHCHAN_RELEASE_SOURCE"
   test "$(jq -er .proposedTag.target release-manifest.json)" = "$MESHCHAN_RELEASE_SOURCE"
   test "$(jq -er .candidate.dmgSha256 release-manifest.json)" = "$MESHCHAN_RELEASE_DMG_SHA"
@@ -121,11 +134,8 @@ MESHCHAN_RELEASE_SUMS_SHA=pinned_release_checksums_sha256
 )
 ```
 
-Before authorized publication, recheck tag availability. Verify the created
-tag resolves to the frozen compiled source. Upload the verified manifest
-entries, `release-manifest.json` and `RELEASE-SHA256SUMS` unchanged.
-Download the actual release assets to a clean directory, run the checks above,
-and verify the tag target, image layout and usable corresponding sources.
+The final public checks also cover the tag target, image layout, and usable
+corresponding sources. [Public-download verification procedure](phase-1e12-publication.md#verify-the-public-download)
 
 ## Earlier Build 10 candidates
 

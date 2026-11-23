@@ -118,7 +118,7 @@ Keep these platform facts separate:
 | --- | --- |
 | Engineering deployment target | macOS `12.0` in the [Xcode project](../../apps/meshchan_app/macos/Runner.xcodeproj/project.pbxproj); this is a build setting. |
 | Recorded runtime environments | Build 5 preparation records macOS 27.2 arm64; the completion records the inventory-matched VM on macOS 27.2.1 (26B131). [1D.10](../validation/phase-1d10-regression-compatibility.md#actual-toolchain) also records macOS 27.2.1 arm64. These are historical tested environments, not a supported-version range. |
-| Selected Build 10 installation scope | **macOS 27.2.1 (26B131) arm64** is the measured Safari first-install and installed runtime environment. Closed Beta data continuity passed. Full historical Beta Finder replacement remains blocked. See the [Build 10 validation](../validation/phase-1e11-release-materials.md#frozen-build-10-closeout). |
+| Selected Build 10 installation scope | **macOS 27.2.1 (26B131) arm64** is the measured environment for the [Safari first install](../validation/phase-1e11-release-materials.md#frozen-build-10-closeout) and the [historical Beta Finder upgrade](../validation/phase-1e12-publication.md#historical-beta-finder-upgrade). |
 | Historical Build 8 upgrade and static loader floor | Build 8 passed first install and the full Beta build 5 upgrade on macOS 27.2.1 (26B131) arm64. Its complete arm64 App and CLI had a static loader floor of macOS 14.0. See the [1E.9 validation](../validation/phase-1e9-install-upgrade.md). |
 
 A universal executable's Intel slice does not establish Intel runtime support.
@@ -210,7 +210,7 @@ local candidate and image results.
 | Download and clean installation | Relocated local products and hardware-free VM UI records. | Real engineering download, actual quarantine and system prompts, a verified and documented user approval path under normal system protections, App and CLI offline behavior and independence from development tools, and a support conclusion tied to exact OS and architecture. Automatic Gatekeeper approval is outside the gate. | 1E.9; public recheck 1E.12 |
 | Upgrade and data continuity | Historical schema-1 producer/App/CLI interoperability and exclusive ownership. | Closed Beta fixture upgraded using the final candidate; drafts/profiles/settings/history and original run versions preserved, default-directory continuity, GUI/CLI contention and orderly handoff, normal Quit/reopen. | 1E.2, 1E.9 |
 | Limited real USB acceptance | 1D.11 finite exact round trips, fault/recovery, timeout, Cancel/Quit, with unresolved initialization limits. | Final packaged App/CLI identity; explicit selected-device Check, real exact round trip, active-operation Cancel or normal Quit and independent resource/process-release evidence. Retain failures and known limits; no reliability claim. | 1E.10 |
-| Publication and download verification | Channel and asset policy defined here; no final release evidence. | Tag/source correspondence, user instructions and acceptance summary available; uploaded files equal accepted files; actual public downloads match final checksums/build-info and required materials. | 1E.8, 1E.11, 1E.12 |
+| Publication and download verification | Channel and asset policy defined here. | Tag/source correspondence, user instructions and acceptance summary available; uploaded files equal accepted files; actual public downloads match final checksums/build-info and required materials. | 1E.8, 1E.11, 1E.12 |
 
 1E.6 verifies the actual local signature and runtime entitlements on the
 complete App and CLI. The build-time
@@ -235,17 +235,18 @@ route uses locally available coding and image tools and an owned VM workspace.
 
 | Item | Current evidence/status | Owner step | Blocks |
 | --- | --- | --- | --- |
-| Project license | Closed in 1E.3: GPL-3.0-only; Copyright (c) 2026 Meshchan Contributors. Root LICENSE/COPYRIGHT and the approved decision record preserve 007pig's authority/no-exceptions confirmation. | Maintainer / 1E.3 | License decision closed; GPL corresponding-source and later release gates remain. |
-| App and CLI third-party materials | Beta preserves notices for its graph; [earlier material gaps](phase-1c-dev3.md#materials-and-distribution-limits) and 1D.11 retain native source/build/relinking and AOT runtime correspondence work. Use the selected package receipts to bind actual Flutter/App and CLI coverage to the retained files. | 1E.3, integrated in 1E.5 | License gate and final distributable contents. |
+| Project license | Closed in 1E.3: GPL-3.0-only; Copyright (c) 2026 Meshchan Contributors. Root LICENSE/COPYRIGHT and the approved decision record preserve 007pig's authority/no-exceptions confirmation. | Maintainer / 1E.3 | License decision complete. |
+| App and CLI third-party materials | The final downloaded Build 10 matched the corresponding source, notices, and rebuild and replacement materials in the published inventory. [1E.12 public verification](../validation/phase-1e12-publication.md#public-release-and-anonymous-download) | 1E.3, integrated in 1E.5 and verified in 1E.12 | Materials gate complete for the published image. |
 | Developer ID, Apple Team, secure timestamps, notarization, and stapling | Inapplicable to the current profile. Deferred until explicitly requested by the maintainer. | Future official route | None for the engineering release. |
-| Engineering macOS scope and clean test coverage | The frozen Build 10 passed the co-located Safari first install on macOS 27.2.1 (26B131) arm64, normal item approvals, offline Save and Quit, and installed App and CLI replacement runtime. The frozen image also passed the closed Beta data fixture check. | Maintainer / 1E.9, carried forward in 1E.11 | Full historical Beta Finder replacement for this image remains blocked. Build 8 retains its own full upgrade result. |
+| Engineering macOS scope and clean test coverage | The frozen Build 10 passed the co-located Safari first install on macOS 27.2.1 (26B131) arm64, normal item approvals, offline Save and Quit, installed App and CLI replacement runtime, and the historical Beta Finder upgrade with offline continuity. | Maintainer / 1E.9, carried forward in 1E.11 and 1E.12 | The measured scope covers this macOS build on arm64. |
 | Build, local signing, and retention environments | Consume the frozen 1E.4 build and accepted 1E.5 package. Record actual signing and DMG tools, the checked VM, source-specific CI, and artifact transfer and retention. | 1E.4–1E.8 | Traceable builds, local acceptance, and preservation of the accepted candidate. |
 
 ## Remaining steps and handoff
 
 The [1E.11 handoff](phase-1e11-release-materials.md#build-10-replacement-candidate)
-records the completed release materials for frozen Build 10 and its open
-publication gates. The historical
+records the completed release materials and the gates that were open at
+handoff. The [1E.12 closeout](../validation/phase-1e12-publication.md) records
+the completed gates, public download and runtime verification. The historical
 [engineering handoff](#1e6-and-1e7-engineering-handoff) and
 [1E.8 validation record](../validation/phase-1e8-ci-retention.md) preserve the
 sealed and independently restored Build 8 used for 1E.9.
@@ -257,9 +258,9 @@ sealed and independently restored Build 8 used for 1E.9.
 | 1E.7 | [Build and independently accept the complete engineering DMG](phase-1e7-dmg.md). | Accepted local candidate, full image payload, read-only mount and complete extraction, owned detach, limited CLI and VM App runtime from the extracted copy, and final integrity and SHA-256. |
 | 1E.8 | [Provide CI, controlled engineering handoff, and evidence retention](phase-1e8-ci-retention.md). | Source-specific CI, repeatable entry point, and immutable retention of the accepted image, App/CLI, materials, checksums, and evidence. |
 | 1E.9 | [Accept engineering downloads, installation, and Beta upgrade](phase-1e9-install-upgrade.md). | Complete. The [validation record](../validation/phase-1e9-install-upgrade.md) covers the independent first install and the separate Beta build 5 upgrade on macOS 27.2.1 (26B131) arm64. Both used the pinned RC build 8 DMG. |
-| 1E.10 | Run limited real USB/RF acceptance on the final package. | The selected frozen Build 10 still needs its own USB Device Check and finite RF with active Cancel. The earlier revised Build 10 passed a USB Check on its own image. The [Build 9 hardware record](../validation/phase-1e10-hardware-acceptance.md) preserves the original candidate’s results and failures. |
+| 1E.10 | Run limited real USB/RF acceptance on the final package. | The selected frozen Build 10 passed USB Device Check, one exact PING/PONG, active Cancel, normal Quit, and independent resource-release and closed History checks. [1E.12 same-image evidence](../validation/phase-1e12-publication.md#same-image-host-hardware-verification) |
 | 1E.11 | Finalize engineering release documentation and materials. | **Complete.** The [handoff](phase-1e11-release-materials.md#build-10-replacement-candidate) pins the exact frozen Build 10 and its nine proposed assets. The [validation record](../validation/phase-1e11-release-materials.md) covers the closeout and preserves the earlier Build 9 material review. |
-| 1E.12 | Publish engineering assets and verify actual downloads. | **Blocked.** Exact-source CI, durable archive and independent restore, full historical Beta Finder upgrade, and same-image hardware acceptance are open. Use the [handoff](phase-1e11-release-materials.md#build-10-handoff-to-1e12) for the closing evidence and the public-download checks. |
+| 1E.12 | Publish engineering assets and verify actual downloads. | **Complete.** The Build 10 engineering prerelease was published. All nine anonymous downloads and the downloaded-product offline runtime checks passed. [Validation record](../validation/phase-1e12-publication.md#public-release-and-anonymous-download) · [GitHub Release](https://github.com/007pig/meshchan/releases/tag/v0.1.0-rc.1) |
 
 License materials and user documentation may advance in parallel. Prepare
 product changes, embedded materials, and user documentation before freezing the

@@ -14,7 +14,9 @@ to a writable location for rebuild or replacement work.
 The in-image `materials/materials-manifest.json` is the public materials
 record. It identifies the compiled source and lock digest and gives byte
 counts and SHA-256 values for the delivered material files. The volume-level
-`image-payload.json` identifies all shipped files. The product's public
+`image-payload.json` identifies all shipped files. The matching release
+attachment `release-materials-inventory.json` indexes its material-file
+subset. The product's public
 `signed-product-info.json` ties the distributable folder to the accepted
 `local-adhoc` products. Use the exact public digest in the release manifest
 when a procedure requires independent verification of that file.
@@ -33,7 +35,9 @@ when a procedure requires independent verification of that file.
 
 The image supplies the pinned SDK and native inputs needed alongside the
 first-party archive. The release manifest identifies the actual build recipe
-and toolchain.
+and toolchain. GitHub's generated source archives are repository snapshots.
+The disk image supplies the complete corresponding materials for this
+engineering release, including the pinned dependencies and native inputs.
 
 The pinned Flutter font archive has SHA-256
 `e56fa8e9bb4589fde964be3de451f3e5b251e4a1eafb1dc98d94add034dd5a86`.

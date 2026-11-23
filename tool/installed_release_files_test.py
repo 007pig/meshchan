@@ -144,7 +144,7 @@ class MountTests(unittest.TestCase):
     def setUp(self):
         self.vm = object()
         self.stamp = {'path': DOWNLOAD, 'device': 50, 'inode': 9}
-        self.download = {'file': self.stamp}
+        self.download = {'file': self.stamp, 'sha256': 'a'*64}
         self.volume = 'Meshchan 0.1.0-rc.1 build 8'
         self.details = {'BusProtocol': 'Disk Image', 'DeviceNode': '/dev/disk12s1',
                         'ParentWholeDisk': 'disk12', 'MountPoint': MOUNT,
@@ -210,6 +210,33 @@ class MountTests(unittest.TestCase):
                     plistlib.dumps(self.details).decode(), '501 20 40755', '0'*64]):
             with self.assertRaisesRegex(ValueError, 'payload manifest differs'):
                 files.observe_download_mount(self.vm, snapshot(), self.download, self.volume)
+
+    def test_later_candidate_mount_and_detach_use_the_volume_after_download_verification(self):
+        before = snapshot()
+        mounted = snapshot(image_row())
+        pins = {'volume_uuid': '4D76C372-0009-4BDD-A631-CC8D667124A3', 'manifest_sha256': 'b'*64}
+        details = {**self.details, 'VolumeUUID': pins['volume_uuid']}
+        volume = Path(MOUNT)
+        replies = {
+            (disk.DISKUTIL, 'info', '-plist', volume): plistlib.dumps(details).decode(),
+            ('/usr/bin/stat', '-f', '%u %g %p', volume): '501 20 40755',
+            ('/usr/bin/shasum', '-a', '256', volume/files.VOLUME_MANIFEST): pins['manifest_sha256'],
+            (disk.HDIUTIL, 'detach', volume): 'detached',
+        }
+
+        def ssh_read(vm, argv, **options):
+            if argv[-1] == Path(DOWNLOAD):
+                raise PermissionError('Raw Downloads file reads require the GUI executor')
+            return replies[tuple(argv)]
+
+        with patch.object(files, 'guest_file_stamp', return_value=self.stamp), \
+                patch.object(files, 'mount_snapshot', side_effect=[mounted]*4+[before]), \
+                patch.object(files, 'remote_text', side_effect=ssh_read):
+            report = files.observe_download_mount(self.vm, before, self.download, self.volume, **pins)
+            detached = files.detach_download_mount(self.vm, before, self.download, report, **pins)
+        self.assertEqual(report['volumeUuid'], pins['volume_uuid'])
+        self.assertEqual(detached['attachment'], report['attachment'])
+        self.assertEqual(detached['status'], 'PASS')
 
     def test_wrong_attachment_and_reused_device_do_not_eject(self):
         before = snapshot(image_row(path='/Users/test/unrelated.dmg', mount='/Volumes/unrelated'))
@@ -311,6 +338,54 @@ class FileTests(unittest.TestCase):
                                                        include_volume_materials=full)
                     self.assertEqual(report['layout']['cli'], f'{materials}/{prefix}{cli}')
                     self.assertEqual(tree.call_args.kwargs['quarantine_paths'], [f'{prefix}{cli}'])
+                    self.assertEqual(tree.call_args.kwargs['link_roots'], (f'{prefix}meshctl',))
+
+    def test_complete_guide_install_checks_the_pinned_volume_and_app_metadata(self):
+        vm = SimpleNamespace(c={'user': 'test'})
+        candidate = 'Meshchan-0.1.0-rc.1-macos-arm64'
+        destination = Path('/Users/test/Applications/Meshchan Engineering Build 10')
+        product = destination/candidate
+        app, cli = product/files.APP, 'meshctl/bin/meshctl'
+        app_prefix = f'{candidate}/{files.APP}'
+        identity = {'apple': {'CFBundleIdentifier': 'org.meshchan.meshchan'}}
+        signed_info = {'identity': identity, 'signature': {'items': [{'binary': cli}]}}
+        directory = {'mode': 0o755, 'type': 'directory'}
+        readme = files.bytes_entry(b'Meshchan')
+        inventory = {name: directory for name in ('.', candidate, app_prefix, app_prefix+'/Contents',
+                                                   f'{candidate}/meshctl', f'{candidate}/meshctl/bin', 'dmg-source')}
+        inventory.update({'README-engineering.md': readme, f'{candidate}/{cli}': files.bytes_entry(b'cli')})
+        raw = encoded({'formatVersion': 1, 'signingProfile': 'local-adhoc', 'candidatePath': candidate,
+                       'identity': identity, 'signedInfoSha256': sha(encoded(signed_info)),
+                       'inventoryExclusions': [files.VOLUME_MANIFEST], 'inventory': inventory})
+        info = plistlib.dumps(identity['apple']).decode()
+        app_inventory = {'.': directory, 'Contents': directory}
+        app_metadata = {'extendedAttributes': {'.': {files.QUARANTINE: {
+            'scope': files.SYSTEM_ATTRIBUTES[files.QUARANTINE], 'hex': '30313833',
+        }}}, 'ownershipAclAndFlags': 'root listing'}
+        options = {'scratch': None, 'policy': [], 'signed_info': signed_info, 'unified': True}
+        with patch.object(files, 'verify_guest_tree', return_value={'entries': len(inventory)+1}) as tree, \
+                patch.object(files, 'observe_metadata', return_value=app_metadata) as metadata, \
+                patch.object(files, 'verify_guest_signatures', return_value={}) as signatures, \
+                patch.object(files, 'remote_text', return_value=info):
+            report = files.verify_installation(vm, raw, sha(raw), app, destination, **options)
+            tree.assert_called_once_with(vm, destination, {**inventory, files.VOLUME_MANIFEST: files.bytes_entry(raw)},
+                                         scratch=None, link_roots=(app_prefix, f'{candidate}/meshctl'),
+                                         quarantine_paths=[f'{candidate}/{cli}'])
+            metadata.assert_called_once_with(vm, app, known_paths=app_inventory, quarantine_paths=())
+            signatures.assert_called_once_with(vm, app, product, [], signed_info)
+            self.assertEqual(report['app']['inventorySha256'], sha(encoded(app_inventory)))
+            self.assertEqual(report['app']['metadata'], app_metadata)
+            self.assertEqual(report['layout'], {'app': str(app), 'cli': str(product/cli),
+                                                'candidateMaterials': str(product),
+                                                'volumeMaterials': str(destination)})
+        for target, root, full, error in (
+                (destination/'another-candidate'/files.APP, destination, True, 'pinned candidate'),
+                (app, Path('/Volumes/Meshchan'), True, 'verified guest account'),
+                (app, Path('/private/tmp/staged'), True, 'verified guest account'),
+                (app, Path('/Users/other/Applications/staged'), True, 'verified guest account'),
+                (app, destination, False, 'complete installation')):
+            with self.subTest(target=target, root=root, full=full), self.assertRaisesRegex(ValueError, error):
+                files.verify_installation(vm, raw, sha(raw), target, root, include_volume_materials=full, **options)
 
     def test_changes_to_metadata_are_separate_from_sealed_bundle_bytes(self):
         path = Path('/Users/test/Applications/Meshchan.app')
@@ -365,6 +440,34 @@ class FileTests(unittest.TestCase):
             (root/'.extra').touch()
             with self.assertRaisesRegex(ValueError, r'\.extra'):
                 files.verify_guest_tree(LocalTransport(), root, inventory, scratch=scratch)
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'Uses macOS BSD tar and metadata commands')
+    def test_real_tree_allows_a_cli_link_only_within_the_pinned_cli_root(self):
+        class LocalTransport:
+            def remote(self, command, **kwargs):
+                return subprocess.run(command, shell=True, check=True, **kwargs)
+
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch).resolve()/'installed materials'
+            cli = root/'candidate/meshctl'
+            cli.mkdir(parents=True)
+            (cli/'binary').write_bytes(b'bundled CLI')
+            (cli/'alias').symlink_to('binary')
+            link_roots = ('candidate/meshctl',)
+            inventory = product_inventory(root)
+            report = files.verify_guest_tree(LocalTransport(), root, inventory, scratch=scratch,
+                                             link_roots=link_roots)
+            self.assertEqual(report['inventorySha256'], sha(encoded(inventory)))
+            (root/'material-alias').symlink_to('candidate/meshctl/binary')
+            with self.assertRaisesRegex(ValueError, 'Unexpected archive symlink: .*material-alias'):
+                files.verify_guest_tree(LocalTransport(), root, product_inventory(root), scratch=scratch,
+                                        link_roots=link_roots)
+            (root/'material-alias').unlink()
+            (cli.parent/'material').write_bytes(b'release material')
+            (cli/'outside').symlink_to('../material')
+            with self.assertRaisesRegex(ValueError, 'Archive link escapes its product: .*meshctl/outside'):
+                files.verify_guest_tree(LocalTransport(), root, product_inventory(root), scratch=scratch,
+                                        link_roots=link_roots)
 
 
 class DeploymentTests(unittest.TestCase):

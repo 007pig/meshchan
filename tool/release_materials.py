@@ -52,6 +52,14 @@ FRESH_HOOK_RECIPE = 45
 ASSET_INPUT_RECIPE = 47
 COMPLETE_ASSET_RECIPE = 49
 NATIVE_SOURCE_PACKAGES = frozenset(('libserialport_plus', 'sqlite3'))
+MACHO_LOCAL_PATH_PREFIXES = (b'/Users/', b'/home/', b'/private/tmp/', b'/var/folders/',
+                             b'file:///tmp/', b'/opt/homebrew/', b'/Volumes/')
+ABSOLUTE_TMP_PATH = re.compile(rb'''(?:^|[\x00\s"'=])/tmp/''')
+
+
+def contains_macho_local_path(data):
+    return (any(prefix in data for prefix in MACHO_LOCAL_PATH_PREFIXES)
+            or ABSOLUTE_TMP_PATH.search(data) is not None)
 
 
 def is_notice_declaration(name):

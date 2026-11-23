@@ -13,6 +13,9 @@ import tarfile
 from release_materials import product_inventory
 
 
+QUARANTINE_ATTRIBUTE = 'com.apple.quarantine'
+
+
 def compare(expected, actual, label):
     if expected != actual:
         different = sorted(key for key in expected.keys() | actual.keys()
@@ -203,11 +206,14 @@ class MacMetadata:
         self.lib = ctypes.CDLL(None, use_errno=True)
         self.lib.listxattr.argtypes = (ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
         self.lib.listxattr.restype = ctypes.c_ssize_t
+        self.lib.getxattr.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p,
+                                    ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int)
+        self.lib.getxattr.restype = ctypes.c_ssize_t
         self.lib.acl_get_link_np.argtypes = (ctypes.c_char_p, ctypes.c_int)
         self.lib.acl_get_link_np.restype = ctypes.c_void_p
         self.lib.acl_free.argtypes = (ctypes.c_void_p,)
 
-    def inspect(self, path):
+    def inspect(self, path, *, allow_quarantine=False):
         raw = os.fsencode(path)
         size = self.lib.listxattr(raw, None, 0, 1)  # XATTR_NOFOLLOW
         if size < 0:
@@ -218,7 +224,10 @@ class MacMetadata:
             if self.lib.listxattr(raw, buffer, size, 1) != size:
                 raise ValueError('Extended attributes changed during inspection: '+str(path))
             names = buffer.raw[:-1].decode().split('\0')
-        if set(names) - {'com.apple.provenance'}:
+        allowed = {'com.apple.provenance'}
+        if allow_quarantine:
+            allowed.add(QUARANTINE_ATTRIBUTE)
+        if set(names) - allowed:
             raise ValueError('Unsupported extended attributes (including resource forks): '+str(path))
         acl = self.lib.acl_get_link_np(raw, 0x100)  # ACL_TYPE_EXTENDED
         if acl:
@@ -230,13 +239,25 @@ class MacMetadata:
             raise ValueError('Unsupported file flags: '+str(path))
         return names
 
+    def quarantine(self, path):
+        raw, name = os.fsencode(path), QUARANTINE_ATTRIBUTE.encode('ascii')
+        size = self.lib.getxattr(raw, name, None, 0, 0, 1)  # XATTR_NOFOLLOW
+        if size < 0:
+            raise OSError(self.ctypes.get_errno(), 'Cannot read quarantine attribute', path)
+        if not 0 < size <= 4096:
+            raise ValueError('Unexpected quarantine attribute size: '+str(path))
+        buffer = self.ctypes.create_string_buffer(size)
+        if self.lib.getxattr(raw, name, buffer, size, 0, 1) != size:
+            raise ValueError('Quarantine attribute changed during inspection: '+str(path))
+        return buffer.raw
 
-def metadata_observations(root, inventory):
+
+def metadata_observations(root, inventory, *, allow_quarantine=False):
     if sys.platform != 'darwin':
         return {}
     inspector = MacMetadata()
     observations = {}
     for name in inventory:
-        if names := inspector.inspect(root/name):
+        if names := inspector.inspect(root/name, allow_quarantine=allow_quarantine):
             observations[name] = names
     return observations

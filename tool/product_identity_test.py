@@ -80,9 +80,9 @@ class ProductIdentityTest(unittest.TestCase):
                 apple_short_version(version)
 
     def test_source_template_and_explicit_build_progression(self):
-        app_build = 9
-        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', app_build)['CFBundleVersion'], '9')
-        for build in (0, -1, True, '6', 8):
+        app_build = 10
+        self.assertEqual(check_source_identity(c.ROOT, '0.1.0-rc.1', app_build)['CFBundleVersion'], '10')
+        for build in (0, -1, True, '6', 9):
             with self.assertRaises(ValueError):
                 check_source_identity(c.ROOT, '0.1.0-rc.1', build)
         with tempfile.TemporaryDirectory() as directory:

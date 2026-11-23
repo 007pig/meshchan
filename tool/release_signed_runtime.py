@@ -27,6 +27,8 @@ APP_FIXTURE = 'meshchan-1d3-package'
 CLI_TITLE = 'Signed release smoke'
 CLI_BODY = 'Offline sample 中文\r\nsecond line\n'
 METHOD = 'proc_pidinfo/PROC_PIDREGIONPATHINFO'
+PUBLIC_PAYLOAD = 'public-engineering-v1'
+CLI_SERIAL_INSTALL_NAME = '@rpath/lib/liblibserialport_plus.dylib'
 
 
 def image_probe_command(executable):

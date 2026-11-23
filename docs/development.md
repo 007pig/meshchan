@@ -76,7 +76,7 @@ A validated SemVer without build metadata maps its `major.minor.patch` to
 `MESHCHAN_PRODUCT_VERSION`, the Dart source identity and CLI. The positive integer
 `MESHCHAN_APP_BUILD` supplies `CFBundleVersion`; native `MeshchanProductVersion`
 preserves the full version for the standard About panel. App runtime and new
-App records use `0.1.0-rc.1+9`; CLI and new CLI records use `0.1.0-rc.1`.
+App records use `0.1.0-rc.1+10`. The CLI and new CLI records use `0.1.0-rc.1`.
 Database schema, diagnostic format, JSON envelope and radio protocol do not change.
 
 Use ordinary `flutter run -d macos`, Debug/Release builds and source tests with
@@ -90,9 +90,9 @@ product source of truth. Dart runtime uses the checked source constants, so test
 and direct Dart processes share the compiled identity without SDK defines.
 
 ```bash
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 9
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 10
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 9 \
+python3 tool/check_product_version.py --expected-version 0.1.0-rc.1 --app-build 10 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
@@ -225,7 +225,7 @@ Run these sequentially with the existing Flutter SDK and locked workspace:
 python3 apps/meshchan_app/tool/check_runtime_process.py --dart "$(command -v dart)"
 (cd apps/meshchan_app && flutter build macos --debug --no-pub)
 (cd apps/meshchan_app && flutter build macos --release --no-pub)
-python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 9 \
+python3 apps/meshchan_app/tool/check_macos_runtime.py --expected-version 0.1.0-rc.1 --app-build 10 \
   --app apps/meshchan_app/build/macos/Build/Products/Release/Meshchan.app
 ```
 
@@ -1033,21 +1033,25 @@ echo $?  # Expected: 64.
 
 ```bash
 dart build cli --help
-dart build cli --target=bin/meshctl.dart --output=build/dist
+dart build cli --target=lib/src/meshctl.dart --output=build/dist
 build/dist/bundle/bin/meshctl --help
 build/dist/bundle/bin/meshctl --version
 build/dist/bundle/bin/meshctl ports
 ```
 
-The verified macOS arm64 output is:
+The current macOS arm64 bundle layout is:
 
 ```text
 apps/meshctl/build/dist/bundle/
 ├── bin/meshctl
-└── lib/liblibserialport_plus.dylib
+├── lib/liblibserialport_plus.dylib
+└── lib/libsqlite3.dylib
 ```
 
-Both files were confirmed as Mach-O arm64. The dynamic library links to macOS system libraries/frameworks; it does not require a development pub-cache path. Build output stays ignored by Git. Copy the whole bundle, then run from outside the repository:
+The release build checks the executable and both libraries as Mach-O arm64.
+The native libraries link to macOS system libraries and frameworks. Build
+output stays ignored by Git. Copy the whole bundle, then run from outside the
+repository:
 
 ```bash
 # Run from apps/meshctl, after building.
@@ -1371,9 +1375,8 @@ no alternate SDK, upgrade, cache edit or permission change was performed.
 | `git diff --check` | Passed for the tracked patch; new Python/Markdown files were separately reviewed for whitespace. |
 | Linux enumeration refusal | Not applicable on this macOS host; not executed or simulated. CI will run real source/native `ports` and `ports --json`, requiring 69 and the exact guard diagnostic. |
 
-Fresh build output is retained for inspection at
-`/private/var/folders/g2/3ydgbl6n0xn9cv4h_sqv70qc0000gn/T/meshchan-step8.HVaxrh/`,
-with `meshctl/bundle/` and `observation/bundle/`. No old build was substituted;
+Fresh build output was retained in a run-specific directory below the macOS
+system temporary directory with `meshctl/bundle/` and `observation/bundle/`. No old build was substituted;
 user build directories were not removed. An intermediate tooling edit initially
 used a package cwd for a root-relative script path and failed with
 `FileNotFoundError`; it was corrected from the root before smoke execution. This

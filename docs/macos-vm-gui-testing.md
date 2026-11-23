@@ -309,10 +309,9 @@ comparison because TextEdit capitalized `abc` to `Abc`; the valid rerun used
 `ABC`. Original cliclick keyboard events and AppleEvents authorization attempts
 were abandoned in favor of the native-key/Accessibility workflow above.
 
-Large evidence remains local, outside Git, under
-`/Users/xiaoyu/.codex/visualizations/2026/11/14/01a1d8b9-b1c9-7832-8dad-efcb6a0af09a/`:
-`utm-ui-isolation/` and `utm-pinyin/`, with matching ZIP archives. These are local
-artifact locations, not portable prerequisites. Historical reports retain their
+Large evidence remains local, outside Git, in the November 14, 2026
+validation run `01a1d8b9-b1c9-7832-8dad-efcb6a0af09a` under
+`utm-ui-isolation/` and `utm-pinyin/`, with matching ZIP archives. Historical reports retain their
 original toolchain facts. New packaged-script reruns are recorded separately in
 [the packaging validation record](validation/macos-vm-gui-tooling.md).
 

@@ -641,12 +641,15 @@
 				CODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEPLOYMENT_POSTPROCESSING = YES;
 				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = debugging;
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

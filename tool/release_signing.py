@@ -359,16 +359,16 @@ def discover_code(root, policy):
     return inspect_code(root, policy, product_inventory_pair(root))
 
 
-def inspect_products(root, policy):
+def inspect_products(root, policy, *, allow_quarantine=False):
     inventory = product_inventory_pair(root)
     return {'inventory': inventory, 'codeItems': inspect_code(root, policy, inventory),
-            'filesystemMetadata': metadata_observations(root, inventory)}
+            'filesystemMetadata': metadata_observations(root, inventory, allow_quarantine=allow_quarantine)}
 
 
-def verify_transform(original_root, signed_root, policy, *, replacements=()):
+def verify_transform(original_root, signed_root, policy, *, replacements=(), allow_quarantine=False):
     """Compare the whole product trees, allowing only known signature changes."""
-    before = inspect_products(original_root, policy)
-    after = inspect_products(signed_root, policy)
+    before = inspect_products(original_root, policy, allow_quarantine=allow_quarantine)
+    after = inspect_products(signed_root, policy, allow_quarantine=allow_quarantine)
     files_before, files_after = before['inventory'], after['inventory']
     replacements = set(replacements)
     libraries = {item.binary for item in policy if not item.runtime}

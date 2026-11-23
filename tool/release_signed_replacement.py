@@ -20,9 +20,10 @@ import build_release as build
 import package_release_vm as vm_steps
 from release_materials import (ancestor_identities, controlled_environment, digest, directory_identity, encoded,
                                product_inventory, require_material_file, require_product_disjoint, safe, sections, sha)
-from release_package_archive import check_payload, compare, metadata_observations
+from release_package_archive import (MacMetadata, QUARANTINE_ATTRIBUTE, check_payload, compare,
+                                     metadata_observations)
 import release_signing as signing
-from release_signed_runtime import manifest_profile, parse_signed_info
+from release_signed_runtime import CLI_SERIAL_INSTALL_NAME, PUBLIC_PAYLOAD, manifest_profile, parse_signed_info
 
 
 APP = 'Meshchan.app'
@@ -40,6 +41,8 @@ SOURCE_FILES = tuple('src/libserialport/' + name for name in ('serialport.c', 't
 LIST_FUNCTION = b'SP_API enum sp_return sp_list_ports(struct sp_port ***list_ptr)\r\n{'
 SOURCE_MEMBER = re.compile(r'source-materials/archives/libserialport_plus-[0-9.]+\.tar\.gz')
 MARKER_START = 'MESHCHAN_MODIFIED_SERIAL_EMPTY_LIST:'
+QUARANTINE_VALUE = re.compile(rb'([a-fA-F0-9]{4});[a-fA-F0-9]{1,16};[^;\x00]*;'
+                              rb'([a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12})?')
 
 
 def checked_absolute(path):
@@ -67,13 +70,39 @@ def product_inventory_from_payload(inventory):
             if PurePosixPath(name).parts[:1] in ((APP,), (CLI,))}
 
 
-def original_payload(root, expected):
+def original_payload(root, expected, *, allow_quarantine=False):
     actual = product_inventory(root)
     compare(expected, actual, 'Pinned signed original inventory')
     for name, item in expected.items():
         if item['type'] == 'file':
             require_material_file(root, name)
-    return metadata_observations(root, actual)
+    return metadata_observations(root, actual, allow_quarantine=allow_quarantine)
+
+
+def quarantine_values(root, metadata):
+    names = [name for name, attributes in metadata.items() if QUARANTINE_ATTRIBUTE in attributes]
+    if not names:
+        return {}
+    inspector = MacMetadata()
+    return {name: inspector.quarantine(root/name).hex() for name in sorted(names)}
+
+
+def verify_copied_quarantine(expected, actual):
+    def identity(value):
+        match = QUARANTINE_VALUE.fullmatch(bytes.fromhex(value))
+        if match is None:
+            raise ValueError('Invalid macOS quarantine metadata on public replacement products')
+        flags, event = match.groups(default=b'')
+        return (int(flags, 16), event.lower())
+
+    expected_ids = {name: identity(value) for name, value in expected.items()}
+    actual_ids = {name: identity(value) for name, value in actual.items()}
+    compare(expected_ids, {name: actual_ids[name] for name in expected_ids if name in actual_ids},
+            'Public replacement copy quarantine')
+    # Native copy and signing can mark an additional parent or signature file.
+    # Any added marker must belong to an observed source quarantine event.
+    if set(actual_ids.values()) - set(expected_ids.values()):
+        raise ValueError('Unexpected macOS quarantine event on public replacement copies')
 
 
 def serial_archive(root, inventory):
@@ -131,13 +160,13 @@ def check_install_name(path, architectures, expected, command, label):
             raise ValueError(f'Unexpected libserialport install name for {arch}: {actual}')
 
 
-def replace_library(original, copies, path, source, compiler, sdk, command, label):
+def replace_library(original, copies, path, source, compiler, sdk, command, label, *, quarantined=False):
     old, new = original/path, copies/path
     arches = command(label+'-source-architectures', ['/usr/bin/lipo', '-archs', old]).split()
     if 'arm64' not in arches or set(arches) - {'arm64', 'x86_64'} or len(arches) != len(set(arches)):
         raise ValueError('Unsupported released libserialport architecture list')
     install_name = ('@rpath/libserialport_plus.framework/libserialport_plus' if path == APP_LIBRARY
-                    else '@rpath/lib/liblibserialport_plus.dylib')
+                    else CLI_SERIAL_INSTALL_NAME)
     check_install_name(old, arches, install_name, command, label+'-source-id')
     # Preserve the release paths and all supported slices. Xcode supplies the
     # system frameworks and SDK; no Flutter or Dart is used here.
@@ -160,7 +189,12 @@ def replace_library(original, copies, path, source, compiler, sdk, command, labe
         after = set(command(label+'-target-exports-'+arch, [*args, fresh]).splitlines())
         if '_sp_list_ports' not in before or before != after:
             raise ValueError('Modified libserialport exported symbols changed for ' + arch)
+    inspector = MacMetadata() if quarantined else None
+    quarantine = inspector.quarantine(new) if inspector is not None else None
+    # Overwrite the owned dylib in place so its filesystem metadata stays with it.
     shutil.copyfile(fresh, new)
+    if inspector is not None and inspector.quarantine(new) != quarantine:
+        raise ValueError('Quarantine changed while replacing the bundled library: '+path)
     if digest(new) == digest(old):
         raise ValueError('Modified libserialport bytes did not change')
     return {'path': path, 'architectures': arches, 'installName': install_name,
@@ -212,16 +246,43 @@ def verify_local_signatures(copies, policy, command, *, prefix='local'):
     return observed
 
 
-def prepare_copies(original, original_inventory, copies, evidence, archive, archive_sha,
-                   policy, marker, command):
+def copy_user_products(original, copies, command, *, preserve_quarantine=False):
     copies.mkdir()
-    stage_inventory = product_inventory_from_payload(original_inventory)
     for name in (APP, CLI):
-        shutil.copytree(original/name, copies/name, symlinks=True, copy_function=shutil.copy2)
+        if preserve_quarantine:
+            command('copy-public-'+name, ['/usr/bin/ditto', original/name, copies/name])
+        else:
+            shutil.copytree(original/name, copies/name, symlinks=True, copy_function=shutil.copy2)
+
+
+def prepare_copies(original, original_inventory, copies, evidence, archive, archive_sha,
+                   policy, marker, command, *, quarantine=None):
+    # The accepted native hook records the binding from the CLI's embedded
+    # dynamic asset table. Check it before compiling or changing user copies.
+    relative = 'materials/materials-manifest.json'
+    raw = require_material_file(original, relative).read_bytes()
+    if sha(raw) != original_inventory[relative]['sha256']:
+        raise ValueError('Original materials manifest changed')
+    index = json.loads(raw, object_pairs_hook=signing.policy_object)
+    try:
+        mapping = index['native'][CLI]['libserialport_plus']
+        loader = mapping['loader'][0].lstrip()
+        recorded_sections = mapping['sections']
+    except (AttributeError, IndexError, KeyError, TypeError):
+        raise ValueError('Materials manifest lacks a CLI serial native asset binding') from None
+    if (not loader.startswith(CLI_SERIAL_INSTALL_NAME+' (')
+            or recorded_sections != sections(original/CLI_LIBRARY)):
+        raise ValueError('CLI native asset binding differs from its bundled serial library')
+
+    copy_user_products(original, copies, command, preserve_quarantine=bool(quarantine))
+    stage_inventory = product_inventory_from_payload(original_inventory)
     copied = product_inventory(copies)
     compare(stage_inventory, {name: copied[name] for name in copied if name != '.'},
             'Unmodified user copies')
     check_payload(copies, copied)
+    if quarantine:
+        copied_metadata = metadata_observations(copies, copied, allow_quarantine=True)
+        verify_copied_quarantine(quarantine, quarantine_values(copies, copied_metadata))
     archive_copy = evidence/'libserialport-source.tar.gz'
     shutil.copyfile(archive, archive_copy)
     if digest(archive_copy) != archive_sha:
@@ -235,10 +296,12 @@ def prepare_copies(original, original_inventory, copies, evidence, archive, arch
     compiler = command('xcode-clang', ['/usr/bin/xcrun', '--find', 'clang']).strip()
     sdk = command('xcode-sdk', ['/usr/bin/xcrun', '--show-sdk-path']).strip()
     version = command('clang-version', [compiler, '--version'])
-    libraries = {path: replace_library(original, copies, path, source, compiler, sdk, command, label)
+    libraries = {path: replace_library(original, copies, path, source, compiler, sdk, command, label,
+                                       quarantined=path in (quarantine or {}))
                  for path, label in ((CLI_LIBRARY, 'cli-library'), (APP_LIBRARY, 'app-library'))}
     re_sign_local(copies, policy, command, evidence)
-    transform = signing.verify_transform(original, copies, policy, replacements=(CLI_LIBRARY, APP_LIBRARY))
+    transform = signing.verify_transform(original, copies, policy, replacements=(CLI_LIBRARY, APP_LIBRARY),
+                                         allow_quarantine=bool(quarantine))
     allowed = {CLI_LIBRARY, APP_LIBRARY, CLI_BINARY, APP_BINARY}
     allowed.update(item.seal for item in policy if item.path in (APP, APP_FRAMEWORK))
     changed = {entry['path'] for entry in transform['changedFiles']}
@@ -259,14 +322,7 @@ def prepare_copies(original, original_inventory, copies, evidence, archive, arch
     check_payload(copies, verified_inventory)
     env = controlled_environment()
     cli_loaders = build.loader_check(copies/CLI, copies/CLI_BINARY, env)
-    # The CLI embeds its dynamic asset table in the AOT image. Use the
-    # accepted native hook binding and preserved install name before the
-    # fresh process confirms the actual call using the unique marker.
-    index = json.loads((original/'materials/materials-manifest.json').read_bytes())
-    mapping = index['native'][CLI]['libserialport_plus']
-    if (CLI_LIBRARY.removeprefix(CLI+'/') not in cli_loaders
-            or not mapping['loader'][0].lstrip().startswith(libraries[CLI_LIBRARY]['installName']+' (')
-            or mapping['sections'] != sections(original/CLI_LIBRARY)):
+    if CLI_LIBRARY.removeprefix(CLI+'/') not in cli_loaders:
         raise ValueError('CLI does not reference its bundled serial native asset')
     _, assets = build.inspect_loaders(copies/APP, copies/APP_BINARY, env, app_assets=True)
     arm_assets = assets['macos_arm64']
@@ -638,21 +694,30 @@ def run(signed_root, output, *, inventory=None, signed_info_sha256, vm_config=No
     info = parse_signed_info(manifest)
     if manifest_profile(info) != signing.LOCAL_PROFILE:
         raise ValueError('The replacement test requires a local-adhoc candidate manifest')
-    upstream = info['upstream']
-    source = Path(upstream['sourceCheckout'])
-    package_run = Path(upstream['packageRun'])
-    check_bytes = require_material_file(root, UPSTREAM_CHECK).read_bytes()
-    if sha(check_bytes) != upstream['upstreamCheckReceiptSha256']:
-        raise ValueError('Archived upstream check receipt differs from the selected candidate')
-    upstream_check = json.loads(check_bytes, object_pairs_hook=signing.policy_object)
-    extract_root = Path(upstream_check['extractRoot'])
-    if not all(path.is_absolute() for path in (source, package_run, extract_root)):
-        raise ValueError('Replacement input has malformed upstream product paths')
-    upstream_paths = [inspectable_upstream_path(path)
-                      for path in (source/safe(upstream['buildRun']), package_run, extract_root)]
-    source_guard = inspectable_upstream_path(source)
-    if directory_identity(source_guard) != directory_identity(build.ROOT):
-        upstream_paths.append(source_guard)
+    upstream_paths = []
+    if 'payloadProfile' in info:
+        private_pin = info.get('privateSignedInfoSha256')
+        source_commit = info.get('compiledSource')
+        if (info['payloadProfile'] != PUBLIC_PAYLOAD or 'upstream' in info
+                or not isinstance(private_pin, str) or not re.fullmatch(r'[0-9a-f]{64}', private_pin)
+                or not isinstance(source_commit, str) or not re.fullmatch(r'[0-9a-f]{40}', source_commit)):
+            raise ValueError('Malformed public candidate provenance')
+    else:
+        upstream = info['upstream']
+        source = Path(upstream['sourceCheckout'])
+        package_run = Path(upstream['packageRun'])
+        check_bytes = require_material_file(root, UPSTREAM_CHECK).read_bytes()
+        if sha(check_bytes) != upstream['upstreamCheckReceiptSha256']:
+            raise ValueError('Archived upstream check receipt differs from the selected candidate')
+        upstream_check = json.loads(check_bytes, object_pairs_hook=signing.policy_object)
+        extract_root = Path(upstream_check['extractRoot'])
+        if not all(path.is_absolute() for path in (source, package_run, extract_root)):
+            raise ValueError('Replacement input has malformed upstream product paths')
+        upstream_paths = [inspectable_upstream_path(path)
+                          for path in (source/safe(upstream['buildRun']), package_run, extract_root)]
+        source_guard = inspectable_upstream_path(source)
+        if directory_identity(source_guard) != directory_identity(build.ROOT):
+            upstream_paths.append(source_guard)
     require_product_disjoint({'Replacement output': output}, upstream_paths,
                              protected='an upstream release input')
     expected = info['payloadInventory']
@@ -668,9 +733,16 @@ def run(signed_root, output, *, inventory=None, signed_info_sha256, vm_config=No
 
 
 def _run_replacement(root, output, info, full_expected, config, timeout, *, configuration):
-    original_metadata = original_payload(root, full_expected)
+    public = info.get('payloadProfile') == PUBLIC_PAYLOAD
+    original_metadata = original_payload(root, full_expected, allow_quarantine=public)
+    original_quarantine = quarantine_values(root, original_metadata)
     signed_info_sha256 = full_expected[MANIFEST]['sha256']
     expected = info['payloadInventory']
+    product_quarantine = {name: original_quarantine[name] for name in product_inventory_from_payload(expected)
+                          if name in original_quarantine}
+    if config is not None and product_quarantine:
+        raise ValueError('Use local macOS approvals for the quarantined replacement copies. '
+                         'The paired VM transfer does not preserve quarantine.')
 
     output.mkdir(mode=0o700)
     evidence = output/'evidence'
@@ -684,6 +756,8 @@ def _run_replacement(root, output, info, full_expected, config, timeout, *, conf
               'signedInfoSha256': signed_info_sha256, 'identity': info['identity'],
               'filesystemMetadata': {'originalBefore': original_metadata},
               'signedRoot': str(root), 'cli': {'status': 'NOT_RUN'}, 'app': {'status': 'NOT_RUN'}}
+    if public:
+        report['filesystemMetadata']['quarantine'] = {'originalBefore': original_quarantine}
     receipt = evidence/'replacement-receipt.json'
     env = {**controlled_environment(), 'TMPDIR': str(scratch)}
     runner = build.Runner(output, evidence, report, env, timeout=timeout)
@@ -704,19 +778,29 @@ def _run_replacement(root, output, info, full_expected, config, timeout, *, conf
         archive, report['sourceArchive'] = serial_archive(root, expected)
         report['replacement'] = prepare_copies(root, expected, copies, evidence, archive,
                                                 report['sourceArchive']['sha256'], policy,
-                                                marker, runner.command)
+                                                marker, runner.command, quarantine=product_quarantine)
         modified = report['replacement']['verifiedInventory']
         check_payload(copies, modified)
-        report['filesystemMetadata']['modifiedBefore'] = metadata_observations(copies, modified)
+        copied_metadata = metadata_observations(copies, modified, allow_quarantine=public)
+        report['filesystemMetadata']['modifiedBefore'] = copied_metadata
+        if public:
+            copied_quarantine = quarantine_values(copies, copied_metadata)
+            report['filesystemMetadata']['quarantine']['modifiedBefore'] = copied_quarantine
+            verify_copied_quarantine(product_quarantine, copied_quarantine)
         library_hashes = report['replacement']['libraries']
         if any(digest(copies/path) != row['signedReplacementSha256']
                for path, row in library_hashes.items()):
             raise ValueError('Synthetic replacement library changed before execution')
         report['modifiedInventorySha256'] = sha(encoded(modified))
-        report['cli'] = {'status': 'FAIL'}
-        report['cli'] = {'status': 'PASS', **run_cli(copies, output/'cli working directory', runner, marker,
-                                        library_hashes[CLI_LIBRARY]['signedReplacementSha256'])}
-        build.write(receipt, report)
+        if product_quarantine:
+            for role, path in (('cli', CLI_BINARY), ('app', APP)):
+                report[role].update(path=str(copies/path),
+                                    reason='Use normal macOS approval to test this exact prepared copy locally.')
+        else:
+            report['cli'] = {'status': 'FAIL'}
+            report['cli'] = {'status': 'PASS', **run_cli(copies, output/'cli working directory', runner, marker,
+                                            library_hashes[CLI_LIBRARY]['signedReplacementSha256'])}
+            build.write(receipt, report)
         if config is not None:
             app_inventory = {'.' if name == APP else name.removeprefix(APP+'/'): entry
                              for name, entry in modified.items()
@@ -731,11 +815,20 @@ def _run_replacement(root, output, info, full_expected, config, timeout, *, conf
                                     library_hashes[APP_LIBRARY]['signedReplacementSha256'],
                                     app_inventory=app_inventory, on_failure=publish_app_failure,
                                     configuration=configuration)}
-        else:
+        elif not product_quarantine:
             report['app']['reason'] = 'The independent guest App acceptance requires --vm-config'
         check_payload(copies, modified)
-        report['filesystemMetadata']['modifiedAfter'] = metadata_observations(copies, modified)
-        report['filesystemMetadata']['originalAfter'] = original_payload(root, full_expected)
+        copied_metadata = metadata_observations(copies, modified, allow_quarantine=public)
+        report['filesystemMetadata']['modifiedAfter'] = copied_metadata
+        original_after = original_payload(root, full_expected, allow_quarantine=public)
+        report['filesystemMetadata']['originalAfter'] = original_after
+        if public:
+            copied_after = quarantine_values(copies, copied_metadata)
+            original_after_quarantine = quarantine_values(root, original_after)
+            report['filesystemMetadata']['quarantine'].update(modifiedAfter=copied_after,
+                                                               originalAfter=original_after_quarantine)
+            compare(copied_quarantine, copied_after, 'Prepared public candidate quarantine')
+            compare(original_quarantine, original_after_quarantine, 'Original public candidate quarantine')
         report['finalIntegrity'] = 'PASS'
         report['status'] = 'PASS' if report['app']['status'] == 'PASS' else 'INCOMPLETE'
     except (Exception, KeyboardInterrupt) as error:

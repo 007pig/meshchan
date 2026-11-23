@@ -1,10 +1,20 @@
 # Meshctl diagnostics
 
+The engineering CLI version is `0.1.0-rc.1`. The Build 10 candidate pairs the
+complete `meshctl/` directory with App `0.1.0-rc.1+10`. Use the
+[Build 10 user guide](releases/rc1-build10-engineering-guide.md) for the
+co-located installation and native approval steps for the complete CLI. The
+[validation summary](releases/rc1-build10-validation-summary.md) records
+the installed SQLite and synthetic serial library checks. The
+[Build 9 guide](releases/rc1-engineering-guide.md) applies to the retained
+original image. The source commands and protocol details below describe the
+repository checkout.
+
 The CLI includes the 1A `ports`, `port-check`, `info`, and `watch` diagnostics
 and the 1B.7 finite `datagram send/listen/ping/respond` commands. 1B.8 adds
 [shared serial-byte source/AOT acceptance](testing.md#datagram-cross-layer-coverage-audit-1b8)
 and [software evidence](development.md#1b8-software-validation-on-november-10-2026).
-The application version is `0.1.0-dev.3`. Real-device Direct tests established
+Historical real-device Direct tests established
 exact round trips in both directions, the binary boundary, and no-responder
 timeout. H2 local acceptance and H7 active cancellation subsequently passed an
 explicitly authorized B-command-15-second/A-5-second comparison, retaining all
@@ -26,9 +36,10 @@ cd apps/meshctl
 "$MESHCHAN_DART" run bin/meshctl.dart datagram ping --help
 ```
 
-Build with `"$MESHCHAN_DART" build cli --target=bin/meshctl.dart --output=build/dist`.
+Build with `"$MESHCHAN_DART" build cli --target=lib/src/meshctl.dart --output=build/dist`.
+This target uses a stable package URI in the compiled executable.
 Then `build/dist/bundle/bin/meshctl` is equivalent to the source invocation.
-Distribute the entire bundle, including its native library. Source invocations
+Keep the entire bundle, including both native libraries. Source invocations
 may emit native build-hook diagnostics before the application starts.
 
 ## Offline business commands and storage (1C.8)
@@ -38,7 +49,7 @@ commands and opt-in recording blocks extend CLI `schemaVersion: 1`. Database
 schema/snapshot 1 and `diagnosticSummaryFormatVersion: 1` are independent and
 unchanged. The [1C delivery record](releases/phase-1c-dev3.md) documents the
 historical `0.1.0-dev.3` introduction of these commands. The current Release
-candidate is `0.1.0-rc.1`. See the [engineering package validation](validation/phase-1e5-package.md).
+candidate is `0.1.0-rc.1`. See the [engineering release handoff](releases/phase-1e11-release-materials.md).
 
 Put the global directory option before the command:
 

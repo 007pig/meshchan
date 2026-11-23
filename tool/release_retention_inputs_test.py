@@ -10,7 +10,7 @@ import unittest
 import package_dmg as dmg
 import release_retention_inputs as retention
 import release_signed_runtime as runtime
-from release_materials import encoded, sha
+from release_materials import encoded, product_inventory, sha
 from release_retention_archive import scanned_input
 
 
@@ -305,6 +305,99 @@ class EvidenceTests(unittest.TestCase):
                 reader = retention.RetainedRead(self.locate, live=False)
                 with self.assertRaisesRegex(ValueError, f'Frozen build information {field} differs'):
                     retention.frozen_build(reader, upstream, {})
+
+    def test_frozen_build_accepts_a_pinned_materials_retry_directory(self):
+        source = self.original/'checkout'
+        build_run = 'build/phase-1e4/run'
+        run = source/build_run
+        evidence = run/'evidence'
+        commit = 'a'*40
+        identity = {'target': 'macos-arm64', 'appBuild': '10', 'productVersion': '0.1.0-rc.1'}
+        app, cli = retention.build.product_paths(run)
+        self.write(app/'Contents/MacOS/Meshchan', b'app')
+        self.write(cli/'bin/meshctl', b'cli')
+        self.write(run/'native-hooks/receipt.json', b'{}')
+
+        def ref(path, raw):
+            return {'path': path.relative_to(source).as_posix(), 'sha256': self.write(path, raw)}
+
+        inputs = encoded({'apps/meshctl/lib/src/meshctl.dart': 'b'*64})
+        validation = encoded({'status': 'PASS', 'pathAudit': {
+            'app': ['Contents/MacOS/Meshchan'], 'cli': ['bin/meshctl'],
+        }})
+        records = {
+            'run_build.py': b'# frozen build driver\n',
+            'candidate-inventories.json': encoded({
+                'app': product_inventory(self.locate(app)), 'cli': product_inventory(self.locate(cli)),
+            }),
+            'candidate-checksums.txt': b'fixture checksums\n',
+            'prebuild-identities.json': encoded({'source': {}, 'sourceMetadata': {}, 'configuration': {}}),
+            'resolved-graph.json': encoded({'packages': []}),
+            'compiler-inputs.json': encoded({'depfileHashes': {}}),
+            'product-checks.json': validation,
+            **dict.fromkeys(('compilation-input-hashes.json', 'inputs-before-configuration.json',
+                            'inputs-after-cli.json', 'inputs-after-app.json'), inputs),
+        }
+        proof = {name: ref(evidence/name, raw) for name, raw in records.items()}
+        stdout = ref(evidence/'logs/validate-products.log', validation)
+        stderr = ref(evidence/'logs/validate-products.stderr.log', b'')
+        step = {'name': 'validate-products', 'exitCode': 0,
+                'log': stdout['path'], 'logSha256': stdout['sha256'],
+                'stderrLog': stderr['path'], 'stderrLogSha256': stderr['sha256'],
+                'processTree': {'exited': True, 'childReaped': True}}
+        products = {'app': app.relative_to(source).as_posix(), 'cli': cli.relative_to(source).as_posix()}
+        context = {'formatVersion': 1, 'sourceCommit': commit, 'recipeVersion': 57,
+                   'engineeringDirtyMode': False, 'workingTree': '', **products}
+        receipt = {
+            **context, 'status': 'PASS', 'inputsUnchangedAcrossBuilds': True, 'steps': [step],
+            'nativeHookCacheSha256': sha(encoded(product_inventory(self.locate(run/'native-hooks')))),
+            **{field: proof[name]['sha256'] for field, name in (
+                ('runnerSha256', 'run_build.py'), ('candidateInventoriesSha256', 'candidate-inventories.json'),
+                ('candidateChecksumsSha256', 'candidate-checksums.txt'),
+                ('prebuildIdentitiesSha256', 'prebuild-identities.json'), ('resolvedGraphSha256', 'resolved-graph.json'),
+                ('compilationInputsSha256', 'compilation-input-hashes.json'),
+                ('compilerInputsSha256', 'compiler-inputs.json'), ('productChecksSha256', 'product-checks.json'),
+            )},
+        }
+        proof['build-receipt.json'] = ref(evidence/'build-receipt.json', encoded(receipt))
+        info = {**context, 'runIdentity': build_run, 'identity': identity,
+                'buildStatus': 'PASS', 'productChecksStatus': 'PASS', 'recipe': [step], 'evidence': proof,
+                'sourceInputIdentity': sha(encoded({})), 'helperHashes': {}, 'controlledConfiguration': {'generated': {}}}
+        upstream = {'sourceCheckout': str(source), 'buildRun': build_run,
+                    'sourceCommit': commit, 'buildRecipeVersion': 57}
+        material = b'fixture license\n'
+        manifest = encoded({
+            'sourceCommit': commit, 'products': {'buildReceipt': proof['build-receipt.json']}, 'openGates': [],
+            'materials': {'LICENSE': {'size': len(material), 'sha256': sha(material)}},
+        })
+        for name in ('materials', 'materials-retry'):
+            directory = retention.build.material_destination(self.locate(run), name)
+            self.assertEqual(directory.parent, self.locate(run))
+            self.write(run/name/'LICENSE', material)
+            ref(run/name/'materials-manifest.json', manifest)
+        upstream['materialsManifestSha256'] = sha(manifest)
+
+        def verify(output, manifest_dir):
+            info['materials'] = {
+                'status': 'PASS', 'arguments': {'output': str(output)},
+                'references': {'materials-manifest.json': {
+                    'path': (manifest_dir/'materials-manifest.json').relative_to(source).as_posix(),
+                    'sha256': upstream['materialsManifestSha256'],
+                }},
+            }
+            upstream['buildInfoSha256'] = self.write(run/'build-info.json', encoded(info))
+            reader = retention.RetainedRead(self.locate, live=False)
+            return retention.frozen_build(reader, upstream, identity)[3]['materials']
+
+        for name in ('materials', 'materials-retry'):
+            destination = run/name
+            with self.subTest(name=name):
+                self.assertEqual(verify(destination, destination),
+                                 (destination, product_inventory(self.locate(destination))))
+        with self.assertRaisesRegex(ValueError, 'direct child'):
+            verify(run/'nested/materials-retry', run/'materials-retry')
+        with self.assertRaisesRegex(ValueError, 'material manifest location'):
+            verify(run/'materials-retry', run/'materials')
 
     def test_frozen_recheck_requires_versioned_build_ledgers(self):
         source = self.original/'checkout'

@@ -8,9 +8,16 @@ Navigation, rebuilds, focus and minimization do not reopen storage or recover ag
 The public core packages and CLI remain pure Dart. The application uses the same
 root Pub lockfile; do not resolve a separate member lockfile.
 
-The current Release build candidate is `0.1.0-rc.1+9`; see the
-[version input contract](../../docs/development.md#product-version-and-native-identity-1e2).
-Its RC identity does not inherit historical hardware acceptance.
+Use the [Build 10 user guide](../../docs/releases/rc1-build10-engineering-guide.md)
+for the verified co-located installation, normal macOS approvals, Quit and
+backup. The
+[release handoff](../../docs/releases/phase-1e11-release-materials.md#build-10-replacement-candidate)
+identifies the frozen candidate and the scope of its VM acceptance.
+The [Build 9 user guide](../../docs/releases/rc1-engineering-guide.md) and
+[hardware record](../../docs/validation/phase-1e10-hardware-acceptance.md)
+apply to the original Build 9 image. See the
+[version input contract](../../docs/development.md#product-version-and-native-identity-1e2)
+for the source build identity.
 The historical complete `0.1.0-beta.1+5` Release has
 [local finite beta acceptance with documented limits](../../docs/validation/phase-1d11-rf-matrix-completion.md).
 Real USB/RF, physical fault/recovery, Cancel and active Quit were tested on the
@@ -240,9 +247,9 @@ open -n "$MESHCHAN_BUILD_ROOT/Derived/Build/Products/Release/Meshchan.app" \
 
 Only macOS platform files are generated. The minimum target is macOS 12.0.
 The product is `Meshchan`, Bundle identifier `org.meshchan.meshchan`. The package
-version is `0.1.0-rc.1+9`. Tracked `Configs/Version.xcconfig` supplies Apple's
-numeric `0.1.0` / `9` and the full `MeshchanProductVersion`. The standard About
-panel displays `0.1.0-rc.1` and build `9`. Native preflight rejects conflicting
+version is `0.1.0-rc.1+10`. Tracked `Configs/Version.xcconfig` supplies Apple's
+numeric `0.1.0` / `10` and the full `MeshchanProductVersion`. The standard About
+panel displays `0.1.0-rc.1` and build `10`. Native preflight rejects conflicting
 Flutter inputs; actual plist and compiled runtime are checked separately.
 The previous build 3 observed short version was `0.1.0.1`, build `3`; its Dart
 build defines retained `0.1.0-beta.1` and `3`. Build 4 was independently observed
@@ -505,7 +512,7 @@ required. Preview resolves saved parameters without accessing hardware. Click
 **Start and record** to capture the request and selected path; the worker resolves
 again, freezes the effective parameters and calls public `CoreStorage.record()`.
 The core commits registration before invoking a fresh lazy transport factory.
-The current candidate records `0.1.0-rc.1+9`, using the source identity checked
+The current source records `0.1.0-rc.1+10`, using the source identity checked
 against manifests and raw native build inputs, including direct Dart processes.
 Historical runs retain their original app/build version.
 

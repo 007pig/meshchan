@@ -6,7 +6,7 @@ The Apple bundle short version is `0.1.0`, its build is `10`, and its identifier
 is `org.meshchan.meshchan`. The Build 10 candidate uses compiled source
 `c5cd5021da5e62c60127678b650d970721263296`.
 
-This proposed engineering image is **held for review**. It is 669,400,332
+This engineering prerelease image is 669,400,332
 bytes with SHA-256
 `0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`.
 The [validation summary](rc1-build10-validation-summary.md) records the
@@ -31,7 +31,7 @@ Build 8 and Build 9 records cover their respective images.
 
 ## Verify the download
 
-Use the files listed for this exact candidate. For
+Get the files for this exact candidate from the [Build 10 prerelease](https://github.com/007pig/meshchan/releases/tag/v0.1.0-rc.1). For
 the complete attachment check, put `RELEASE-SHA256SUMS` and every file it lists
 in the same directory. That includes the DMG
 `Meshchan-0.1.0-rc.1-build10-macos-arm64-local.dmg`, the image's `SHA256SUMS`,
@@ -232,11 +232,12 @@ when recording is off. Put `--data-dir` before `datagram` if you need an overrid
    the matching installed CLI, or reopen the App and check the saved change.
    Quit normally again.
 
-The selected Build 10 passed continuity checks using a closed Beta data
-fixture. Full Finder replacement of the historical Beta App is still pending
-for this image. The earlier Beta build 5 to RC build 8 upgrade was measured
-on macOS 27.2.1 (26B131) arm64. Keep a closed backup for recovery. Downgrade,
-automatic restore, and import are outside this engineering procedure. To remove the
+Finder Replace upgraded the historical Beta build 5 App to this Build 10
+at the same installation path on macOS 27.2.1 (26B131) arm64. The App
+retained the drafts, profiles, settings, and 12 History entries. It saved
+one new draft, which the installed CLI and reopened App both read back.
+Keep a closed backup for recovery. Downgrade, automatic restore, and import
+are outside this engineering procedure. To remove the
 installation, first quit and wait for exit, then remove your chosen App and CLI
 installation. Keep the separate data directory for future use or backup.
 
@@ -281,8 +282,10 @@ The App and CLI share a startup compatibility path for the recognized Heltec
 V4.3 OLED USB Companion. It handles a bounded startup prefix and requires a
 valid `SELF_INFO` and the completion query's `DEVICE_INFO` before reporting
 ready. Initialization can still fail. Consult the Build 10 release manifest
-for the precise board and finite checks recorded for this image. Range,
-throughput, and long-run reliability remain outside that scope.
+for the precise board and finite checks recorded for this image. The host
+test completed one USB Check, one exact PING/PONG exchange, active Cancel,
+normal Quit, and independent resource-release checks. Range, throughput,
+and long-run reliability remain outside that scope.
 
 ## Report an issue
 

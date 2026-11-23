@@ -1,15 +1,17 @@
 # Meshchan
 
-The held macOS arm64 Build 10 candidate pairs **Meshchan 0.1.0-rc.1+10**
+The macOS arm64 Build 10 engineering prerelease pairs **Meshchan 0.1.0-rc.1+10**
 with **meshctl 0.1.0-rc.1** from frozen product commit
-`c5cd5021da5e62c60127678b650d970721263296`. Use the
-[Build 10 user guide](docs/releases/rc1-build10-engineering-guide.md),
-[release notes](docs/releases/rc1-build10-release-notes.md), and
-[source and license index](docs/releases/rc1-build10-source-materials.md)
-for the matching image and materials. The privacy audit, independent Safari
-first install and installed App and CLI replacement runtime passed. The
-[release handoff](docs/releases/phase-1e11-release-materials.md#build-10-handoff-to-1e12)
-lists the publication gates still open.
+`c5cd5021da5e62c60127678b650d970721263296`.
+[Download Build 10 from GitHub Releases](https://github.com/007pig/meshchan/releases/tag/v0.1.0-rc.1)
+
+The release attachments cover installation, changes, corresponding source,
+and license materials. [Engineering guide](https://github.com/007pig/meshchan/releases/download/v0.1.0-rc.1/rc1-build10-engineering-guide.md) ·
+[Release notes](https://github.com/007pig/meshchan/releases/download/v0.1.0-rc.1/rc1-build10-release-notes.md) ·
+[Source and license index](https://github.com/007pig/meshchan/releases/download/v0.1.0-rc.1/rc1-build10-source-materials.md)
+
+The privacy audit, independent Safari first install, and installed App and
+CLI replacement runtime passed. [1E.12 publication and validation](docs/releases/phase-1e12-publication.md)
 
 The [Build 9 user guide](docs/releases/rc1-engineering-guide.md),
 [release notes](docs/releases/rc1-engineering-release-notes.md), and
@@ -27,8 +29,7 @@ recovery, expected timeout, receiving Cancel and active native Quit. Offline
 Save/reopen and twelve-row safe export use the same complete Release, with the
 remaining hardware-free UI run in the operator-selected macOS VM. Intermittent
 USB initialization, a failed scheduling-margin assertion and host synthetic-input
-observations retain their documented limits. 1D.11 local acceptance is closed;
-1E distribution work remains.
+observations retain their documented limits. 1D.11 local acceptance is closed.
 The [1E release contract](docs/releases/phase-1e-plan.md) defines the
 engineering release scope, gates, open decisions, and handoffs.
 The earlier [fresh build 5 continuation](docs/validation/phase-1d11-build5-gui-delay.md)

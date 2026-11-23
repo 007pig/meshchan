@@ -1,9 +1,9 @@
-# Meshchan 0.1.0-rc.1 Build 10 engineering candidate
+# Meshchan 0.1.0-rc.1 Build 10 engineering release
 
 The macOS arm64 engineering image pairs Meshchan App `0.1.0-rc.1+10` with
 the complete `meshctl 0.1.0-rc.1` bundle from `c5cd5021da5e62c60127678b650d970721263296`.
 The 669,400,332-byte image has SHA-256
-`0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`. Publication is blocked.
+`0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`.
 
 Both products use local ad hoc signatures. The read-only disk image
 container is unsigned and unnotarized. The matching
@@ -19,7 +19,7 @@ separate signed copies while preserving ordinary download quarantine.
 The App supports offline drafts, profiles, settings, and History.
 USB diagnostics use an explicitly selected MeshCore Companion. See the
 [validation summary](rc1-build10-validation-summary.md) for this image's
-acceptance scope and remaining gates. The [source and license index](rc1-build10-source-materials.md)
+bounded acceptance scope. The [source and license index](rc1-build10-source-materials.md)
 maps the corresponding source and replacement materials.
 
 The exact image was downloaded with Safari and installed together in a
@@ -34,3 +34,10 @@ macOS protections. The CLI returned an empty port list, and the App showed
 empty ports after Refresh and quit normally. The end-to-end invocation
 of the shipped preparation command was measured on the separate engineering
 extraction.
+
+The four prepublication gates passed for this image. CI completed for the
+exact frozen source, and the sealed archive independently restored the
+same image. Finder Replace upgraded Beta build 5 with data continuity,
+and the arm64 host completed USB Check, an exact RF round trip, active
+Cancel, and normal Quit. System verification was on macOS 27.2.1 (26B131)
+arm64. Public download verification is a separate postpublication step.

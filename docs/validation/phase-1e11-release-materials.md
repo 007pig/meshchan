@@ -4,18 +4,20 @@
 
 The November 23, 2026 documentation closeout binds the selected macOS arm64
 engineering image to the frozen product and DMG tool commit
-`c5cd5021da5e62c60127678b650d970721263296`. The original 669,400,332-byte DMG has SHA-256
-`0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`. The four candidate-facing repository documents use the exact
-bytes of the private review attachments. The tracked navigation now
-points to this candidate. The frozen source and in-image materials retain
-their original pins.
+`c5cd5021da5e62c60127678b650d970721263296`. The original 669,400,332-byte
+DMG has SHA-256
+`0f7232479e33cdfb28862b2253bfdd92aad623f985e4fbe9a89989cab949e4bb`.
+At the 1E.11 closeout, the four candidate-facing repository documents
+matched the private review attachments. The repository copies now match
+the final 1E.12 attachments. The frozen source and in-image materials
+retain their original pins. [1E.12 publication and verification](phase-1e12-publication.md)
 
 | Evidence | Result |
 | --- | --- |
 | Exact candidate build and privacy | Recipe 57, strict corresponding materials, independent package and DMG checks, and local ad hoc signatures passed. The two privacy audits reported zero findings across 693 image entries, 403 first-party archive entries, and eight Mach-O files. |
 | Independent Safari first install | PASS on macOS 27.2.1 (26B131) arm64 in the Host Only VM. The native Safari quarantine event, complete co-located installation, separate App/CLI/SQLite approval, offline Save, owner contention, normal Quit, and reopen were verified. |
 | Installed App and CLI replacement | PASS for native runtime from same-guest copies of that Safari installation, using libraries rebuilt and signed on the host with the shipped code. Both mapped their synthetic libraries under normal protections. The CLI returned zero ports, and the App showed empty ports after Refresh and released the fixture on normal Quit. The direct preparation command on the quarantined installation remains unverified. |
-| Historical evidence | The original Build 9 and both earlier Build 10 image identities and receipts remain retained. The closed Beta data fixture passed on the selected Build 10. The full historical Beta Finder upgrade remains blocked. |
+| Historical evidence at closeout | The original Build 9 and both earlier Build 10 image identities and receipts remain retained. The closed Beta data fixture passed on the selected Build 10. The full historical Beta Finder upgrade was still blocked at this point. [1E.12 upgrade result](phase-1e12-publication.md#historical-beta-finder-upgrade) |
 | Exact-source local tests | The retained frozen-build run passed 719 Python tool tests on Python 3.15.2 under umask 022. |
 
 The private handoff pins the first-install and installed-replacement
@@ -33,10 +35,12 @@ staged bytes, both runtime receipts matched the frozen image, and all
 copy and signature checks also passed from the exact independent extraction
 under umask 022 and 077, with all 693 payload entries including the root
 matched. The exact extracted CLI passed version, six help commands, and
-four offline reads against a fresh test data directory. The remaining exact-source
-CI, durable restore, historical Beta Finder, and same-image USB/RF gates are
-in the [maintainer handoff](../releases/phase-1e11-release-materials.md#build-10-handoff-to-1e12). Materials status is **COMPLETE**. Publication
-readiness is **BLOCKED**, and publication state is **NOT_PUBLISHED**.
+four offline reads against a fresh test data directory. At the 1E.11
+closeout, materials were **COMPLETE**, publication readiness was
+**BLOCKED**, and publication state was **NOT_PUBLISHED**. The maintainer
+handoff recorded the four pending gates. 1E.12 subsequently closed them
+and verified the published download. [Maintainer handoff](../releases/phase-1e11-release-materials.md#build-10-handoff-to-1e12) ·
+[Public-download result](phase-1e12-publication.md#public-release-and-anonymous-download)
 
 ## Historical Build 9 review
 

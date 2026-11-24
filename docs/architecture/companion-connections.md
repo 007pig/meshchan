@@ -20,9 +20,10 @@ decision in the applicable later step.
 | Evidence | Baseline |
 | --- | --- |
 | Current implementation | On November 23, 2026, the reviewed checkout was clean `master` at `02f39e060194351bad02006418905272fdc9aa47`, matching the planning reference and local `origin/master`. The remote is `https://github.com/007pig/meshchan.git`. The [Dart workspace](../../pubspec.yaml) contains the Flutter App, Dart CLI, and two shared Dart packages. |
-| Historical published package | macOS arm64 engineering Build 10 contains App `0.1.0-rc.1+10` and CLI `0.1.0-rc.1`, compiled from frozen source `c5cd5021da5e62c60127678b650d970721263296`. The checked-out tree differs from that commit in 12 Markdown files. [Publication record](../releases/phase-1e12-publication.md) |
+| Historical published package | macOS arm64 engineering Build 10 contains App `0.1.0-rc.1+10` and CLI `0.1.0-rc.1`, compiled from frozen source `c5cd5021da5e62c60127678b650d970721263296`. The Step 1 source baseline differs from that commit in 12 Markdown files. [Publication record](../releases/phase-1e12-publication.md) |
 | Historical acceptance | The selected USB and openHop runs belong to the inventoried Beta Build 5, the original RC1 Build 9, and the restored RC1 Build 10 image. Each record carries its own source and limits. [Step 1 evidence ledger](../validation/phase-2a-connections.md#historical-evidence) |
 | Step 1 changes | This architecture document and the [Step 1 validation record](../validation/phase-2a-connections.md) document the reviewed checkout. |
+| Step 2 changes | The [transport baseline](companion-transport-baseline.md) pins the USB, TCP, and BLE sources, records initial acceptance targets, and sets the macOS BLE verification order. The [Step 2 validation record](../validation/phase-2a2-protocol-backends.md) records the separate checkout and static checks. |
 | Planned changes and open questions | The [proposed responsibilities](#responsibilities-and-future-seams), [compatibility inventory](#compatibility-inventory), and [handoffs](#phase-and-step-handoffs) identify the future work and the evidence it still needs. |
 
 ## Current call paths
@@ -191,6 +192,12 @@ The App and shipped CLI have no TCP/BLE connection entry or saved target
 configuration. The openHop evidence applies to the recorded peer, mode, and
 scenario. Support for other TCP Companion implementations awaits validation.
 
+The [Step 2 transport baseline](companion-transport-baseline.md) records the
+shared inner-frame contract, USB/TCP serial envelopes and firmware-specific
+BLE characteristic boundaries. It places `bluetooth_low_energy` 6.2.1 first
+for the minimal macOS host and leaves plugin execution location open for
+worker cooperation tests. The first BLE target still needs identification.
+
 ## Phase and step handoffs
 
 | Subversion | Scope |
@@ -205,9 +212,9 @@ scenario. Support for other TCP Companion implementations awaits validation.
 | 2A step | Status | Handoff |
 | --- | --- | --- |
 | 1 | Completed | Fix the scope and baseline in this document and the [validation record](../validation/phase-2a-connections.md). |
-| 2 | Planned, next | Establish the protocol baseline, acceptance targets, and BLE candidate backends. |
-| 3 | Planned | Build a minimal macOS BLE feasibility host. |
-| 4 | Planned | Verify BLE cooperation with the Dart worker and decide where the backend runs. |
+| 2 | Completed | Pin the protocol baseline, acceptance targets, and BLE candidates in the [transport baseline](companion-transport-baseline.md) and [validation record](../validation/phase-2a2-protocol-backends.md). |
+| 3 | Planned, next | Confirm a target and prerequisites, then run the [minimal locally signed macOS BLE host plan](companion-transport-baseline.md#step-3-macos-ble-host). |
+| 4 | Planned | Verify [BLE and Dart worker cooperation](companion-transport-baseline.md#step-4-worker-cooperation) before deciding where the backend runs. |
 | 5 | Planned | Implement the pure Dart connection target model. |
 | 6 | Planned | Implement transport creation by target. |
 | 7 | Planned | Migrate internal CLI entry points. |

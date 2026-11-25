@@ -1,0 +1,641 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:meshchan_ble_probe/src/backend.dart';
+import 'package:meshchan_ble_probe/src/probe.dart';
+import 'package:meshcore_link/meshcore_link.dart';
+
+const _target = ProbeTarget(
+  id: 'SYNTHETIC_PRIVATE_UUID',
+  name: 'PRIVATE_ADVERT',
+);
+const _other = ProbeTarget(id: 'SYNTHETIC_OTHER_UUID', name: 'PRIVATE_ADVERT');
+
+void main() {
+  test(
+    'cold controller, explicit selection, native scan stop, safe errors',
+    () async {
+      await _withClock((clock) async {
+        final backend = _Backend();
+        var created = 0;
+        final controller = ProbeController(() {
+          created++;
+          return backend;
+        }, synthetic: true);
+        expect(controller.phase, 'Offline');
+        expect(created, 0);
+        unawaited(_run(controller));
+        expect(created, 0);
+
+        unawaited(controller.startScan());
+        await clock.flush();
+        expect(created, 1);
+        expect(backend.starts, 1);
+        backend.announce(_target);
+        backend.announce(
+          const ProbeTarget(id: 'SYNTHETIC_PRIVATE_UUID', name: 'duplicate'),
+        );
+        backend.announce(_other);
+        expect(controller.targets, [_target, _other]);
+        controller.select(
+          const ProbeTarget(id: 'SYNTHETIC_PRIVATE_UUID', name: 'clone'),
+        );
+        expect(controller.selected, isNull);
+        controller.select(_target);
+        unawaited(_run(controller));
+        expect(backend.links, isEmpty);
+
+        unawaited(controller.stopScan());
+        await clock.flush();
+        expect(backend.stops, 1);
+        expect(controller.canRun, isTrue);
+
+        final link = backend.newLink();
+        link.connectGate = Completer<void>();
+        unawaited(_run(controller));
+        await clock.flush();
+        link.connectGate!.completeError(
+          StateError(
+            'PIN_MARKER raw=81 UUID=SYNTHETIC_PRIVATE_UUID PRIVATE_ADVERT',
+          ),
+        );
+        await clock.flush();
+        expect(controller.logicalResult, 'Bluetooth operation failed');
+        final evidence = controller.evidenceJson;
+        for (final private in [
+          'PIN_MARKER',
+          'raw=81',
+          _target.id,
+          _target.name,
+        ]) {
+          expect(evidence.contains(private), isFalse);
+        }
+        expect(
+          _facts(controller, 'nativeScanStop').single['status'],
+          'confirmed',
+        );
+        expect(
+          _facts(
+            controller,
+            'operation',
+          ).any((row) => row['status'] == 'failed'),
+          isTrue,
+        );
+      });
+    },
+  );
+
+  test(
+    'successful ordered writes accept earlier responses and confirm release',
+    () async {
+      await _withClock((clock) async {
+        final backend = _Backend();
+        final controller = await _scanned(clock, backend);
+        final link = backend.newLink()..notifyGate = Completer<void>();
+        unawaited(_run(controller));
+        await clock.flush();
+        expect(link.sent, isEmpty);
+        link.notifyGate!.complete();
+        await clock.flush();
+        expect(link.sent, isEmpty);
+        link.nativeNotify(true);
+        await clock.flush();
+
+        expect(link.sent.map((value) => value.first), [0x16]);
+        link.value(_deviceInfo(), generation: 0);
+        expect(_facts(controller, 'staleEvent'), hasLength(1));
+        link.value(_deviceInfo());
+        await clock.flush();
+        expect(link.sent, hasLength(1));
+        link.finishWrite(0);
+        await clock.flush();
+        expect(link.sent.map((value) => value.first), [0x16, 0x01]);
+        expect(link.sent.map((value) => value.length), [2, 26]);
+        link.value(_selfInfo(4));
+        await clock.flush();
+        link.finishWrite(1);
+        await clock.flush();
+
+        expect(controller.logicalResult, 'Query and start passed');
+        expect(
+          controller.notificationState,
+          'Both response receipts confirmed',
+        );
+        expect(controller.cleanupState, 'Release confirmed');
+        expect(link.disconnects, 1);
+        expect(link.retired, isTrue);
+        expect(link.maximumQueries, [
+          ProbeWriteType.withResponse,
+          ProbeWriteType.withoutResponse,
+        ]);
+        expect(
+          _facts(controller, 'nativeDisconnect').single['localRequested'],
+          isTrue,
+        );
+        expect(
+          _facts(controller, 'sessionSubscriptions').single['status'],
+          'confirmed',
+        );
+        expect(
+          _facts(controller, 'linkSubscription').single['status'],
+          'confirmed',
+        );
+        final receipts = _facts(controller, 'notification');
+        final writes = _facts(controller, 'writeResult');
+        expect(receipts.map((row) => row['length']), [82, 62]);
+        expect(receipts.map((row) => row['nativeLength']), [82, 62]);
+        expect(receipts.map((row) => row['matchedLength']), [true, true]);
+        for (var index = 0; index < 2; index++) {
+          expect(
+            receipts[index]['sequence'] as int,
+            lessThan(writes[index]['sequence'] as int),
+          );
+        }
+
+        expect(controller.canRun, isTrue);
+        unawaited(
+          controller.run(nodeNameBytes: 5, lengthBasis: LengthBasis.fixture),
+        );
+        expect(backend.links, hasLength(1));
+        final reconnect = backend.newLink();
+        unawaited(_run(controller));
+        await clock.flush();
+        expect(reconnect.generation, 2);
+        reconnect.value(_deviceInfo(), generation: 1);
+        await clock.flush();
+        expect(reconnect.sent, hasLength(1));
+        reconnect.value(_deviceInfo());
+        reconnect.finishWrite(0);
+        await clock.flush();
+        reconnect.value(_selfInfo(4));
+        reconnect.finishWrite(1);
+        await clock.flush();
+        expect(controller.logicalResult, 'Query and start passed');
+        expect(controller.canRun, isFalse);
+        expect(backend.selected, [_target, _target]);
+      });
+    },
+  );
+
+  test(
+    'reject early TX updates and missing or duplicate native receipts',
+    () async {
+      for (final fault in [
+        'early',
+        'missing',
+        'duplicate',
+        'wrong length receipt',
+        'unassociated',
+      ]) {
+        await _withClock((clock) async {
+          final backend = _Backend();
+          final controller = await _scanned(clock, backend);
+          final link = backend.newLink();
+          if (fault == 'early') link.notifyGate = Completer<void>();
+          unawaited(_run(controller));
+          await clock.flush();
+          switch (fault) {
+            case 'early':
+              expect(link.sent, isEmpty);
+              link.value(_deviceInfo());
+              link.notifyGate!.complete();
+            case 'missing':
+              link.emit(ProbeProvenanceUnconfirmed(link.generation));
+            case 'duplicate':
+              link.value(_deviceInfo(), sequence: 50);
+              link.value(_deviceInfo(), sequence: 50);
+            case 'wrong length receipt':
+              link.value(_deviceInfo(), nativeLength: 81);
+            case 'unassociated':
+              link.value(_selfInfo(4));
+          }
+          if (link.sent.isNotEmpty) link.finishWrite(0);
+          await clock.flush();
+          expect(link.sent.length, lessThanOrEqualTo(1));
+          expect(
+            controller.logicalResult,
+            fault == 'early' || fault == 'unassociated'
+                ? 'Early or unassociated notification'
+                : 'Notification provenance unconfirmed',
+          );
+          expect(controller.cleanupState, 'Release confirmed');
+        });
+      }
+    },
+  );
+
+  test('ambiguous receipt during close invalidates acceptance without rewriting result', () async {
+    await _withClock((clock) async {
+      final backend = _Backend();
+      final controller = await _scanned(clock, backend);
+      final link = backend.newLink()..automaticDisconnect = false;
+      unawaited(_run(controller));
+      await clock.flush();
+      link.value(_deviceInfo());
+      link.finishWrite(0);
+      await clock.flush();
+      link.value(_selfInfo(4));
+      link.finishWrite(1);
+      await clock.flush();
+      expect(controller.logicalResult, 'Query and start passed');
+      link.emit(ProbeProvenanceUnconfirmed(link.generation));
+      link.terminal(local: true);
+      await clock.flush();
+      expect(
+        controller.notificationState,
+        'Notification provenance unconfirmed',
+      );
+      expect(controller.logicalResult, 'Query and start passed');
+      expect(controller.cleanupState, 'Release confirmed');
+      expect(controller.canRun, isFalse);
+    });
+  });
+
+  test(
+    'independent sizes reject decodable truncated and overlong responses',
+    () async {
+      final truncated = _selfInfo(3);
+      expect(decodeCompanionResponse(truncated), isA<SelfInfoResponse>());
+      for (final wrongDeviceLength in [false, true]) {
+        await _withClock((clock) async {
+          final backend = _Backend();
+          final controller = await _scanned(clock, backend);
+          final link = backend.newLink();
+          unawaited(_run(controller));
+          await clock.flush();
+          link.value(wrongDeviceLength ? _deviceInfo(83) : _deviceInfo());
+          link.finishWrite(0);
+          await clock.flush();
+          if (!wrongDeviceLength) {
+            link.value(truncated);
+            link.finishWrite(1);
+            await clock.flush();
+          }
+          expect(
+            controller.logicalResult,
+            'Independent response length mismatch',
+          );
+          expect(
+            _facts(controller, 'notification').last['matchedLength'],
+            false,
+          );
+        });
+      }
+    },
+  );
+
+  test(
+    'cancel pending connect once, release unknown, late completion fenced',
+    () async {
+      await _withClock((clock) async {
+        final backend = _Backend();
+        final controller = await _scanned(clock, backend);
+        final link = backend.newLink()
+          ..connectGate = Completer<void>()
+          ..automaticDisconnect = false;
+        unawaited(_run(controller));
+        await clock.flush();
+        unawaited(controller.cancel());
+        unawaited(controller.cancel());
+        var closed = true;
+        unawaited(controller.requestClose().then((value) => closed = value));
+        await clock.flush();
+        expect(controller.logicalResult, 'Canceled');
+        expect(link.disconnects, 1);
+        expect(link.sent, isEmpty);
+        link.terminal(local: true);
+        await clock.flush();
+        expect(controller.cleanupPending, isTrue);
+
+        await clock.elapse(const Duration(seconds: 10));
+        expect(controller.cleanupState, 'Release unknown');
+        expect(closed, isFalse);
+        expect(controller.canRun, isFalse);
+        expect(
+          _facts(controller, 'pendingOperations').first['pendingCount'],
+          1,
+        );
+        link.emit(ProbeDartConnection(link.generation, true));
+        link.connectGate!.complete();
+        await clock.flush();
+        expect(link.discoveries, 0);
+        expect(link.disconnects, 1);
+        expect(controller.logicalResult, 'Canceled');
+        expect(controller.cleanupState, 'Release unknown');
+        expect(controller.canRun, isFalse);
+      });
+    },
+  );
+
+  test(
+    'setup uses one deadline and cancel bypasses a pending native operation',
+    () async {
+      for (final cancel in [false, true]) {
+        await _withClock((clock) async {
+          final backend = _Backend();
+          final controller = await _scanned(clock, backend);
+          final link = backend.newLink()
+            ..connectGate = Completer<void>()
+            ..gattGate = Completer<ProbeGatt>();
+          unawaited(_run(controller));
+          await clock.elapse(const Duration(seconds: 13));
+          link.connectGate!.complete();
+          await clock.flush();
+          expect(link.discoveries, 1);
+          if (cancel) {
+            unawaited(controller.cancel());
+            await clock.flush();
+          } else {
+            await clock.elapse(const Duration(seconds: 2));
+          }
+          expect(
+            controller.logicalResult,
+            cancel ? 'Canceled' : 'Initialization deadline',
+          );
+          expect(link.disconnects, 1);
+          link.gattGate!.complete(_gatt);
+          await clock.flush();
+          expect(link.notifyCalls, isEmpty);
+          expect(link.sent, isEmpty);
+          expect(controller.cleanupState, 'Release confirmed');
+        });
+      }
+    },
+  );
+
+  test('pending write survives logical timeout, and release waits for its settlement', () async {
+    await _withClock((clock) async {
+      final backend = _Backend();
+      final controller = await _scanned(clock, backend);
+      final link = backend.newLink();
+      unawaited(_run(controller));
+      await clock.flush();
+      link.value(_deviceInfo());
+      await clock.elapse(const Duration(seconds: 5));
+      expect(controller.logicalResult, 'Companion request deadline');
+      expect(link.disconnects, 1);
+      expect(controller.cleanupPending, isTrue);
+      link.finishWrite(0);
+      await clock.flush();
+      expect(link.sent, hasLength(1));
+      expect(controller.logicalResult, 'Companion request deadline');
+      expect(controller.cleanupState, 'Release confirmed');
+    });
+  });
+
+  test(
+    'peer callback and Dart mirror are separate release requirements',
+    () async {
+      await _withClock((clock) async {
+        final backend = _Backend();
+        final controller = await _scanned(clock, backend);
+        final link = backend.newLink();
+        unawaited(_run(controller));
+        await clock.flush();
+        link.terminal(local: false, mirror: false);
+        link.finishWrite(0);
+        await clock.flush();
+        expect(controller.logicalResult, 'Peer disconnected');
+        expect(controller.cleanupPending, isTrue);
+        expect(link.notifyCalls, [true]);
+        link.emit(ProbeDartConnection(link.generation, false));
+        await clock.flush();
+        expect(controller.cleanupState, 'Release confirmed');
+        expect(
+          _facts(controller, 'nativeDisconnect').single['localRequested'],
+          isFalse,
+        );
+      });
+    },
+  );
+
+  test(
+    'adapter unavailable and target absence stay within the scan boundary',
+    () async {
+      for (final state in [
+        ProbeAdapterState.unauthorized,
+        ProbeAdapterState.poweredOff,
+        ProbeAdapterState.poweredOn,
+      ]) {
+        await _withClock((clock) async {
+          final backend = _Backend()..state = state;
+          final controller = ProbeController(() => backend, synthetic: true);
+          unawaited(controller.startScan());
+          await clock.flush();
+          await clock.elapse(const Duration(seconds: 10));
+          expect(backend.starts, state == ProbeAdapterState.poweredOn ? 1 : 0);
+          expect(controller.canRun, isFalse);
+          expect(controller.logicalResult, switch (state) {
+            ProbeAdapterState.unauthorized => 'Bluetooth permission denied',
+            ProbeAdapterState.poweredOff => 'Bluetooth is off',
+            _ => 'No matching target observed',
+          });
+          expect(controller.cleanupState, 'Scan release confirmed');
+        });
+      }
+    },
+  );
+}
+
+// Subscription cancellation can use an SDK Future created in the real zone.
+Future<void> _withClock(Future<void> Function(_TestClock) body) {
+  final real = Zone.current;
+  return fakeAsync((time) => body(_TestClock(time, real)));
+}
+
+final class _TestClock {
+  _TestClock(this.time, this.real);
+  final FakeAsync time;
+  final Zone real;
+
+  Future<void> flush() async {
+    // Bridge both zones because a join can return through the cached Future
+    // once per subscription. Each turn drains the relevant microtask queues.
+    for (var turn = 0; turn < 5; turn++) {
+      time.flushMicrotasks();
+      await real.run(() => Future<void>.delayed(Duration.zero));
+    }
+    time.flushMicrotasks();
+  }
+
+  Future<void> elapse(Duration duration) async {
+    time.elapse(duration);
+    await flush();
+  }
+}
+
+const _gatt = ProbeGatt(
+  withResponse: true,
+  withoutResponse: false,
+  txNotifiable: true,
+);
+
+List<Map<String, Object?>> _facts(ProbeController probe, String fact) {
+  final result = jsonDecode(probe.evidenceJson) as Map<String, dynamic>;
+  return (result['events'] as List)
+      .cast<Map<String, Object?>>()
+      .where((row) => row['fact'] == fact)
+      .toList();
+}
+
+Uint8List _deviceInfo([int length = 82]) => Uint8List(length)
+  ..[0] = 0x0d
+  ..[1] = 10;
+
+Uint8List _selfInfo(int nameBytes) => Uint8List(58 + nameBytes)
+  ..[0] = 0x05
+  ..fillRange(58, 58 + nameBytes, 65);
+
+Future<void> _run(ProbeController probe) =>
+    probe.run(nodeNameBytes: 4, lengthBasis: LengthBasis.fixture);
+
+Future<ProbeController> _scanned(_TestClock clock, _Backend backend) async {
+  final probe = ProbeController(() => backend, synthetic: true);
+  unawaited(probe.startScan());
+  await clock.flush();
+  backend.announce(_target);
+  probe.select(_target);
+  unawaited(probe.stopScan());
+  await clock.flush();
+  return probe;
+}
+
+final class _Backend implements ProbeBackend {
+  final _matches = StreamController<ProbeTarget>.broadcast(sync: true);
+  final _state = StreamController<ProbeAdapterState>.broadcast(sync: true);
+  ProbeAdapterState state = ProbeAdapterState.poweredOn;
+  final selected = <ProbeTarget>[];
+  final links = <_Link>[];
+  final _planned = <_Link>[];
+  int starts = 0;
+  int stops = 0;
+
+  _Link newLink() {
+    final link = _Link();
+    _planned.add(link);
+    return link;
+  }
+
+  void announce(ProbeTarget target) => _matches.add(target);
+
+  @override
+  Stream<ProbeTarget> get discoveries => _matches.stream;
+  @override
+  Stream<ProbeAdapterState> get states => _state.stream;
+  @override
+  Future<ProbeAdapterState> getState() async => state;
+  @override
+  Future<void> startScan() async => starts++;
+  @override
+  Future<void> stopScan() async => stops++;
+  @override
+  ProbeLink link(ProbeTarget target, int generation) {
+    selected.add(target);
+    final link = _planned.removeAt(0)..generation = generation;
+    links.add(link);
+    return link;
+  }
+}
+
+final class _Link implements ProbeLink {
+  final _events = StreamController<ProbeLinkEvent>.broadcast(sync: true);
+  final sent = <Uint8List>[];
+  final maximumQueries = <ProbeWriteType>[];
+  final _writes = <Completer<void>>[];
+  final notifyCalls = <bool>[];
+  Completer<void>? connectGate;
+  Completer<ProbeGatt>? gattGate;
+  Completer<void>? notifyGate;
+  bool automaticDisconnect = true;
+  int disconnects = 0;
+  int discoveries = 0;
+  bool retired = false;
+  int generation = 0;
+  int _sequence = 0;
+
+  @override
+  bool connectSubmitted = false;
+
+  @override
+  Stream<ProbeLinkEvent> get events => _events.stream;
+
+  void emit(ProbeLinkEvent event) => _events.add(event);
+
+  void nativeNotify(bool enabled) => emit(
+    ProbeNativeNotifyState(generation, enabled, true, ++_sequence, _sequence),
+  );
+
+  void value(
+    Uint8List bytes, {
+    int? generation,
+    int? sequence,
+    int? nativeLength,
+  }) {
+    final serial = sequence ?? ++_sequence;
+    emit(
+      ProbeNotification(
+        generation ?? this.generation,
+        bytes,
+        serial,
+        nativeLength ?? bytes.length,
+        serial,
+      ),
+    );
+  }
+
+  void terminal({required bool local, bool mirror = true}) {
+    emit(ProbeNativeDisconnect(generation, local, ++_sequence, _sequence));
+    if (mirror) emit(ProbeDartConnection(generation, false));
+  }
+
+  void finishWrite(int index) => _writes[index].complete();
+
+  @override
+  Future<void> connect() async {
+    connectSubmitted = true;
+    await connectGate?.future;
+    emit(ProbeDartConnection(generation, true));
+  }
+
+  @override
+  Future<ProbeGatt> discoverGatt() async {
+    discoveries++;
+    return gattGate?.future ?? _gatt;
+  }
+
+  @override
+  Future<void> setNotify(bool enabled) async {
+    notifyCalls.add(enabled);
+    if (enabled && notifyGate != null) {
+      await notifyGate!.future;
+    } else {
+      nativeNotify(enabled);
+    }
+  }
+
+  @override
+  Future<int> maximumWriteLength(ProbeWriteType type) async {
+    maximumQueries.add(type);
+    return 176;
+  }
+
+  @override
+  Future<void> write(Uint8List value) {
+    sent.add(value);
+    final pending = Completer<void>();
+    _writes.add(pending);
+    return pending.future;
+  }
+
+  @override
+  Future<void> disconnect() async {
+    disconnects++;
+    if (automaticDisconnect) terminal(local: true);
+  }
+
+  @override
+  Future<void> retire() async => retired = true;
+}

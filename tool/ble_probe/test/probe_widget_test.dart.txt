@@ -1,0 +1,229 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:meshchan_ble_probe/main.dart';
+import 'package:meshchan_ble_probe/src/backend.dart';
+import 'package:meshchan_ble_probe/src/probe.dart';
+import 'package:meshchan_ble_probe/src/synthetic_backend.dart';
+
+Finder _button<T extends Widget>(String label) => find.widgetWithText(T, label);
+
+Future<void> _settleSubscriptions(WidgetTester tester) async {
+  // SDK cancellation can complete through an already-created root-zone Future.
+  // Alternate queues because the link and session each settle a subscription.
+  for (var turn = 0; turn < 4; turn++) {
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  }
+  await tester.pump();
+}
+
+Future<void> _selectFixture(
+  WidgetTester tester,
+  ProbeController controller,
+) async {
+  await tester.tap(_button<FilledButton>('Start scan'));
+  await tester.pumpAndSettle();
+  await tester.tap(_button<OutlinedButton>('Stop scan'));
+  await _settleSubscriptions(tester);
+  await tester.pumpAndSettle();
+  expect(
+    tester
+        .widget<FilledButton>(_button<FilledButton>('Connect and query'))
+        .onPressed,
+    isNull,
+  );
+  final targetDropdown = find.byType(DropdownButton<ProbeTarget>);
+  final choices = tester.widget<DropdownButton<ProbeTarget>>(targetDropdown);
+  expect(choices.items, hasLength(1));
+  expect(
+    choices.onChanged,
+    isNotNull,
+    reason: '${controller.phase} / ${controller.cleanupState}',
+  );
+  await tester.tap(targetDropdown);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Synthetic Companion · synthetic-fixture').last);
+  await tester.pumpAndSettle();
+  expect(
+    tester
+        .widget<FilledButton>(_button<FilledButton>('Connect and query'))
+        .onPressed,
+    isNull,
+  );
+  await tester.tap(find.byType(DropdownButton<int>));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('$syntheticNodeNameBytes').last);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byType(DropdownButton<LengthBasis>));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Known fixture').last);
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final messenger = TestDefaultBinaryMessengerBinding.instance;
+
+  testWidgets(
+    'starts offline, selects explicitly, cancels, and exports safe JSON',
+    (tester) async {
+      var activations = 0;
+      final controller = ProbeController(() {
+        activations++;
+        return SyntheticProbeBackend();
+      }, synthetic: true);
+      String? copied;
+      messenger.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => messenger.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProbeApp(controller: controller, synthetic: true),
+      );
+      expect(find.text('BLE Probe · Synthetic'), findsOneWidget);
+      expect(activations, 0);
+      await tester.tap(find.text('View evidence'));
+      await tester.pumpAndSettle();
+      expect(activations, 0);
+      expect(find.text('Read manager counts'), findsNothing);
+      await tester.tap(find.text('Back to controls'));
+      await tester.pumpAndSettle();
+
+      await _selectFixture(tester, controller);
+      expect(activations, 1);
+      await tester.tap(_button<FilledButton>('Connect and query'));
+      await tester.pump();
+      expect(controller.canCancel, isTrue);
+      await tester.tap(_button<OutlinedButton>('Cancel / Disconnect'));
+      await _settleSubscriptions(tester);
+      expect(controller.canCancel, isFalse);
+      expect(controller.logicalResult, 'Canceled');
+      expect(controller.cleanupState, 'Release confirmed');
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<FilledButton>(_button<FilledButton>('Reconnect and query'))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(_button<FilledButton>('Reconnect and query'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      await _settleSubscriptions(tester);
+      expect(controller.logicalResult, 'Query and start passed');
+      expect(controller.notificationState, 'Both response receipts confirmed');
+      expect(controller.cleanupState, 'Release confirmed');
+      expect(controller.canRun, isFalse);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('View evidence'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Synthetic Companion · synthetic-fixture'),
+        findsNothing,
+      );
+      await tester.tap(find.text('Copy evidence JSON'));
+      await tester.pumpAndSettle();
+      expect(copied, controller.evidenceJson);
+      expect(jsonDecode(copied!), isNotNull);
+      expect(copied, isNot(contains('Synthetic Companion')));
+      expect(copied, isNot(contains('synthetic-fixture')));
+      expect(find.text('Structural evidence copied.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('desktop close drains the attempt and vetoes unknown release', (
+    tester,
+  ) async {
+    final controller = ProbeController(
+      () => SyntheticProbeBackend(confirmRelease: false),
+      synthetic: true,
+    );
+    await tester.pumpWidget(
+      ProbeApp(controller: controller, handleWindowClose: true),
+    );
+    await _selectFixture(tester, controller);
+    await tester.tap(_button<FilledButton>('Connect and query'));
+    await tester.pump();
+
+    const codec = StandardMethodCodec();
+    final reply = messenger.defaultBinaryMessenger.handlePlatformMessage(
+      'org.meshchan.probe.ble2a3/window',
+      codec.encodeMethodCall(const MethodCall('requestClose')),
+      null,
+    );
+    await tester.pump();
+    expect(controller.cleanupPending, isTrue);
+    await tester.pump(const Duration(seconds: 11));
+    await _settleSubscriptions(tester);
+    expect(controller.cleanupPending, isFalse);
+    expect(codec.decodeEnvelope((await reply)!), false);
+    expect(
+      find.text('Close is waiting for release confirmation.'),
+      findsOneWidget,
+    );
+    expect(controller.canRun, isFalse);
+    expect(controller.canScan, isFalse);
+  });
+
+  testWidgets(
+    'offline desktop close allows exit without activating a backend',
+    (tester) async {
+      var activated = false;
+      var observations = 0;
+      final controller = ProbeController(() {
+        activated = true;
+        return SyntheticProbeBackend();
+      });
+      await tester.pumpWidget(
+        ProbeApp(
+          controller: controller,
+          handleWindowClose: true,
+          readManagerCounts: () async {
+            observations++;
+            return (central: 0, peripheral: 0);
+          },
+        ),
+      );
+      await tester.tap(find.text('View evidence'));
+      await tester.pumpAndSettle();
+      expect(observations, 0);
+      await tester.tap(find.text('Read manager counts'));
+      await tester.pumpAndSettle();
+      expect(observations, 1);
+      expect(
+        find.text('Manager counts snapshot  ·  Central 0  ·  Peripheral 0'),
+        findsOneWidget,
+      );
+      const codec = StandardMethodCodec();
+      final response = Completer<Object?>();
+      unawaited(
+        messenger.defaultBinaryMessenger.handlePlatformMessage(
+          'org.meshchan.probe.ble2a3/window',
+          codec.encodeMethodCall(const MethodCall('requestClose')),
+          (data) => response.complete(codec.decodeEnvelope(data!)),
+        ),
+      );
+      await tester.pump();
+      expect(await response.future, true);
+      expect(activated, isFalse);
+    },
+  );
+}

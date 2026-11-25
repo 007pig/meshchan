@@ -1,0 +1,492 @@
+import 'dart:async';
+
+import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
+import 'package:bluetooth_low_energy_darwin/meshchan_probe_stamp.dart';
+import 'package:flutter/services.dart';
+import 'package:logging/logging.dart';
+
+import 'backend.dart';
+import 'darwin_receipts.dart';
+
+final _nusService = UUID.fromString('6E400001-B5A3-F393-E0A9-E50E24DCCA9E');
+final _nusRx = UUID.fromString('6E400002-B5A3-F393-E0A9-E50E24DCCA9E');
+final _nusTx = UUID.fromString('6E400003-B5A3-F393-E0A9-E50E24DCCA9E');
+const _probeObservationChannel = MethodChannel(
+  'org.meshchan.probe.ble2a3/observation',
+);
+
+/// For an explicit offline check against a running native probe. The native
+/// query reads counters without accessing either CoreBluetooth manager.
+Future<({int central, int peripheral})> readDarwinStartupCounts() =>
+    _safe(ProbeBackendFailure.observation, () async {
+      final raw = await _probeObservationChannel.invokeMethod<Object>(
+        'startupCounts',
+      );
+      if (raw case {
+        'central': final int central,
+        'peripheral': final int peripheral,
+      }) {
+        return (central: central, peripheral: peripheral);
+      }
+      throw const ProbeBackendException(ProbeBackendFailure.observation);
+    });
+
+/// Map plugin exceptions before they can reach the controller or platform UI.
+Future<T> _safe<T>(
+  ProbeBackendFailure category,
+  FutureOr<T> Function() operation,
+) async {
+  try {
+    return await operation();
+  } on ProbeBackendException {
+    rethrow;
+  } catch (_) {
+    throw ProbeBackendException(category);
+  }
+}
+
+/// The isolated app has only the structural evidence sink. Disable
+/// package:logging at the root *before* the plugin or its handlers are used.
+void suppressDarwinLogging() {
+  hierarchicalLoggingEnabled = false;
+  Logger.root.level = Level.OFF;
+}
+
+final class DarwinProbeBackend implements ProbeBackend {
+  DarwinProbeBackend({
+    CentralManager Function()? createManager,
+    MethodChannel? observationChannel,
+  }) : _createManager = createManager ?? CentralManager.new,
+       _observation = observationChannel ?? _probeObservationChannel;
+
+  final CentralManager Function() _createManager;
+  final MethodChannel _observation;
+  final _discoveries = StreamController<ProbeTarget>.broadcast();
+  final _states = StreamController<ProbeAdapterState>.broadcast();
+  final _targets = <String, (ProbeTarget, Peripheral)>{};
+  CentralManager? _manager;
+  _DarwinLink? _activeLink;
+  StreamSubscription<DiscoveredEventArgs>? _discoveryObserver;
+  StreamSubscription<BluetoothLowEnergyStateChangedEventArgs>? _adapterObserver;
+  Future<void>? _scanStart;
+  Future<void>? _scanStop;
+  bool _acceptDiscoveries = false;
+  bool _scanConfirmedStopped = false;
+
+  @override
+  Stream<ProbeTarget> get discoveries => _discoveries.stream;
+
+  @override
+  Stream<ProbeAdapterState> get states => _states.stream;
+
+  @override
+  Future<ProbeAdapterState> getState() =>
+      _safe(ProbeBackendFailure.adapter, () {
+        final manager = _ensureManager();
+        _observeScan(manager);
+        return _mapState(manager.state);
+      });
+
+  CentralManager _ensureManager() {
+    final existing = _manager;
+    if (existing != null) return existing;
+
+    suppressDarwinLogging();
+    _observation.setMethodCallHandler((call) async {
+      if (call.method == 'receipt') {
+        _activeLink?.onNativeReceipt(call.arguments);
+      }
+    });
+    final manager = _createManager();
+    _manager = manager;
+    return manager;
+  }
+
+  void _observeScan(CentralManager manager) {
+    if (_adapterObserver == null && _discoveryObserver == null) {
+      _scanStop = null;
+    }
+    _adapterObserver ??= manager.stateChanged.listen(
+      (event) => _states.add(_mapState(event.state)),
+      onError: (Object _) => _states.add(ProbeAdapterState.unknown),
+    );
+    _discoveryObserver ??= manager.discovered.listen(
+      (event) {
+        if (!_acceptDiscoveries) return;
+        final id = event.peripheral.uuid.toString();
+        if (_targets.containsKey(id)) return;
+        final name = event.advertisement.name ?? 'Unnamed peripheral';
+        final target = ProbeTarget(id: id, name: name);
+        _targets[id] = (target, event.peripheral);
+        _discoveries.add(target);
+      },
+      onError: (Object _) {
+        _discoveries.addError(
+          const ProbeBackendException(ProbeBackendFailure.scanStart),
+        );
+      },
+    );
+  }
+
+  @override
+  Future<void> startScan() => _safe(ProbeBackendFailure.scanStart, () async {
+    if (_activeLink != null || _scanStart != null && !_scanConfirmedStopped) {
+      throw const ProbeBackendException(ProbeBackendFailure.scanStart);
+    }
+    final manager = _ensureManager();
+    _observeScan(manager);
+    _targets.clear();
+    _scanStop = null;
+    _scanConfirmedStopped = false;
+    _acceptDiscoveries = true;
+    final start = manager.startDiscovery(serviceUUIDs: [_nusService]);
+    _scanStart = start;
+    await start;
+    // Explicitly verify the native scanner state through the separate observer.
+    // The caller can already have requested Stop while start was settling.
+    if (_acceptDiscoveries &&
+        await _observation.invokeMethod<bool>('isScanning') != true &&
+        _acceptDiscoveries) {
+      throw const ProbeBackendException(ProbeBackendFailure.scanStart);
+    }
+  });
+
+  @override
+  Future<void> stopScan() =>
+      _scanStop ??= _safe(ProbeBackendFailure.scanStop, () async {
+        final manager = _manager;
+        final start = _scanStart;
+        final adapter = _adapterObserver;
+        final discovery = _discoveryObserver;
+        _acceptDiscoveries = false;
+        await Future.wait([
+          if (manager != null && start != null) _stopNativeScan(manager, start),
+          if (adapter != null) adapter.cancel(),
+          if (discovery != null) discovery.cancel(),
+        ]);
+        _adapterObserver = null;
+        _discoveryObserver = null;
+        _scanStart = null;
+        _scanConfirmedStopped = start != null;
+      });
+
+  Future<void> _stopNativeScan(
+    CentralManager manager,
+    Future<void> start,
+  ) async {
+    // Ask to stop immediately. Also verify after the start request settles,
+    // because its response may be in flight when Stop is pressed.
+    await manager.stopDiscovery();
+    try {
+      await start;
+    } catch (_) {
+      // Scan startup reports its own sanitized failure.
+    }
+    if (await _observation.invokeMethod<bool>('isScanning') == true) {
+      await manager.stopDiscovery();
+    }
+    if (await _observation.invokeMethod<bool>('isScanning') != false) {
+      throw const ProbeBackendException(ProbeBackendFailure.scanStop);
+    }
+  }
+
+  @override
+  ProbeLink link(ProbeTarget target, int generation) {
+    final manager = _manager;
+    final choice = _targets[target.id];
+    if (manager == null ||
+        !_scanConfirmedStopped ||
+        _activeLink != null ||
+        choice == null ||
+        !identical(choice.$1, target)) {
+      throw const ProbeBackendException(ProbeBackendFailure.targetUnavailable);
+    }
+    final link = _DarwinLink(
+      manager,
+      _observation,
+      choice.$2,
+      generation: generation,
+      onRetired: () => _activeLink = null,
+    );
+    _activeLink = link;
+    return link;
+  }
+
+  ProbeAdapterState _mapState(BluetoothLowEnergyState state) => switch (state) {
+    BluetoothLowEnergyState.unknown => ProbeAdapterState.unknown,
+    BluetoothLowEnergyState.unsupported => ProbeAdapterState.unsupported,
+    BluetoothLowEnergyState.unauthorized => ProbeAdapterState.unauthorized,
+    BluetoothLowEnergyState.poweredOff => ProbeAdapterState.poweredOff,
+    BluetoothLowEnergyState.poweredOn => ProbeAdapterState.poweredOn,
+  };
+}
+
+enum _ObservationMethod { arm, bindTx, retire }
+
+final class _DarwinLink implements ProbeLink {
+  _DarwinLink(
+    this._manager,
+    this._observation,
+    this._peripheral, {
+    required this.generation,
+    required this.onRetired,
+  }) {
+    _values = DarwinReceiptJoin(
+      onEvent: _events.add,
+      onUnconfirmed: _reportUnconfirmed,
+    );
+    _connectionReceipts = DarwinReceiptJoin(
+      onEvent: _events.add,
+      onUnconfirmed: _reportUnconfirmed,
+    );
+    _connections = _manager.connectionStateChanged.listen(
+      _onDartConnection,
+      onError: (Object _) => _connectionReceipts.reject(),
+    );
+    _notifications = _manager.characteristicNotified.listen(
+      _onDartNotification,
+      onError: (Object _) => _values.reject(),
+    );
+  }
+
+  final CentralManager _manager;
+  final MethodChannel _observation;
+  final Peripheral _peripheral;
+  final int generation;
+  final void Function() onRetired;
+
+  final _events = StreamController<ProbeLinkEvent>.broadcast();
+  late final DarwinReceiptJoin _values;
+  late final DarwinReceiptJoin _connectionReceipts;
+  late final StreamSubscription<PeripheralConnectionStateChangedEventArgs>
+  _connections;
+  late final StreamSubscription<GATTCharacteristicNotifiedEventArgs>
+  _notifications;
+  GATTCharacteristic? _rx;
+  GATTCharacteristic? _tx;
+  Future<void>? _connectFuture;
+  Future<void>? _disconnectFuture;
+  Future<void>? _retireFuture;
+  bool _armNeedsRetirement = false;
+  bool _connectSubmitted = false;
+  bool _disconnectRequested = false;
+  int _lastNativeSequence = 0;
+  int _lastNativeMicros = 0;
+
+  @override
+  Stream<ProbeLinkEvent> get events => _events.stream;
+
+  @override
+  bool get connectSubmitted => _connectSubmitted;
+
+  @override
+  Future<void> connect() =>
+      _connectFuture ??= _safe(ProbeBackendFailure.connect, () async {
+        await _observe(_ObservationMethod.arm, {
+          'target': _peripheral.uuid.toString(),
+        });
+        // There can be no await between this suppression check and submission.
+        // Cleanup may arrive before native observation arming is acknowledged.
+        if (_disconnectRequested) {
+          throw const ProbeBackendException(ProbeBackendFailure.connect);
+        }
+        _connectSubmitted = true;
+        await _manager.connect(_peripheral);
+      });
+
+  @override
+  Future<ProbeGatt> discoverGatt() => _safe(ProbeBackendFailure.gatt, () async {
+    final services = await _manager.discoverGATT(_peripheral);
+    if (_disconnectRequested) {
+      throw const ProbeBackendException(ProbeBackendFailure.gatt);
+    }
+    final nus = services.where((item) => item.uuid == _nusService).single;
+    if (!nus.isPrimary) {
+      throw const ProbeBackendException(ProbeBackendFailure.gatt);
+    }
+    final rx = nus.characteristics.where((item) => item.uuid == _nusRx).single;
+    final tx = nus.characteristics.where((item) => item.uuid == _nusTx).single;
+    await _observe(_ObservationMethod.bindTx, {
+      'target': _peripheral.uuid.toString(),
+      'characteristic': tx.hashCode,
+    });
+    _rx = rx;
+    _tx = tx;
+    return ProbeGatt(
+      withResponse: rx.properties.contains(GATTCharacteristicProperty.write),
+      withoutResponse: rx.properties.contains(
+        GATTCharacteristicProperty.writeWithoutResponse,
+      ),
+      txNotifiable: tx.properties.contains(GATTCharacteristicProperty.notify),
+    );
+  });
+
+  @override
+  Future<void> setNotify(bool enabled) => _safe(
+    ProbeBackendFailure.notify,
+    () => _manager.setCharacteristicNotifyState(
+      _peripheral,
+      _tx!,
+      state: enabled,
+    ),
+  );
+
+  @override
+  Future<int> maximumWriteLength(ProbeWriteType type) => _safe(
+    ProbeBackendFailure.writeLength,
+    () => _manager.getMaximumWriteLength(
+      _peripheral,
+      type: switch (type) {
+        ProbeWriteType.withResponse => GATTCharacteristicWriteType.withResponse,
+        ProbeWriteType.withoutResponse =>
+          GATTCharacteristicWriteType.withoutResponse,
+      },
+    ),
+  );
+
+  @override
+  Future<void> write(Uint8List value) => _safe(
+    ProbeBackendFailure.write,
+    () => _manager.writeCharacteristic(
+      _peripheral,
+      _rx!,
+      value: Uint8List.fromList(value),
+      type: GATTCharacteristicWriteType.withResponse,
+    ),
+  );
+
+  @override
+  Future<void> disconnect() {
+    _disconnectRequested = true;
+    if (!_connectSubmitted) return Future<void>.value();
+    return _disconnectFuture ??= _safe(
+      ProbeBackendFailure.disconnect,
+      () => _manager.disconnect(_peripheral),
+    );
+  }
+
+  @override
+  Future<void> retire() =>
+      _retireFuture ??= _safe(ProbeBackendFailure.observation, () async {
+        // A lost acknowledgement cannot prove that Darwin did not arm.
+        if (_armNeedsRetirement) await _observe(_ObservationMethod.retire);
+        await Future.wait([_connections.cancel(), _notifications.cancel()]);
+        if (_values.hasPending) _values.reject();
+        if (_connectionReceipts.hasPending) _connectionReceipts.reject();
+        _values.close();
+        _connectionReceipts.close();
+        await _events.close();
+        onRetired();
+      });
+
+  Future<void> _observe(
+    _ObservationMethod method, [
+    Map<String, Object>? fields,
+  ]) => _safe(ProbeBackendFailure.observation, () async {
+    final arming = method == _ObservationMethod.arm;
+    if (arming) _armNeedsRetirement = true;
+    final acknowledged = await _observation.invokeMethod<bool>(method.name, {
+      'generation': generation,
+      ...?fields,
+    });
+    // A definite refusal installs no observation for this attempt.
+    if (arming && acknowledged == false) _armNeedsRetirement = false;
+    if (acknowledged != true) {
+      throw const ProbeBackendException(ProbeBackendFailure.observation);
+    }
+  });
+
+  void _reportUnconfirmed() =>
+      _events.add(ProbeProvenanceUnconfirmed(generation));
+
+  void _onDartConnection(PeripheralConnectionStateChangedEventArgs event) {
+    if (event.peripheral.uuid != _peripheral.uuid) return;
+    final stamp = meshchanProbeStamp(event);
+    if (stamp == null) {
+      _connectionReceipts.reject();
+      return;
+    }
+    if (stamp.generation != generation) return;
+    _connectionReceipts.addPlugin(
+      event.state == ConnectionState.connected
+          ? DarwinReceiptKind.connected
+          : DarwinReceiptKind.disconnected,
+      stamp.sequence,
+    );
+  }
+
+  void _onDartNotification(GATTCharacteristicNotifiedEventArgs event) {
+    if (event.peripheral.uuid != _peripheral.uuid ||
+        event.characteristic.uuid != _nusTx) {
+      return;
+    }
+    final stamp = meshchanProbeStamp(event);
+    if (stamp != null && stamp.generation != generation) return;
+    final tx = _tx;
+    if (tx == null || event.characteristic != tx) {
+      if (stamp != null) _values.reject();
+      return;
+    }
+    if (stamp == null) {
+      _values.reject();
+      return;
+    }
+    _values.addPlugin(
+      DarwinReceiptKind.value,
+      stamp.sequence,
+      bytes: event.value,
+    );
+  }
+
+  void onNativeReceipt(Object? wire) {
+    final native = DarwinReceipt.decode(wire);
+    if (native == null) {
+      _values.reject();
+      _connectionReceipts.reject();
+      return;
+    }
+    if (native.generation != generation) return;
+    if (native.sequence != _lastNativeSequence + 1 ||
+        native.micros < _lastNativeMicros) {
+      _values.reject();
+      _connectionReceipts.reject();
+      return;
+    }
+    _lastNativeSequence = native.sequence;
+    _lastNativeMicros = native.micros;
+    switch (native.kind) {
+      case DarwinReceiptKind.connected:
+        _connectionReceipts.addNative(native);
+      case DarwinReceiptKind.connectFailed:
+        _events.add(
+          ProbeNativeConnectionFailed(
+            generation,
+            native.sequence,
+            native.micros,
+          ),
+        );
+      case DarwinReceiptKind.disconnected:
+        _events.add(
+          ProbeNativeDisconnect(
+            generation,
+            native.localRequested!,
+            native.sequence,
+            native.micros,
+          ),
+        );
+        _connectionReceipts.addNative(native);
+      case DarwinReceiptKind.notifyState:
+        _events.add(
+          ProbeNativeNotifyState(
+            generation,
+            native.enabled!,
+            native.errorFree!,
+            native.sequence,
+            native.micros,
+          ),
+        );
+      case DarwinReceiptKind.value:
+        _values.addNative(native);
+    }
+  }
+}

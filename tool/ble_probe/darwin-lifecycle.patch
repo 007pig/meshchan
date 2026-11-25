@@ -1,0 +1,37 @@
+--- a/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/CentralManagerImpl.swift
++++ b/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/CentralManagerImpl.swift
+@@ -162,0 +163,5 @@
++            // A terminal callback can win the race with the queued cancel.
++            if self.probe.hasTerminated(peripheral) {
++                completion(.success(()))
++                return
++            }
+@@ -321,2 +326,5 @@
+-        guard let completion = self.mConnectCompletions.removeValue(forKey: uuidArgs) else { return }
+-        completion(.failure(error ?? BluetoothLowEnergyError.unknown))
++        let connect = self.mConnectCompletions.removeValue(forKey: uuidArgs)
++        let disconnect = self.probe.hasTerminated(peripheral)
++            ? self.mDisconnectCompletions.removeValue(forKey: uuidArgs) : nil
++        connect?(.failure(error ?? BluetoothLowEnergyError.unknown))
++        disconnect?(.success(()))
+@@ -331,0 +340,3 @@
++        // Cancellation can reach this delegate before didConnect was delivered.
++        let connect = self.mConnectCompletions.removeValue(forKey: uuidArgs)
++        connect?(.failure(errorNotNil))
+--- a/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/MeshchanProbeObservation.swift
++++ b/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/MeshchanProbeObservation.swift
+@@ -33 +32,0 @@
+-    private weak var retiredTx: CBCharacteristic?
+@@ -115 +114 @@
+-            active.tx == nil, characteristic !== retiredTx,
++            active.tx == nil,
+@@ -118,0 +118,2 @@
++        // CoreBluetooth ends the old peripheral delegate stream at disconnect.
++        // Its already queued channel events retain their original generation.
+@@ -129 +129,0 @@
+-        if let tx = active.tx { retiredTx = tx }
+@@ -131,0 +132,4 @@
++    }
++
++    func hasTerminated(_ peripheral: CBPeripheral) -> Bool {
++        matching(peripheral)?.phase == .terminal && peripheral.state == .disconnected

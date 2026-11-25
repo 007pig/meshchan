@@ -1,0 +1,89 @@
+import 'dart:typed_data';
+
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:meshchan_ble_probe/src/backend.dart';
+import 'package:meshchan_ble_probe/src/darwin_receipts.dart';
+
+DarwinReceipt _value(
+  int sequence, {
+  int length = 82,
+  bool errorFree = true,
+  bool enabled = true,
+}) => DarwinReceipt(
+  kind: DarwinReceiptKind.value,
+  generation: 2,
+  sequence: sequence,
+  micros: 1,
+  length: length,
+  errorFree: errorFree,
+  enabled: enabled,
+);
+
+void main() {
+  late int unconfirmed;
+  late List<ProbeLinkEvent> events;
+  late DarwinReceiptJoin join;
+
+  setUp(() {
+    unconfirmed = 0;
+    events = [];
+    join = DarwinReceiptJoin(
+      onEvent: events.add,
+      onUnconfirmed: () => unconfirmed++,
+    );
+  });
+
+  tearDown(() => join.close());
+
+  test(
+    'an exact native error-free notifying receipt releases the Dart event',
+    () {
+      join.addNative(_value(1));
+      expect(events, isEmpty);
+      join.addPlugin(DarwinReceiptKind.value, 1, bytes: Uint8List(82));
+      expect(events.single, isA<ProbeNotification>());
+      expect(unconfirmed, 0);
+    },
+  );
+
+  for (final invalid in [
+    _value(1, errorFree: false),
+    _value(1, enabled: false),
+    _value(1, length: 81),
+  ]) {
+    test('rejects invalid native facts: ${invalid.errorFree}, '
+        '${invalid.enabled}, ${invalid.length}', () {
+      join.addNative(invalid);
+      join.addPlugin(DarwinReceiptKind.value, 1, bytes: Uint8List(82));
+      expect(events, isEmpty);
+      expect(unconfirmed, 1);
+    });
+  }
+
+  test('a duplicate revokes provenance even after the first pair', () {
+    join.addNative(_value(1));
+    join.addPlugin(DarwinReceiptKind.value, 1, bytes: Uint8List(82));
+    join.addPlugin(DarwinReceiptKind.value, 1, bytes: Uint8List(82));
+    expect(events, hasLength(1));
+    expect(unconfirmed, 1);
+  });
+
+  test('equal lengths do not repair a missing or reordered receipt', () {
+    join.addNative(_value(2));
+    join.addNative(_value(1));
+    join.addPlugin(DarwinReceiptKind.value, 1, bytes: Uint8List(82));
+    expect(events, isEmpty);
+    expect(unconfirmed, 1);
+  });
+
+  test('an unmatched event expires without releasing a frame', () {
+    fakeAsync((clock) {
+      join.addPlugin(DarwinReceiptKind.value, 1, bytes: Uint8List(82));
+      clock.elapse(const Duration(milliseconds: 600));
+      join.addNative(_value(1));
+      expect(events, isEmpty);
+      expect(unconfirmed, 1);
+    });
+  });
+}

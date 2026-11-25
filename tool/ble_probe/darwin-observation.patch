@@ -1,0 +1,340 @@
+--- a/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/BluetoothLowEnergyApi.g.swift
++++ b/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/BluetoothLowEnergyApi.g.swift
+@@ -1029,2 +1029,2 @@
+-  func onConnectionStateChanged(peripheralArgs peripheralArgsArg: PeripheralArgs, stateArgs stateArgsArg: ConnectionStateArgs, completion: @escaping (Result<Void, PigeonError>) -> Void)
+-  func onCharacteristicNotified(peripheralArgs peripheralArgsArg: PeripheralArgs, characteristicArgs characteristicArgsArg: GATTCharacteristicArgs, valueArgs valueArgsArg: FlutterStandardTypedData, completion: @escaping (Result<Void, PigeonError>) -> Void)
++  func onConnectionStateChanged(peripheralArgs peripheralArgsArg: PeripheralArgs, stateArgs stateArgsArg: ConnectionStateArgs, probeStamp: [Int64]?, completion: @escaping (Result<Void, PigeonError>) -> Void)
++  func onCharacteristicNotified(peripheralArgs peripheralArgsArg: PeripheralArgs, characteristicArgs characteristicArgsArg: GATTCharacteristicArgs, valueArgs valueArgsArg: FlutterStandardTypedData, probeStamp: [Int64]?, completion: @escaping (Result<Void, PigeonError>) -> Void)
+@@ -1078 +1078 @@
+-  func onConnectionStateChanged(peripheralArgs peripheralArgsArg: PeripheralArgs, stateArgs stateArgsArg: ConnectionStateArgs, completion: @escaping (Result<Void, PigeonError>) -> Void) {
++  func onConnectionStateChanged(peripheralArgs peripheralArgsArg: PeripheralArgs, stateArgs stateArgsArg: ConnectionStateArgs, probeStamp: [Int64]?, completion: @escaping (Result<Void, PigeonError>) -> Void) {
+@@ -1081 +1081 @@
+-    channel.sendMessage([peripheralArgsArg, stateArgsArg] as [Any?]) { response in
++    channel.sendMessage([peripheralArgsArg, stateArgsArg, probeStamp] as [Any?]) { response in
+@@ -1096 +1096 @@
+-  func onCharacteristicNotified(peripheralArgs peripheralArgsArg: PeripheralArgs, characteristicArgs characteristicArgsArg: GATTCharacteristicArgs, valueArgs valueArgsArg: FlutterStandardTypedData, completion: @escaping (Result<Void, PigeonError>) -> Void) {
++  func onCharacteristicNotified(peripheralArgs peripheralArgsArg: PeripheralArgs, characteristicArgs characteristicArgsArg: GATTCharacteristicArgs, valueArgs valueArgsArg: FlutterStandardTypedData, probeStamp: [Int64]?, completion: @escaping (Result<Void, PigeonError>) -> Void) {
+@@ -1099 +1099 @@
+-    channel.sendMessage([peripheralArgsArg, characteristicArgsArg, valueArgsArg] as [Any?]) { response in
++    channel.sendMessage([peripheralArgsArg, characteristicArgsArg, valueArgsArg, probeStamp] as [Any?]) { response in
+--- a/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/CentralManagerImpl.swift
++++ b/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/CentralManagerImpl.swift
+@@ -20,0 +21 @@
++    private let probe: MeshchanProbeObservation
+@@ -22 +23,4 @@
+-    private lazy var mCentralManager = CBCentralManager()
++    private lazy var mCentralManager: CBCentralManager = {
++        MeshchanProbeObservation.centralAllocations += 1
++        return CBCentralManager()
++    }()
+@@ -45,0 +50 @@
++        self.probe = MeshchanProbeObservation(messenger)
+@@ -63,0 +69,6 @@
++
++        self.probe.install(
++            peripheral: { [weak self] id in self?.mPeripherals[id] },
++            characteristic: { [weak self] id, hash in self?.mCharacteristics[id]?[hash] },
++            isScanning: { [weak self] in self?.mCentralManager.isScanning ?? false }
++        )
+@@ -140,0 +152 @@
++            self.probe.connectRequested(peripheral)
+@@ -150,0 +163 @@
++            self.probe.disconnectRequested(peripheral)
+@@ -299 +312,2 @@
+-        self.mApi.onConnectionStateChanged(peripheralArgs: peripheralArgs, stateArgs: stateArgs) { _ in }
++        let probeStamp = self.probe.connected(peripheral)
++        self.mApi.onConnectionStateChanged(peripheralArgs: peripheralArgs, stateArgs: stateArgs, probeStamp: probeStamp) { _ in }
+@@ -304,0 +319 @@
++        self.probe.failedToConnect(peripheral)
+@@ -362 +377,2 @@
+-        self.mApi.onConnectionStateChanged(peripheralArgs: peripheralArgs, stateArgs: stateArgs) { _ in }
++        let probeStamp = self.probe.disconnected(peripheral)
++        self.mApi.onConnectionStateChanged(peripheralArgs: peripheralArgs, stateArgs: stateArgs, probeStamp: probeStamp) { _ in }
+@@ -458 +474,2 @@
+-            self.mApi.onCharacteristicNotified(peripheralArgs: peripheralArgs, characteristicArgs: characteristicArgs, valueArgs: valueArgs) { _ in }
++            let probeStamp = self.probe.notified(peripheral, characteristic, error: error, length: value.count)
++            self.mApi.onCharacteristicNotified(peripheralArgs: peripheralArgs, characteristicArgs: characteristicArgs, valueArgs: valueArgs, probeStamp: probeStamp) { _ in }
+@@ -476,0 +494 @@
++        self.probe.notifyState(peripheral, characteristic, error: error)
+--- /dev/null
++++ b/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/MeshchanProbeObservation.swift
+@@ -0,0 +1,220 @@
++// Probe-only observer for the fixed upstream CentralManagerImpl.
++import CoreBluetooth
++import Foundation
++
++#if os(iOS)
++import Flutter
++#elseif os(macOS)
++import FlutterMacOS
++#endif
++
++final class MeshchanProbeObservation {
++    static var centralAllocations = 0
++    static var peripheralAllocations = 0
++
++    private enum Phase { case armed, connecting, connected, terminal }
++
++    private final class Attempt {
++        let generation: Int64
++        let peripheral: CBPeripheral
++        var phase = Phase.armed
++        var tx: CBCharacteristic?
++        var sequence: Int64 = 0
++        var localRequested = false
++
++        init(generation: Int64, peripheral: CBPeripheral) {
++            self.generation = generation
++            self.peripheral = peripheral
++        }
++    }
++
++    private let channel: FlutterMethodChannel
++    private var attempt: Attempt?
++    private weak var retiredTx: CBCharacteristic?
++    private var lastGeneration: Int64 = 0
++    private let serviceUUID = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
++    private let txUUID = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
++
++    init(_ messenger: FlutterBinaryMessenger) {
++        channel = FlutterMethodChannel(
++            name: "org.meshchan.probe.ble2a3/observation",
++            binaryMessenger: messenger
++        )
++    }
++
++    func install(
++        peripheral: @escaping (String) -> CBPeripheral?,
++        characteristic: @escaping (String, Int64) -> CBCharacteristic?,
++        isScanning: @escaping () -> Bool
++    ) {
++        channel.setMethodCallHandler { [weak self] call, result in
++            guard let self = self else {
++                result(false)
++                return
++            }
++            if call.method == "startupCounts" {
++                result([
++                    "central": Self.centralAllocations,
++                    "peripheral": Self.peripheralAllocations,
++                ])
++                return
++            }
++            if call.method == "isScanning" {
++                result(isScanning())
++                return
++            }
++            guard
++                let arguments = call.arguments as? [String: Any],
++                let generation = (arguments["generation"] as? NSNumber)?.int64Value
++            else {
++                result(false)
++                return
++            }
++            switch call.method {
++            case "arm":
++                guard
++                    let id = arguments["target"] as? String,
++                    let selected = peripheral(id)
++                else {
++                    result(false)
++                    return
++                }
++                result(self.arm(generation: generation, peripheral: selected))
++            case "bindTx":
++                guard
++                    let id = arguments["target"] as? String,
++                    let hash = (arguments["characteristic"] as? NSNumber)?.int64Value,
++                    let selected = characteristic(id, hash)
++                else {
++                    result(false)
++                    return
++                }
++                result(self.bindTx(generation: generation, characteristic: selected))
++            case "retire":
++                result(self.retire(generation: generation))
++            default:
++                result(FlutterMethodNotImplemented)
++            }
++        }
++    }
++
++    private func arm(generation: Int64, peripheral: CBPeripheral) -> Bool {
++        guard
++            attempt == nil, generation > lastGeneration,
++            peripheral.state == .disconnected
++        else { return false }
++        attempt = Attempt(generation: generation, peripheral: peripheral)
++        lastGeneration = generation
++        return true
++    }
++
++    private func bindTx(generation: Int64, characteristic: CBCharacteristic) -> Bool {
++        guard
++            let active = attempt, active.generation == generation,
++            active.phase == .connected,
++            active.tx == nil, characteristic !== retiredTx,
++            characteristic.service?.peripheral === active.peripheral,
++            characteristic.service?.uuid == serviceUUID, characteristic.uuid == txUUID
++        else { return false }
++        active.tx = characteristic
++        return true
++    }
++
++    private func retire(generation: Int64) -> Bool {
++        guard
++            let active = attempt, active.generation == generation,
++            active.peripheral.state == .disconnected,
++            active.phase == .armed || active.phase == .terminal
++        else { return false }
++        if let tx = active.tx { retiredTx = tx }
++        attempt = nil
++        return true
++    }
++
++    func connectRequested(_ peripheral: CBPeripheral) {
++        guard let active = matching(peripheral), active.phase == .armed else { return }
++        active.phase = .connecting
++    }
++
++    func disconnectRequested(_ peripheral: CBPeripheral) {
++        guard let active = matching(peripheral), active.phase != .terminal else { return }
++        active.localRequested = true
++    }
++
++    func connected(_ peripheral: CBPeripheral) -> [Int64]? {
++        guard
++            let active = matching(peripheral), active.phase == .connecting,
++            peripheral.state == .connected
++        else { return nil }
++        active.phase = .connected
++        return receipt("connected", active)
++    }
++
++    func failedToConnect(_ peripheral: CBPeripheral) {
++        guard
++            let active = matching(peripheral), active.phase == .connecting,
++            peripheral.state == .disconnected
++        else { return }
++        active.phase = .terminal
++        _ = receipt("connectFailed", active)
++    }
++
++    func disconnected(_ peripheral: CBPeripheral) -> [Int64]? {
++        guard
++            let active = matching(peripheral),
++            active.phase == .connecting || active.phase == .connected,
++            peripheral.state == .disconnected
++        else { return nil }
++        active.phase = .terminal
++        return receipt("disconnected", active, ["localRequested": active.localRequested])
++    }
++
++    func notified(
++        _ peripheral: CBPeripheral,
++        _ characteristic: CBCharacteristic,
++        error: Error?,
++        length: Int
++    ) -> [Int64]? {
++        guard let active = matching(peripheral, characteristic) else { return nil }
++        return receipt("value", active, [
++            "length": length,
++            "errorFree": error == nil,
++            "enabled": characteristic.isNotifying,
++        ])
++    }
++
++    func notifyState(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic, error: Error?) {
++        guard let active = matching(peripheral, characteristic) else { return }
++        _ = receipt("notifyState", active, [
++            "errorFree": error == nil,
++            "enabled": characteristic.isNotifying,
++        ])
++    }
++
++    private func matching(_ peripheral: CBPeripheral) -> Attempt? {
++        guard let active = attempt, active.peripheral === peripheral else { return nil }
++        return active
++    }
++
++    private func matching(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) -> Attempt? {
++        guard
++            let active = matching(peripheral), active.phase == .connected,
++            peripheral.state == .connected, active.tx === characteristic
++        else { return nil }
++        return active
++    }
++
++    // A stamp travels on the original event; the independent receipt contains
++    // only callback metadata. Neither this receipt nor the stamp carries a
++    // device identifier, characteristic identity, or any of the value bytes.
++    private func receipt(_ kind: String, _ active: Attempt, _ fields: [String: Any] = [:]) -> [Int64] {
++        active.sequence += 1
++        var data = fields
++        data["kind"] = kind
++        data["generation"] = active.generation
++        data["sequence"] = active.sequence
++        data["micros"] = Int64(DispatchTime.now().uptimeNanoseconds / 1_000)
++        channel.invokeMethod("receipt", arguments: data)
++        return [active.generation, active.sequence]
++    }
++}
+--- a/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/PeripheralManagerImpl.swift
++++ b/darwin/bluetooth_low_energy_darwin/Sources/bluetooth_low_energy_darwin/PeripheralManagerImpl.swift
+@@ -22 +22,4 @@
+-    private lazy var mPeripheralManager = CBPeripheralManager()
++    private lazy var mPeripheralManager: CBPeripheralManager = {
++        MeshchanProbeObservation.peripheralAllocations += 1
++        return CBPeripheralManager()
++    }()
+--- /dev/null
++++ b/lib/meshchan_probe_stamp.dart
+@@ -0,0 +1,13 @@
++// Probe-only metadata on the exact existing Dart event. The plugin's public
++// stream and its event data are left intact.
++typedef MeshchanProbeStamp = ({int generation, int sequence});
++
++final _stamps = Expando<MeshchanProbeStamp>();
++
++MeshchanProbeStamp? meshchanProbeStamp(Object event) => _stamps[event];
++
++void stampMeshchanProbeEvent(Object event, Object? envelope) {
++  if (envelope case [final int generation, final int sequence]) {
++    _stamps[event] = (generation: generation, sequence: sequence);
++  }
++}
+--- a/lib/src/api.g.dart
++++ b/lib/src/api.g.dart
+@@ -1253,3 +1253,3 @@
+-  void onConnectionStateChanged(PeripheralArgs peripheralArgs, ConnectionStateArgs stateArgs);
+-
+-  void onCharacteristicNotified(PeripheralArgs peripheralArgs, GATTCharacteristicArgs characteristicArgs, Uint8List valueArgs);
++  void onConnectionStateChanged(PeripheralArgs peripheralArgs, ConnectionStateArgs stateArgs, [Object? probeStamp]);
++
++  void onCharacteristicNotified(PeripheralArgs peripheralArgs, GATTCharacteristicArgs characteristicArgs, Uint8List valueArgs, [Object? probeStamp]);
+@@ -1333 +1333 @@
+-            api.onConnectionStateChanged(arg_peripheralArgs!, arg_stateArgs!);
++            api.onConnectionStateChanged(arg_peripheralArgs!, arg_stateArgs!, args.length > 2 ? args[2] : null);
+@@ -1364 +1364 @@
+-            api.onCharacteristicNotified(arg_peripheralArgs!, arg_characteristicArgs!, arg_valueArgs!);
++            api.onCharacteristicNotified(arg_peripheralArgs!, arg_characteristicArgs!, arg_valueArgs!, args.length > 3 ? args[3] : null);
+--- a/lib/src/central_manager_impl.dart
++++ b/lib/src/central_manager_impl.dart
+@@ -7,0 +8 @@
++import '../meshchan_probe_stamp.dart';
+@@ -265,2 +266,3 @@
+-    ConnectionStateArgs stateArgs,
+-  ) {
++    ConnectionStateArgs stateArgs, [
++    Object? probeStamp,
++  ]) {
+@@ -274,0 +277 @@
++    stampMeshchanProbeEvent(eventArgs, probeStamp);
+@@ -282,2 +285,3 @@
+-    Uint8List valueArgs,
+-  ) {
++    Uint8List valueArgs, [
++    Object? probeStamp,
++  ]) {
+@@ -295,0 +300 @@
++    stampMeshchanProbeEvent(eventArgs, probeStamp);

@@ -1,0 +1,184 @@
+import 'dart:async';
+import 'dart:collection';
+import 'dart:typed_data';
+
+import 'backend.dart';
+
+enum DarwinReceiptKind {
+  connected,
+  connectFailed,
+  disconnected,
+  notifyState,
+  value,
+}
+
+typedef _PluginDelivery = ({
+  DarwinReceiptKind kind,
+  int sequence,
+  Uint8List? bytes,
+});
+
+final class DarwinReceipt {
+  const DarwinReceipt({
+    required this.kind,
+    required this.generation,
+    required this.sequence,
+    required this.micros,
+    this.length,
+    this.errorFree,
+    this.enabled,
+    this.localRequested,
+  });
+
+  final DarwinReceiptKind kind;
+  final int generation;
+  final int sequence;
+  final int micros;
+  final int? length;
+  final bool? errorFree;
+  final bool? enabled;
+  final bool? localRequested;
+
+  static DarwinReceipt? decode(Object? wire) {
+    if (wire
+        case {
+          'kind': final String kindName,
+          'generation': final int generation,
+          'sequence': final int sequence,
+          'micros': final int micros,
+        }
+        when generation > 0 && sequence > 0 && micros >= 0) {
+      final kind = DarwinReceiptKind.values.asNameMap()[kindName];
+      if (kind == null) return null;
+      final fields = wire;
+      final length = fields['length'];
+      final enabled = fields['enabled'];
+      final errorFree = fields['errorFree'];
+      final localRequested = fields['localRequested'];
+      final valid = switch (kind) {
+        DarwinReceiptKind.connected || DarwinReceiptKind.connectFailed => true,
+        DarwinReceiptKind.disconnected => localRequested is bool,
+        DarwinReceiptKind.notifyState => enabled is bool && errorFree is bool,
+        DarwinReceiptKind.value =>
+          enabled is bool && errorFree is bool && length is int && length >= 0,
+      };
+      if (valid) {
+        return DarwinReceipt(
+          kind: kind,
+          generation: generation,
+          sequence: sequence,
+          micros: micros,
+          length: length is int ? length : null,
+          enabled: enabled is bool ? enabled : null,
+          errorFree: errorFree is bool ? errorFree : null,
+          localRequested: localRequested is bool ? localRequested : null,
+        );
+      }
+    }
+    return null;
+  }
+}
+
+/// Joins native callback receipts to tagged events from the upstream stream.
+/// Each source must preserve its own order; either side may arrive first.
+final class DarwinReceiptJoin {
+  DarwinReceiptJoin({
+    required this.onEvent,
+    required this.onUnconfirmed,
+    this.wait = const Duration(milliseconds: 500),
+  });
+
+  final void Function(ProbeLinkEvent) onEvent;
+  final void Function() onUnconfirmed;
+  final Duration wait;
+  final _native = Queue<DarwinReceipt>();
+  final _plugin = Queue<_PluginDelivery>();
+  int _lastNativeSequence = 0;
+  int _lastDartSequence = 0;
+  Timer? _timer;
+  bool _closed = false;
+
+  bool get hasPending => _native.isNotEmpty || _plugin.isNotEmpty;
+
+  void addNative(DarwinReceipt receipt) {
+    if (_closed) return;
+    if (receipt.sequence <= _lastNativeSequence || _native.length >= 8) {
+      reject();
+      return;
+    }
+    _lastNativeSequence = receipt.sequence;
+    _native.add(receipt);
+    _join();
+  }
+
+  void addPlugin(DarwinReceiptKind kind, int sequence, {Uint8List? bytes}) {
+    if (_closed) return;
+    if (sequence <= _lastDartSequence || _plugin.length >= 8) {
+      reject();
+      return;
+    }
+    _lastDartSequence = sequence;
+    _plugin.add((
+      kind: kind,
+      sequence: sequence,
+      bytes: bytes == null ? null : Uint8List.fromList(bytes),
+    ));
+    _join();
+  }
+
+  void _join() {
+    while (!_closed && _native.isNotEmpty && _plugin.isNotEmpty) {
+      final native = _native.removeFirst();
+      final plugin = _plugin.removeFirst();
+      // An exact sequence match is required even when lengths match.
+      if (native.sequence != plugin.sequence || native.kind != plugin.kind) {
+        reject();
+        return;
+      }
+      _timer?.cancel();
+      _timer = null;
+      if (native.kind == DarwinReceiptKind.value) {
+        final bytes = plugin.bytes;
+        if (bytes == null ||
+            native.length != bytes.length ||
+            native.errorFree != true ||
+            native.enabled != true) {
+          reject();
+          return;
+        }
+        onEvent(
+          ProbeNotification(
+            native.generation,
+            bytes,
+            native.sequence,
+            native.length!,
+            native.micros,
+          ),
+        );
+      } else {
+        onEvent(
+          ProbeDartConnection(
+            native.generation,
+            native.kind == DarwinReceiptKind.connected,
+          ),
+        );
+      }
+    }
+    if (!_closed && hasPending) {
+      _timer ??= Timer(wait, reject);
+    }
+  }
+
+  void reject() {
+    if (_closed) return;
+    close();
+    onUnconfirmed();
+  }
+
+  void close() {
+    _closed = true;
+    _timer?.cancel();
+    _native.clear();
+    _plugin.clear();
+  }
+}

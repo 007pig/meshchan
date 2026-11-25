@@ -3,6 +3,13 @@
 /// Serial diagnostics do not identify devices or establish protocol sessions.
 library;
 
+export 'src/connection_target.dart'
+    show
+        CompanionTransportKind,
+        ConnectionTarget,
+        UsbSerialTarget,
+        TcpTarget,
+        BleTarget;
 export 'src/diagnostics/diagnostic_results.dart'
     show
         DiagnosticTaskReason,

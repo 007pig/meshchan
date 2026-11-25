@@ -13,11 +13,22 @@ const _window = MethodChannel('org.meshchan.probe.ble2a3/window');
 typedef ManagerCounts = ({int central, int peripheral});
 
 void main(List<String> arguments) {
+  runZoned(
+    () => _launch(arguments),
+    zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
+  );
+}
+
+void _launch(List<String> arguments) {
   WidgetsFlutterBinding.ensureInitialized();
+  suppressDarwinLogging();
   final synthetic = arguments.contains('--fake-backend');
   final controller = ProbeController(
     synthetic ? SyntheticProbeBackend.new : DarwinProbeBackend.new,
     synthetic: synthetic,
+    cooperation: arguments.contains('--worker-cooperation')
+        ? CooperationFixture()
+        : null,
   );
   var runtimeFailureRecorded = false;
   void recordRuntimeFailure() {
@@ -117,13 +128,22 @@ class _ProbeScreenState extends State<_ProbeScreen> {
     setState(() => _closing = true);
     var allowed = false;
     try {
-      allowed = await _probe.requestClose();
+      allowed = await _probe.requestClose(
+        readClipboard: () async =>
+            (await Clipboard.getData(Clipboard.kTextPlain))?.text,
+      );
     } catch (_) {
       // Failing closed keeps the owner and its release evidence in memory.
     }
     if (!allowed && mounted) {
-      setState(() => _closing = false);
-      _message('Close is waiting for release confirmation.');
+      final evidencePending = _probe.finalEvidencePending;
+      setState(() {
+        _closing = false;
+        if (evidencePending) _showEvidence = true;
+      });
+      if (!evidencePending) {
+        _message('Close is waiting for release confirmation.');
+      }
     }
     return allowed;
   }
@@ -143,8 +163,14 @@ class _ProbeScreenState extends State<_ProbeScreen> {
 
   Future<void> _copyEvidence() async {
     try {
-      await Clipboard.setData(ClipboardData(text: _probe.evidenceJson));
-      _message('Structural evidence copied.');
+      final evidence = _probe.evidenceJson;
+      await Clipboard.setData(ClipboardData(text: evidence));
+      final finalCopy = _probe.confirmFinalEvidenceCopy(evidence);
+      _message(
+        finalCopy
+            ? 'Final evidence copied. Save it before closing the probe.'
+            : 'Structural evidence copied.',
+      );
     } catch (_) {
       _message('The clipboard is unavailable.');
     }
@@ -159,6 +185,12 @@ class _ProbeScreenState extends State<_ProbeScreen> {
     }
   }
 
+  Future<void> _copyFixturePath(String path) async {
+    if (_closing) return;
+    await Clipboard.setData(ClipboardData(text: path));
+    _message('Owned fixture path copied.');
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: _probe,
@@ -168,16 +200,34 @@ class _ProbeScreenState extends State<_ProbeScreen> {
       final canRun =
           !_closing && _probe.canRun && bytes != null && basis != null;
       final editable = !_closing && !_fixtureSubmitted;
+      final fixture = _probe.cooperation;
       return Scaffold(
         appBar: AppBar(
           title: Text(
-            widget.synthetic ? 'BLE Probe · Synthetic' : 'Meshchan BLE Probe',
+            fixture != null
+                ? (widget.synthetic
+                      ? 'BLE Worker Cooperation · Synthetic'
+                      : 'BLE Worker Cooperation')
+                : (widget.synthetic
+                      ? 'BLE Probe · Synthetic'
+                      : 'Meshchan BLE Probe'),
           ),
           actions: [
             TextButton(
               onPressed: () => setState(() => _showEvidence = !_showEvidence),
               child: Text(_showEvidence ? 'Back to controls' : 'View evidence'),
             ),
+            if (widget.handleWindowClose && fixture != null)
+              TextButton(
+                onPressed: _closing
+                    ? null
+                    : () => unawaited(
+                        _perform(
+                          () => _window.invokeMethod<void>('closeWindow'),
+                        ),
+                      ),
+                child: const Text('Close probe'),
+              ),
             const SizedBox(width: 12),
           ],
         ),
@@ -196,7 +246,9 @@ class _ProbeScreenState extends State<_ProbeScreen> {
                       spacing: 8,
                       children: [
                         FilledButton.tonal(
-                          onPressed: () => unawaited(_copyEvidence()),
+                          onPressed: _closing
+                              ? null
+                              : () => unawaited(_copyEvidence()),
                           child: const Text('Copy evidence JSON'),
                         ),
                         if (widget.readManagerCounts case final read?)
@@ -225,6 +277,33 @@ class _ProbeScreenState extends State<_ProbeScreen> {
                     style: const TextStyle(fontFamily: 'monospace'),
                   ),
                 ] else ...[
+                  if (fixture != null) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.tonal(
+                            onPressed: !_closing && fixture.canStart
+                                ? () => unawaited(_perform(_probe.startWorker))
+                                : null,
+                            child: const Text('Start worker'),
+                          ),
+                          if (fixture.fixturePath case final path?)
+                            OutlinedButton(
+                              onPressed: _closing
+                                  ? null
+                                  : () => unawaited(
+                                      _perform(() => _copyFixturePath(path)),
+                                    ),
+                              child: const Text('Copy fixture path'),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -409,6 +488,14 @@ class _StatusPanel extends StatelessWidget {
           Text('Logical result  ${probe.logicalResult}'),
           Text('Notifications  ${probe.notificationState}'),
           Text('Release  ${probe.cleanupState}'),
+          if (probe.cooperation case final fixture?)
+            Text('Runtime  ${fixture.workerStatus}'),
+          if (probe.cooperation?.caseStatus case final status?)
+            Text('Case  $status'),
+          if (probe.finalEvidencePending)
+            const Text(
+              'Final evidence could not be saved. Copy evidence JSON or retry Close.',
+            ),
           const SizedBox(height: 8),
           const Text(
             'Scan 10 s  ·  Initialize 15 s total  ·  Request 5 s  ·  Observe release 10 s',

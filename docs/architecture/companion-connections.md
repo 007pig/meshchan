@@ -25,6 +25,7 @@ decision in the applicable later step.
 | Step 1 changes | This architecture document and the [Step 1 validation record](../validation/phase-2a-connections.md) document the reviewed checkout. |
 | Step 2 changes | The [transport baseline](companion-transport-baseline.md) pins the USB, TCP, and BLE sources, records initial acceptance targets, and sets the macOS BLE verification order. The [Step 2 validation record](../validation/phase-2a2-protocol-backends.md) records the separate checkout and static checks. |
 | Step 3 changes | The [standalone macOS BLE probe](../../tool/ble_probe/README.md) carries the pinned backend, a private transport, and structural evidence for finite query/start. The [Step 3 validation record](../validation/phase-2a3-ble-host.md) tracks software and real-device evidence. |
+| Step 4 changes | The standalone probe adds a private root-to-worker bridge and drives the existing runtime with an owned SQLite fixture. [Step 4 validation record](../validation/phase-2a4-ble-worker.md) |
 | Planned changes and open questions | The [proposed responsibilities](#responsibilities-and-future-seams), [compatibility inventory](#compatibility-inventory), and [handoffs](#phase-and-step-handoffs) identify the future work and the evidence it still needs. |
 
 ## Current call paths
@@ -141,9 +142,19 @@ path and any per-run payload come from the invocation.
 The communication core `meshcore_link` and business/storage core
 `meshchan_core` are Flutter-independent. The App owns Flutter UI and runtime
 coordination. Reuse the existing frame and session abstraction for new
-adapters. BLE backend choice, execution location, and any main-isolate/worker
-bridge are open until the feasibility steps. Public type names and the
-internal message contract follow those decisions.
+adapters. For macOS BLE, the chosen direction assigns the plugin, GATT,
+notification provenance, and physical connection and release to the Flutter
+root isolate. The worker keeps the session, device gate, storage, and recording
+responsibilities. The root owns a broker and the worker owns its transport
+proxy. The Step 4 fixture exercises open readiness, full frames, actual
+per-write results, safe faults, and affirmative close. Cancel starts physical
+cleanup independently of a pending open or write. A missing close or worker
+release keeps the corresponding owner unavailable. Normal Quit requires
+runtime release, acknowledgement, actual worker exit, and root cleanup.
+The joint host scenario verified query/start and physical release with the
+dual-patch 6.2.1 probe and paired Heltec target. Same-process reconnect has
+synthetic coverage. The bridge is private to the probe and the recording
+path retains its existing owner. [Step 4 decision](../validation/phase-2a4-ble-worker.md#execution-location-decision)
 [Link exports](../../packages/meshcore_link/lib/meshcore_link.dart) ·
 [Core boundaries](offline-core.md#package-responsibilities-and-dependency-direction) ·
 [App boundaries](flutter-host.md#package-boundaries-and-host-structure)
@@ -219,9 +230,9 @@ release on the same target.
 | 1 | Completed | Fix the scope and baseline in this document and the [validation record](../validation/phase-2a-connections.md). |
 | 2 | Completed | Pin the protocol baseline, acceptance targets, and BLE candidates in the [transport baseline](companion-transport-baseline.md) and [validation record](../validation/phase-2a2-protocol-backends.md). |
 | 3 | Host and software checks complete, paired main scenario passed | The [real scenario ledger](../validation/phase-2a3-ble-host.md#real-ble-scenario-ledger) retains both attempts, actual release, and remaining coverage. |
-| 4 | Limited query/start entry met | Use the [Step 3 entry evidence](../validation/phase-2a3-ble-host.md#step-4-entry) to plan [BLE and Dart worker cooperation](companion-transport-baseline.md#step-4-worker-cooperation) on the same backend version set and target. |
-| 5 | Planned | Implement the pure Dart connection target model. |
-| 6 | Planned | Implement transport creation by target. |
+| 4 | Joint hardware Case A and normal Quit passed | Adopt root BLE ownership and worker session, gate, and storage for the remaining design. The [scenario ledger](../validation/phase-2a4-ble-worker.md#real-ble-scenarios) retains the synthetic and outstanding hardware boundaries. |
+| 5 | Planned | Implement pure Dart targets for one explicit operation. Carry identity as data and keep target construction free of discovery, plugin startup, or implicit selection. Preserve the existing USB path semantics. |
+| 6 | Planned | Create a fresh transport per selected target. Preserve subscribe-before-open and the complete-frame, local-write, and actual-release contracts. A future BLE factory can supply a worker proxy to a root-owned connection. |
 | 7 | Planned | Migrate internal CLI entry points. |
 | 8 | Planned | Migrate App requests and worker entry points. |
 | 9 | Planned | Run targeted regressions and build verification. |

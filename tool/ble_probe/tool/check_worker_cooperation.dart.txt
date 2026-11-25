@@ -1,0 +1,267 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:meshchan_ble_probe/runtime/protocol.dart';
+import 'package:meshchan_ble_probe/src/cooperation_storage_fixture.dart';
+import 'package:meshchan_ble_probe/src/worker_bridge.dart';
+
+import 'cooperation_test_fixture.dart';
+
+enum _Scenario {
+  storageDrain,
+  withheldAcknowledgment,
+  withheldRelease,
+  lossDuringOpen,
+  lossDuringWrite,
+  lossDuringClose,
+}
+
+void _check(bool value, String category) {
+  if (!value) throw _Failure(category);
+}
+
+final class _Failure implements Exception {
+  const _Failure(this.category);
+  final String category;
+}
+
+Future<Map<String, Object?>> _child(List<String> args) async {
+  final process = await Process.start(Platform.resolvedExecutable, [
+    'run',
+    ...args,
+  ]);
+  final output = process.stdout.transform(utf8.decoder).join();
+  final errors = process.stderr.transform(utf8.decoder).join();
+  final code = await process.exitCode.timeout(
+    const Duration(minutes: 2),
+    onTimeout: () {
+      process.kill();
+      return process.exitCode;
+    },
+  );
+  final stdoutText = await output, stderrText = await errors;
+  _check(
+    ![stdoutText, stderrText].any((text) => text.contains(privateMarker)),
+    'processPrivacy',
+  );
+  // The Dart CLI can prefix the report with native hook progress.
+  final reportStart = stdoutText.lastIndexOf('{');
+  _check(reportStart >= 0, 'missingChildReceipt');
+  final result =
+      jsonDecode(stdoutText.substring(reportStart)) as Map<String, Object?>;
+  if (code != 0 || result['passed'] != true) {
+    final category = result['category'];
+    throw _Failure(category is String ? category : 'childRejected');
+  }
+  return result;
+}
+
+Future<void> _storageCheck(String mode, Directory directory) async {
+  final result = await _child([
+    'tool/check_cooperation_storage.dart',
+    mode,
+    directory.path,
+  ]);
+  _check(result['mode'] == mode, 'readMode');
+  if (mode == 'busy') {
+    _check(
+      result['ownerBusy'] == true &&
+          result['category'] == 'data_directory_busy' &&
+          result['cleanupUnconfirmed'] == false,
+      'ownershipCheck',
+    );
+  } else {
+    _check(
+      result['draftMatches'] == true &&
+          result['historyEmpty'] == true &&
+          result['released'] == true,
+      'storageReopen',
+    );
+  }
+}
+
+Future<Map<String, Object>> _run(
+  _Scenario scenario,
+  Directory directory,
+) async {
+  _check(
+    await isExistingCooperationStorageFixture(
+      directory,
+      requireDatabase: false,
+    ),
+    'notEmptyOwnedFixture',
+  );
+  final fixture = WorkerFixture(
+    directory,
+    cleanupBudget: const Duration(milliseconds: 500),
+    runtimeDeadline: const Duration(seconds: 3),
+    syntheticFaults: true,
+    holdAcknowledgment: scenario == _Scenario.withheldAcknowledgment,
+  );
+  final runtime = fixture.runtime, bridge = fixture.bridge;
+  await fixture.start();
+  switch (scenario) {
+    case _Scenario.storageDrain:
+      await _storageCheck('busy', directory);
+      final write = runtime.saveDraft(
+        title: cooperationDraftTitle,
+        body: cooperationDraftBody,
+        session: 1,
+      );
+      final shutdown = runtime.shutdown();
+      final saved = await write;
+      _check(
+        matchesCooperationDraft(saved.title, saved.body, saved.revision),
+        'storageDrain',
+      );
+      final outcome = await shutdown;
+      _check(outcome.canExit && await bridge.finish(), 'normalShutdown');
+      await _storageCheck('reopen', directory);
+      return {
+        'contenderBusy': true,
+        'draftCommitted': true,
+        'independentReopen': true,
+        'historyEmpty': true,
+        'resourcesReleased': true,
+        'workerExited': true,
+        'bridgeClosed': true,
+      };
+    case _Scenario.withheldAcknowledgment:
+      final first = await runtime.shutdown();
+      _check(
+        first.resourcesReleased &&
+            !first.workerExited &&
+            !first.canExit &&
+            !await bridge.finish(),
+        'ackGate',
+      );
+      bridge.releaseFixtureAcknowledgment();
+      await fixture.until(() => runtime.snapshot.workerExited);
+      final reconciled = await runtime.shutdown();
+      _check(
+        reconciled.canExit &&
+            runtime.openPortCount == 0 &&
+            await bridge.finish(),
+        'ackReconcile',
+      );
+      return {'initialExitAllowed': false, 'reconciledExitAllowed': true};
+    case _Scenario.withheldRelease:
+      final transport = HeldRootTransport(1);
+      final check = fixture.begin(transport);
+      await check.accepted;
+      await transport.opened.future.timeout(fixtureWait);
+      await runtime.cancelDeviceCheck(check.id);
+      await transport.closing.future.timeout(fixtureWait);
+      // Native connect and release stay intentionally unresolved.
+      await fixture.until(
+        () => runtime.snapshot.gate == DeviceGateState.quarantined,
+      );
+      _check(
+        bridge.release == WorkerBridgeRelease.unknown &&
+            !bridge.canPrepareAttempt &&
+            runtime.snapshot.deviceCheck?.released == false &&
+            runtime.snapshot.owner == OwnerFact.held,
+        'releaseQuarantine',
+      );
+      final result = await runtime.shutdown();
+      _check(!result.canExit && !result.workerExited, 'unconfirmedQuit');
+      return {
+        'rootReleased': false,
+        'workerReleased': false,
+        'gateQuarantined': true,
+        'ownerHeld': true,
+        'workerExited': false,
+        'exitAllowed': false,
+      };
+    case _Scenario.lossDuringOpen:
+    case _Scenario.lossDuringWrite:
+    case _Scenario.lossDuringClose:
+      final transport = HeldRootTransport(1);
+      final check = fixture.begin(transport);
+      await check.accepted;
+      await transport.opened.future.timeout(fixtureWait);
+      if (scenario != _Scenario.lossDuringOpen) {
+        transport.openResult.complete();
+        await fixture.until(() => transport.writes.isNotEmpty);
+      }
+      if (scenario == _Scenario.lossDuringClose) {
+        // Worker owns the normal close intent. Its crash must not duplicate
+        // the already pending physical close or fabricate a release report.
+        await runtime.cancelDeviceCheck(check.id);
+        await transport.closing.future.timeout(fixtureWait);
+      }
+      bridge.simulateWorkerLoss();
+      await fixture.until(() => runtime.snapshot.workerExited);
+      await transport.closing.future.timeout(fixtureWait);
+      _check(
+        !transport.closeResult.isCompleted &&
+            transport.closeCalls == 1 &&
+            !bridge.canPrepareAttempt,
+        'ownerCloseAfterPeerLoss',
+      );
+      if (scenario == _Scenario.lossDuringOpen) {
+        transport.openResult.completeError(StateError(privateMarker));
+      } else if (scenario == _Scenario.lossDuringWrite) {
+        transport.writeResults.single.completeError(StateError(privateMarker));
+      }
+      transport.unblock();
+      final release = await bridge.closeAttempt();
+      final outcome = await runtime.shutdown();
+      _check(
+        release == WorkerBridgeRelease.confirmed &&
+            !outcome.resourcesReleased &&
+            outcome.workerExited &&
+            !outcome.canExit,
+        'peerLossNotNormalQuit',
+      );
+      return {
+        'rootReleased': true,
+        'workerResourcesReleased': false,
+        'workerExited': true,
+        'exitAllowed': false,
+        'closeCalls': transport.closeCalls,
+      };
+  }
+}
+
+Future<void> main(List<String> args) async {
+  try {
+    if (args.length == 3 && args[0] == '--owned-child') {
+      final scenario = _Scenario.values.byName(args[1]);
+      final facts = await _run(scenario, Directory(args[2]));
+      stdout.writeln(
+        jsonEncode({'passed': true, 'scenario': scenario.name, ...facts}),
+      );
+      await stdout.flush();
+      // The parent reclaims only this synthetic container after process exit.
+      // The structural receipt above records whether normal release occurred.
+      exit(0);
+    }
+    _check(args.isEmpty, 'usage');
+    for (final scenario in _Scenario.values) {
+      final directory = await createCooperationStorageFixture();
+      try {
+        final result = await _child([
+          Platform.script.toFilePath(),
+          '--owned-child',
+          scenario.name,
+          directory.path,
+        ]);
+        _check(result['scenario'] == scenario.name, 'scenarioMismatch');
+        stdout.writeln(jsonEncode(result));
+      } finally {
+        await directory.delete(recursive: true);
+      }
+    }
+  } catch (error) {
+    stdout.writeln(
+      jsonEncode({
+        'passed': false,
+        'category': error is _Failure ? error.category : 'fixtureFailed',
+      }),
+    );
+    await stdout.flush();
+    exit(1);
+  }
+}

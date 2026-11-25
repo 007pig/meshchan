@@ -1,0 +1,183 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:meshchan_ble_probe/runtime/controller.dart';
+import 'package:meshchan_ble_probe/runtime/protocol.dart';
+import 'package:meshchan_ble_probe/src/worker_bridge.dart';
+import 'package:meshcore_link/meshcore_link.dart';
+
+const fixtureWait = Duration(seconds: 8);
+const privateMarker = 'PRIVATE_BLE_WORKER_MARKER';
+const _privateNode = [0x57, 0x4e, 0x4f, 0x44, 0x45, 0x31]; // WNODE1
+const privateNodeName = 'WNODE1';
+
+/// A controllable root transport. The real session, gate and storage live in
+/// the controller's spawned worker. Separate probe-level tests cover native
+/// joining and the root-owned probe transport.
+final class HeldRootTransport implements CompanionTransport {
+  HeldRootTransport(this.generation);
+
+  final int generation;
+  final opened = Completer<void>();
+  final closing = Completer<void>();
+  final openResult = Completer<void>();
+  final closeResult = Completer<void>();
+  final _frames = StreamController<Uint8List>(sync: true);
+  final receipts = Expando<WorkerBridgeReceipt>();
+  final writes = <Uint8List>[];
+  final writeResults = <Completer<void>>[];
+  int openCalls = 0, closeCalls = 0, _nativeSequence = 0;
+  bool provenance = true;
+
+  @override
+  Stream<Uint8List> get frames => _frames.stream;
+
+  @override
+  Future<void> open() async {
+    if (!_frames.hasListener) throw StateError('missingFrameSubscriber');
+    openCalls++;
+    if (!opened.isCompleted) opened.complete();
+    await openResult.future;
+  }
+
+  @override
+  Future<void> sendFrame(Uint8List content) {
+    writes.add(Uint8List.fromList(content));
+    final result = Completer<void>();
+    writeResults.add(result);
+    return result.future;
+  }
+
+  void emit({
+    required bool selfInfo,
+    bool mutateAfterSend = false,
+    bool withReceipt = true,
+    int? stampedGeneration,
+  }) {
+    final bytes = selfInfo
+        ? (Uint8List(64)
+            ..[0] = 0x05
+            ..setRange(58, 64, _privateNode))
+        : (Uint8List(82)..setRange(0, 2, [0x0d, 10]));
+    _nativeSequence += 2; // Native connect/notify receipts occupy other IDs.
+    if (withReceipt) {
+      receipts[bytes] = WorkerBridgeReceipt(
+        generation: stampedGeneration ?? generation,
+        nativeSequence: _nativeSequence,
+        nativeLength: bytes.length,
+        nativeMicros: 10 * _nativeSequence,
+        expectedLength: bytes.length,
+      );
+    }
+    _frames.add(bytes);
+    if (mutateAfterSend) bytes.fillRange(0, bytes.length, 0xcc);
+  }
+
+  @override
+  Future<void> close() async {
+    closeCalls++;
+    if (!closing.isCompleted) closing.complete();
+    await closeResult.future;
+    unawaited(_frames.close());
+  }
+
+  void unblock() {
+    if (!openResult.isCompleted) openResult.complete();
+    if (!closeResult.isCompleted) closeResult.complete();
+    for (final write in writeResults) {
+      if (!write.isCompleted) write.complete();
+    }
+  }
+}
+
+final class WorkerFixture {
+  WorkerFixture(
+    Directory directory, {
+    this.runtimeDeadline = const Duration(seconds: 5),
+    this.cleanupBudget = const Duration(seconds: 2),
+    bool syntheticFaults = false,
+    bool holdAcknowledgment = false,
+  }) {
+    bridge = WorkerBridge(
+      onFact: (fact) {
+        facts.add(fact);
+        _notify();
+      },
+      cleanupBudget: cleanupBudget,
+      syntheticFaults: syntheticFaults,
+      holdFixtureAcknowledgment: holdAcknowledgment,
+    );
+    runtime = RuntimeController(
+      resolveDirectory: () async => directory.path,
+      entry: bridge.entry,
+      deadline: runtimeDeadline,
+    );
+    bridge.bindRuntime(runtime.generation);
+    _runtimeWatch = runtime.changes.listen((snapshot) {
+      bridge.observeRuntime(snapshot);
+      _notify();
+    });
+  }
+
+  final Duration runtimeDeadline, cleanupBudget;
+  final facts = <WorkerBridgeFact>[];
+  late final WorkerBridge bridge;
+  late final RuntimeController runtime;
+  late final StreamSubscription<RuntimeSnapshot> _runtimeWatch;
+  HeldRootTransport? current;
+  var _progress = Completer<void>();
+  Future<ShutdownOutcome>? _closing;
+
+  void _notify() {
+    final previous = _progress;
+    _progress = Completer<void>();
+    previous.complete();
+  }
+
+  Future<void> until(bool Function() predicate) async {
+    final watch = Stopwatch()..start();
+    while (!predicate()) {
+      final remaining = fixtureWait - watch.elapsed;
+      if (remaining <= Duration.zero) throw TimeoutException('fixtureFact');
+      await _progress.future.timeout(remaining);
+    }
+  }
+
+  Future<void> start() async {
+    await runtime.start();
+    await bridge.ready.timeout(fixtureWait);
+    if (runtime.snapshot.phase != RuntimePhase.ready ||
+        runtime.snapshot.owner != OwnerFact.held) {
+      throw StateError('fixtureStorageNotOwned');
+    }
+  }
+
+  DeviceCheckHandle begin(
+    HeldRootTransport transport, {
+    Duration initializationBudget = const Duration(seconds: 15),
+    Duration requestBudget = const Duration(seconds: 5),
+  }) {
+    current = transport;
+    final token = bridge.prepareAttempt(
+      nativeGeneration: transport.generation,
+      transport: transport,
+      receiptOf: (bytes) => transport.receipts[bytes],
+      provenanceConfirmed: () => transport.provenance,
+      initializationBudget: initializationBudget,
+      requestBudget: requestBudget,
+    );
+    return runtime.startDeviceCheck(token, const DeviceCheckOptions());
+  }
+
+  Future<ShutdownOutcome> close() => _closing ??= _close();
+
+  Future<ShutdownOutcome> _close() async {
+    // Test-environment reclamation only when a failed assertion left a gate.
+    current?.unblock();
+    final result = await runtime.shutdown();
+    await bridge.finish(workerWasSpawned: result.workerWasSpawned);
+    await _runtimeWatch.cancel();
+    return result;
+  }
+}

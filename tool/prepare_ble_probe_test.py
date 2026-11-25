@@ -20,6 +20,17 @@ class BleProbePreparationTest(unittest.TestCase):
         self.product = self.base / 'product'
         self.product.mkdir()
 
+    def commit_fixture(self, sources):
+        for path, contents in sources.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+        subprocess.run(['git', 'init', '--quiet'], cwd=self.product, check=True)
+        subprocess.run(['git', '-c', 'core.autocrlf=false', 'add', '.'],
+                       cwd=self.product, check=True)
+        subprocess.run(['git', '-c', 'user.name=Probe Test', '-c',
+                        'user.email=probe@example.invalid', '-c', 'commit.gpgsign=false',
+                        'commit', '--quiet', '-m', 'snapshot'], cwd=self.product, check=True)
+
     def test_refuses_product_ancestors_existing_directories_and_symlink_aliases(self):
         external = self.base / 'external'
         external.mkdir()
@@ -45,29 +56,31 @@ class BleProbePreparationTest(unittest.TestCase):
                     b'environment:\r\n  sdk: ^3.13.0\r\n'
                     b'dependencies:\r\n  libserialport_plus: ^1.0.5\r\n')
         pkg = self.product / probe.LINK
+        core = self.product / probe.CORE
+        core_manifest = (b'name: meshchan_core\nresolution: workspace\n'
+                         b'dependencies:\n  meshcore_link: ^0.1.0-rc.1\n')
+        generated = core / 'lib/src/storage/database.g.dart'
+        schema = core / 'lib/src/storage/schema.drift'
         sources = {
             pkg / 'pubspec.yaml': manifest,
             pkg / 'lib/meshcore_link.dart': b"export 'src/session.dart';\n",
             pkg / 'lib/src/session.dart': b'class Session {}\n',
+            core / 'pubspec.yaml': core_manifest,
+            core / 'lib/meshchan_core.dart': b"export 'src/storage/database.dart';\n",
+            core / 'lib/src/storage/database.dart': b"part 'database.g.dart';\n",
+            generated: b"part of 'database.dart';\n",
+            schema: b'CREATE TABLE settings (field TEXT);\n',
             self.product / 'LICENSE': b'GPL fixture\n',
             self.product / 'COPYRIGHT': b'Copyright fixture\n',
             self.product / 'pubspec.lock': b'product lock\n',
         }
-        for path, contents in sources.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(contents)
-        subprocess.run(['git', 'init', '--quiet'], cwd=self.product, check=True)
-        subprocess.run(['git', '-c', 'core.autocrlf=false', 'add', '.'],
-                       cwd=self.product, check=True)
-        subprocess.run(['git', '-c', 'user.name=Probe Test', '-c',
-                        'user.email=probe@example.invalid', '-c', 'commit.gpgsign=false',
-                        'commit', '--quiet', '-m', 'snapshot'], cwd=self.product, check=True)
+        self.commit_fixture(sources)
         modified = pkg / 'lib/src/session.dart'
         modified.write_bytes(b'class Uncommitted {}\n')
         (pkg / 'lib/other.dart').write_text('untracked fixture')
 
         vendor = self.base / 'external/vendor/meshcore_link'
-        files = probe.copy_meshcore(self.product, 'HEAD', vendor)
+        files = probe.copy_package(self.product, 'HEAD', probe.LINK, vendor)
         self.assertEqual((vendor / 'lib/src/session.dart').read_bytes(), sources[modified])
         self.assertEqual((vendor / 'pubspec.yaml').read_bytes(),
                          manifest.replace(b'resolution: workspace\r\n', b''))
@@ -82,6 +95,40 @@ class BleProbePreparationTest(unittest.TestCase):
         self.assertEqual((pkg / 'pubspec.yaml').read_bytes(), manifest)
         self.assertEqual((self.product / 'pubspec.lock').read_bytes(), b'product lock\n')
         self.assertEqual(modified.read_bytes(), b'class Uncommitted {}\n')
+
+        private_core = vendor.with_name('meshchan_core')
+        facts = probe.copy_package(self.product, 'HEAD', probe.CORE, private_core,
+                                   'lib/src/storage/database.g.dart', 'lib/src/storage/schema.drift')
+        self.assertEqual((private_core / 'pubspec.yaml').read_bytes(),
+                         core_manifest.replace(b'resolution: workspace\n', b''))
+        self.assertEqual((private_core / 'COPYRIGHT').read_bytes(),
+                         sources[self.product / 'COPYRIGHT'])
+        for file in (generated, schema):
+            self.assertEqual((private_core / file.relative_to(core)).read_bytes(), sources[file])
+            fact = facts[str(file.relative_to(self.product))]
+            self.assertEqual(fact['sourceSha256'], fact['vendorSha256'])
+
+    def test_runtime_snapshot_preserves_only_the_selected_files(self):
+        runtime = self.product / probe.RUNTIME
+        sources = {runtime / name: f'// Committed {name}\n'.encode()
+                   for name in (*probe.RUNTIME_FILES, 'unrelated.dart')}
+        self.commit_fixture(sources)
+        (runtime / 'worker.dart').write_bytes(b'// Worktree edit\n')
+        destination = self.base / 'external/host/lib/runtime'
+        required = tuple(str(probe.RUNTIME / name) for name in probe.RUNTIME_FILES)
+        facts = probe.copy_git_snapshot(self.product, 'HEAD', probe.RUNTIME, destination, required)
+        self.assertEqual(set(facts), set(required))
+        self.assertEqual(sorted(file.name for file in destination.iterdir()),
+                         sorted(probe.RUNTIME_FILES))
+        for name in probe.RUNTIME_FILES:
+            self.assertEqual((destination / name).read_bytes(), sources[runtime / name])
+        worker = facts[str(probe.RUNTIME / 'worker.dart')]
+        self.assertEqual(worker['sourceSha256'], worker['vendorSha256'])
+        self.assertNotEqual(worker['sourceSha256'], worker['worktreeSha256'])
+
+        with self.assertRaisesRegex(ValueError, 'missing required inputs.*missing.dart'):
+            probe.copy_git_snapshot(self.product, 'HEAD', probe.RUNTIME,
+                                    self.base / 'missing', (str(probe.RUNTIME / 'missing.dart'),))
 
     def test_rejects_missing_or_ambiguous_workspace_transform(self):
         for manifest in (b'name: fixture\n', b'resolution: workspace\nresolution: workspace\n'):
@@ -132,30 +179,48 @@ class BleProbePreparationTest(unittest.TestCase):
         lock_path.write_bytes(lock)
         packages = [{'name': name, 'version': probe.BLE_VERSION}
                     for name in (*probe.HOSTED_PINS, probe.DARWIN)]
+        darwin = packages[-1]
+        core = {'name': 'meshchan_core', 'version': '0.1.0-rc.1',
+                'dependencies': ['meshcore_link', 'drift', 'sqlite3']}
+        packages.append(core)
         graph = dart_tool / 'package_graph.json'
         graph.write_text(json.dumps({'packages': packages}))
         config = dart_tool / 'package_config.json'
         private_paths = [{'name': name, 'rootUri': f'../../vendor/{name}'}
-                         for name in (probe.DARWIN, 'meshcore_link')]
+                         for name in (probe.DARWIN, 'meshcore_link', 'meshchan_core')]
         config.write_text(json.dumps({'packages': private_paths}))
         result = probe.verify_resolution(host, self.product, lock)
         self.assertEqual(result['lockSha256'], probe.sha256(lock))
+        self.assertEqual(result['graph']['packages'], packages)
+        self.assertEqual(result['privatePackageRoots']['meshchan_core'], 'vendor/meshchan_core')
 
         lock_path.write_bytes(lock + b'\n')
         with self.assertRaisesRegex(ValueError, 'changed the supplied lockfile'):
             probe.verify_resolution(host, self.product, lock)
         lock_path.write_bytes(lock)
 
-        packages[-1]['version'] = '6.2.2'
+        darwin['version'] = '6.2.2'
         graph.write_text(json.dumps({'packages': packages}))
         with self.assertRaisesRegex(ValueError, 'in the resolved probe graph'):
             probe.verify_resolution(host, self.product, lock)
-        packages[-1]['version'] = probe.BLE_VERSION
+        darwin['version'] = probe.BLE_VERSION
+
+        core['dependencies'].remove('meshcore_link')
+        graph.write_text(json.dumps({'packages': packages}))
+        with self.assertRaisesRegex(ValueError, 'storage dependency graph is incomplete'):
+            probe.verify_resolution(host, self.product, lock)
+        core['dependencies'].append('meshcore_link')
         graph.write_text(json.dumps({'packages': packages}))
 
         private_paths[1]['rootUri'] = (self.product / probe.LINK).as_uri()
         config.write_text(json.dumps({'packages': private_paths}))
         with self.assertRaisesRegex(ValueError, 'live product checkout'):
+            probe.verify_resolution(host, self.product, lock)
+
+        private_paths[1]['rootUri'] = '../../vendor/meshcore_link'
+        private_paths[2]['rootUri'] = (self.base / 'cache/meshchan_core').as_uri()
+        config.write_text(json.dumps({'packages': private_paths}))
+        with self.assertRaisesRegex(ValueError, 'meshchan_core is not resolved from its private'):
             probe.verify_resolution(host, self.product, lock)
 
     def test_generated_macos_configuration_is_local_and_nonsandboxed(self):

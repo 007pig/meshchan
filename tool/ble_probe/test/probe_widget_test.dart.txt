@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -67,6 +68,212 @@ Future<void> _selectFixture(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final messenger = TestDefaultBinaryMessengerBinding.instance;
+
+  for (final repairFile in [false, true]) {
+    testWidgets(
+      repairFile
+          ? 'final receipt write failure allows Quit after a successful retry'
+          : 'final receipt write failure keeps final evidence available to copy',
+      (tester) async {
+        final fixture = (await tester.runAsync(
+          () async => CooperationFixture(),
+        ))!;
+        final controller = ProbeController(
+          SyntheticProbeBackend.new,
+          synthetic: true,
+          cooperation: fixture,
+        );
+        const channel = 'org.meshchan.probe.ble2a3/window';
+        const codec = StandardMethodCodec();
+        Future<bool> requestClose() async {
+          final result = await tester.runAsync(() async {
+            final reply = await messenger.defaultBinaryMessenger
+                .handlePlatformMessage(
+                  channel,
+                  codec.encodeMethodCall(const MethodCall('requestClose')),
+                  null,
+                );
+            return codec.decodeEnvelope(reply!) as bool;
+          });
+          return result!;
+        }
+
+        addTearDown(() async {
+          await fixture.shutdown();
+          if (fixture.fixturePath case final path?) {
+            await Directory(path).delete(recursive: true);
+          }
+        });
+        await tester.pumpWidget(
+          ProbeApp(
+            controller: controller,
+            synthetic: true,
+            handleWindowClose: true,
+          ),
+        );
+        final files = await tester.runAsync(() async {
+          await controller.startWorker();
+          expect(fixture.ready, isTrue);
+          final receipt = File(
+            '${fixture.fixturePath}/cooperation-evidence.json',
+          );
+          final initial = await receipt.readAsString();
+          final blocked = await Directory('${receipt.path}.tmp').create();
+          return (receipt: receipt, initial: initial, blocked: blocked);
+        });
+        expect(await requestClose(), isFalse);
+        await tester.pumpAndSettle();
+        expect(fixture.workerStatus, 'Runtime released and worker exited');
+        expect(controller.canScan, isFalse);
+        expect(
+          find.textContaining('Final evidence could not be saved'),
+          findsOneWidget,
+        );
+        final copy = find.text('Copy evidence JSON');
+        expect(copy, findsOneWidget);
+        expect(
+          await tester.runAsync(files!.receipt.readAsString),
+          files.initial,
+        );
+
+        String? copied;
+        if (repairFile) {
+          await tester.runAsync(files.blocked.delete);
+        } else {
+          final binary = messenger.defaultBinaryMessenger;
+          var clipboardAvailable = false;
+          binary.setMockMethodCallHandler(SystemChannels.platform, (
+            call,
+          ) async {
+            if (call.method == 'Clipboard.getData') {
+              return copied == null ? null : {'text': copied};
+            }
+            if (call.method == 'Clipboard.setData') {
+              if (!clipboardAvailable) {
+                throw PlatformException(code: 'fixtureClipboardUnavailable');
+              }
+              copied =
+                  (call.arguments as Map<Object?, Object?>)['text'] as String?;
+            }
+            return null;
+          });
+          addTearDown(
+            () =>
+                binary.setMockMethodCallHandler(SystemChannels.platform, null),
+          );
+          await tester.tap(copy);
+          await tester.pumpAndSettle();
+          expect(find.text('The clipboard is unavailable.'), findsOneWidget);
+          expect(await requestClose(), isFalse);
+          await tester.pumpAndSettle();
+          clipboardAvailable = true;
+          await tester.tap(copy);
+          await tester.pumpAndSettle();
+          expect(copied, controller.evidenceJson);
+
+          await tester.tap(find.text('Back to controls'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Copy fixture path'));
+          await tester.pumpAndSettle();
+          expect(copied, fixture.fixturePath);
+          expect(await requestClose(), isFalse);
+          await tester.pumpAndSettle();
+          expect(copy, findsOneWidget);
+          await tester.tap(copy);
+          await tester.pumpAndSettle();
+          expect(copied, controller.evidenceJson);
+        }
+
+        expect(await requestClose(), isTrue);
+        await tester.pump();
+        final retained = repairFile
+            ? await tester.runAsync(files.receipt.readAsString)
+            : copied;
+        expect(retained, controller.evidenceJson);
+        final report = jsonDecode(retained!) as Map<String, dynamic>;
+        final facts = (report['cooperation'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        final shutdown = facts.singleWhere((row) => row['fact'] == 'shutdown');
+        expect(shutdown['canExit'], isTrue);
+        expect(
+          facts.any(
+            (row) => row['fact'] == 'evidenceFile' && row['status'] == 'failed',
+          ),
+          isTrue,
+        );
+      },
+    );
+  }
+
+  testWidgets('worker mode starts offline and routes Close through the host', (
+    tester,
+  ) async {
+    var backends = 0;
+    var fixtures = 0;
+    var closeRequests = 0;
+    final controller = ProbeController(
+      () {
+        backends++;
+        return SyntheticProbeBackend();
+      },
+      synthetic: true,
+      cooperation: CooperationFixture(
+        createStorage: () async {
+          fixtures++;
+          throw StateError('Unexpected fixture creation');
+        },
+      ),
+    );
+    const channel = MethodChannel('org.meshchan.probe.ble2a3/window');
+    messenger.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      expect(call.method, 'closeWindow');
+      closeRequests++;
+      return null;
+    });
+    addTearDown(
+      () => messenger.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      ProbeApp(
+        controller: controller,
+        synthetic: true,
+        handleWindowClose: true,
+      ),
+    );
+    expect(find.text('BLE Worker Cooperation · Synthetic'), findsOneWidget);
+    expect(find.text('Runtime  Worker offline'), findsOneWidget);
+    expect(find.text('Start worker'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(_button<FilledButton>('Start scan'))
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.text('View evidence'));
+    await tester.pumpAndSettle();
+    final evidence =
+        jsonDecode(controller.evidenceJson) as Map<String, dynamic>;
+    expect(evidence['execution'], 'workerCooperation');
+    expect(evidence['cooperation'], isEmpty);
+    await tester.tap(find.text('Close probe'));
+    await tester.pumpAndSettle();
+    expect(closeRequests, 1);
+    const codec = StandardMethodCodec();
+    final reply = messenger.defaultBinaryMessenger.handlePlatformMessage(
+      channel.name,
+      codec.encodeMethodCall(const MethodCall('requestClose')),
+      null,
+    );
+    await tester.pump();
+    expect(codec.decodeEnvelope((await reply)!), true);
+    expect(backends, 0);
+    expect(fixtures, 0);
+  });
 
   testWidgets(
     'starts offline, selects explicitly, cancels, and exports safe JSON',

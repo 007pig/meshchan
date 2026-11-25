@@ -22,8 +22,10 @@ final class _ProbeTransport implements CompanionTransport {
     this._cleanupBudget,
     this._notifyOffGrace,
     this._evidence,
-    this._changed,
-  ) {
+    this._changed, {
+    this.appName = _appName,
+    bool retainReceipts = false,
+  }) : receipts = retainReceipts ? Expando<WorkerBridgeReceipt>() : null {
     _frames = StreamController(
       onPause: _observeClose,
       onCancel: () {
@@ -44,6 +46,8 @@ final class _ProbeTransport implements CompanionTransport {
   final Duration _notifyOffGrace;
   final _Evidence _evidence;
   final void Function() _changed;
+  final String appName;
+  final Expando<WorkerBridgeReceipt>? receipts;
 
   late final StreamController<Uint8List> _frames;
   ProbeLink? _link;
@@ -166,7 +170,7 @@ final class _ProbeTransport implements CompanionTransport {
         _Exchange(0x16, 0x0d, _deviceInfoLength),
       0x16
           when previous!.settled &&
-              listEquals(content, encodeAppStart(appName: _appName)) =>
+              listEquals(content, encodeAppStart(appName: appName)) =>
         _Exchange(0x01, 0x05, _selfInfoPrefix + _nameBytes),
       _ => throw const _ProbeFailure(_Outcome.commandOutsideProbe),
     };
@@ -345,7 +349,19 @@ final class _ProbeTransport implements CompanionTransport {
       // waits for both the typed response and the matching local write result.
       exchange.responseSeen = true;
       if (matchedLength == true) _acceptedReceipts++;
-      _frames.add(Uint8List.fromList(bytes));
+      final owned = Uint8List.fromList(bytes);
+      if (receipts case final index?) {
+        index[owned] = WorkerBridgeReceipt(
+          generation: event.generation,
+          nativeSequence: event.nativeSequence,
+          nativeMicros: event.nativeMicros,
+          nativeLength: event.nativeLength,
+          expectedLength: matchedLength == true
+              ? exchange.expectedLength
+              : null,
+        );
+      }
+      _frames.add(owned);
     }
   }
 

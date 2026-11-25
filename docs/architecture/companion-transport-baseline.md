@@ -529,7 +529,7 @@ before execution.
 
 ## Step 4 worker cooperation
 
-**Planned / Not executed in Step 2.** Proceed after Step 3 completes the
+**Step 2 baseline.** Proceed after Step 3 completes the
 no-RF query/start exchange with the selected backend and target, confirms
 notification provenance and the expected response lengths, records the observed
 write and notification lengths, and confirms resource release. These
@@ -557,3 +557,16 @@ deadline semantics, and release proof. Record failure attribution before
 considering the [conditional fallback](#verification-order). This feasibility
 work leaves the full channel RF, production TCP/BLE, saved targets, recovery
 and combined real-device matrix to their respective phases.
+
+### Step 4 result
+
+The isolated probe now supports the actual spawned application worker, with
+one worker-owned session, the existing gate, and an owned SQLite fixture.
+The chosen direction keeps GATT, CoreBluetooth callbacks, and native
+receipt checks on the Flutter root isolate. The worker transport uses
+correlated readiness, complete frames, local write results, and affirmative
+physical release. The final dual-patch probe passed the joint host
+query/start scenario and normal Quit with independent SQLite reopen on the
+paired target. The launch, fault results, release boundaries, untested
+hardware scenarios, and Steps 5 and 6 constraints are in the
+[Step 4 validation record](../validation/phase-2a4-ble-worker.md).

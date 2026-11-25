@@ -1,0 +1,428 @@
+part of 'worker_bridge.dart';
+
+/// Generate the spawn closure outside the broker. Its capture contains only
+/// the reply port and fixture policy. The WorkerBootstrap stays unmodified.
+void Function(WorkerBootstrap) _workerEntry(
+  SendPort root,
+  Duration cleanupBudget,
+  bool syntheticFaults,
+  bool holdAcknowledgment,
+) => (bootstrap) {
+  runZonedGuarded(
+    () {
+      Logger.root.level = Level.OFF;
+      final peer = _WorkerPeer(
+        bootstrap,
+        root,
+        cleanupBudget,
+        syntheticFaults,
+        holdAcknowledgment,
+      );
+      peer.start();
+    },
+    (error, stack) => Isolate.exit(),
+    zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
+  );
+};
+
+final class _WorkerPeer {
+  _WorkerPeer(
+    this.bootstrap,
+    this.root,
+    this.cleanupBudget,
+    this.syntheticFaults,
+    this.holdAcknowledgment,
+  );
+
+  final WorkerBootstrap bootstrap;
+  final SendPort root;
+  final Duration cleanupBudget;
+  final bool syntheticFaults;
+  bool holdAcknowledgment;
+  final _commands = ReceivePort();
+  final _clock = Stopwatch()..start();
+  late final WorkerDispatcher _dispatcher;
+  _Proxy? _active;
+  ReleaseAcknowledged? _heldAcknowledgment;
+  int _lastRequest = 0, _lastMessage = 0;
+  bool protocolFaulted = false;
+
+  int get generation => bootstrap.generation;
+
+  void start() {
+    _dispatcher = WorkerDispatcher(
+      bootstrap,
+      send: (event) {
+        if (event
+            case SnapshotEvent(
+              snapshot: RuntimeSnapshot(deviceCheck: final check?),
+            )
+            when check.info != null && _active?.token == check.port) {
+          _active!._initializedMicros ??= Timeline.now;
+        }
+        if (event is ReleaseReport) {
+          root.send(
+            WorkerBridgeFact(
+              WorkerBridgeFactKind.releaseReport,
+              event.resourcesReleased
+                  ? WorkerBridgeStatus.confirmed
+                  : WorkerBridgeStatus.unknown,
+              generation,
+              workerElapsedMicros: _clock.elapsedMicroseconds,
+            ),
+          );
+        }
+        bootstrap.events.send(event);
+      },
+      finish: () {
+        root.send(
+          WorkerBridgeFact(
+            WorkerBridgeFactKind.releaseAcknowledged,
+            WorkerBridgeStatus.confirmed,
+            generation,
+            workerElapsedMicros: _clock.elapsedMicroseconds,
+          ),
+        );
+        _commands.close();
+        root.send(
+          WorkerBridgeFact(
+            WorkerBridgeFactKind.workerPortsClosed,
+            WorkerBridgeStatus.confirmed,
+            generation,
+            workerElapsedMicros: _clock.elapsedMicroseconds,
+          ),
+        );
+      },
+      enumeratePorts: () => const [],
+      createCheckTransport: _createProxy,
+      createDiagnosticTransport: (_) =>
+          throw const _SafeBridgeError(WorkerBridgeFailure.protocol),
+    );
+    _commands.listen(_receive);
+    root.send(_Hello(generation, _commands.sendPort));
+    bootstrap.events.send(WorkerHello(generation, _commands.sendPort));
+    _dispatcher.start();
+  }
+
+  CompanionTransport _createProxy(String token) {
+    if (protocolFaulted || _active?.released == false) {
+      throw const _SafeBridgeError(WorkerBridgeFailure.protocol);
+    }
+    return _active = _Proxy(this, token);
+  }
+
+  void _receive(Object? message) {
+    switch (message) {
+      case _RootMessage():
+        final active = _active;
+        if (message.generation != generation ||
+            message.token != active?.token) {
+          root.send(
+            WorkerBridgeFact(
+              WorkerBridgeFactKind.stale,
+              WorkerBridgeStatus.skipped,
+              generation,
+              sequence: message.sequence,
+              workerElapsedMicros: _clock.elapsedMicroseconds,
+            ),
+          );
+          return;
+        }
+        if (!protocolFaulted && message.sequence != _lastMessage + 1) {
+          failProtocol(active!);
+        }
+        if (protocolFaulted) {
+          // A corrupt data sequence never resumes. A matching close RPC can
+          // still establish physical release through its single control slot.
+          if (message is _Result && message.action == _Action.close) {
+            active!.receive(message);
+          }
+          return;
+        }
+        _lastMessage++;
+        active!.receive(message);
+      case _FixtureControl.crash when syntheticFaults:
+        const marker = 'PRIVATE_BLE_WORKER_MARKER';
+        print(marker);
+        Logger.root.severe(marker);
+        throw StateError(marker);
+      case _FixtureControl.releaseAcknowledgment when syntheticFaults:
+        holdAcknowledgment = false;
+        if (_heldAcknowledgment case final acknowledgment?) {
+          _heldAcknowledgment = null;
+          _dispatcher.receive(acknowledgment);
+        }
+      case _FixtureWorkerPause(:final duration) when syntheticFaults:
+        sleep(duration);
+      case ReleaseAcknowledged() when holdAcknowledgment:
+        _heldAcknowledgment = message;
+      default:
+        _dispatcher.receive(message);
+    }
+  }
+
+  int send(
+    String token,
+    _Action action,
+    int dispatchedMicros, {
+    Uint8List? bytes,
+    int? initializedMicros,
+    WorkerBridgeFailure? workerDeadlineFailure,
+  }) {
+    final operationId = ++_lastRequest;
+    root.send(
+      _Request(
+        generation,
+        token,
+        operationId,
+        action,
+        dispatchedMicros,
+        bytes: bytes == null ? null : Uint8List.fromList(bytes),
+        initializedMicros: initializedMicros,
+        workerDeadlineFailure: workerDeadlineFailure,
+      ),
+    );
+    return operationId;
+  }
+
+  void failProtocol(_Proxy proxy) {
+    if (protocolFaulted) return;
+    protocolFaulted = true;
+    root.send(_WorkerProtocolFault(generation, proxy.token));
+    proxy.failProtocol();
+  }
+}
+
+final class _ProxyRequest {
+  _ProxyRequest(this.id, this.action);
+  final int id;
+  final _Action action;
+  final done = Completer<_Result>();
+}
+
+/// One CompanionTransport instance for one actual worker session.
+final class _Proxy implements CompanionTransport {
+  _Proxy(this.peer, this.token) {
+    _frames = StreamController<Uint8List>(
+      sync: true,
+      onPause: () => peer.failProtocol(this),
+    );
+  }
+
+  final _WorkerPeer peer;
+  final String token;
+  late final StreamController<Uint8List> _frames;
+  _ProxyRequest? _work, _closeRequest;
+  Future<void>? _closing;
+  bool released = false;
+  WorkerBridgeFailure? _deadlineFailure;
+  int? _initializationDeadline,
+      _initializedMicros,
+      _requestBudget,
+      _requestDeadline;
+  int? _nativeGeneration, _lastWriteId;
+  int? _abandonedId;
+  int _writes = 0,
+      _framesSeen = 0,
+      _lastNativeSequence = 0,
+      _lastNativeMicros = 0;
+
+  @override
+  Stream<Uint8List> get frames => _frames.stream;
+
+  @override
+  Future<void> open() async {
+    if (_nativeGeneration != null || !_frames.hasListener || _frames.isPaused) {
+      throw const _SafeBridgeError(WorkerBridgeFailure.protocol);
+    }
+    await _start(_Action.open).done.future;
+  }
+
+  @override
+  Future<void> sendFrame(Uint8List content) async {
+    if (_nativeGeneration == null ||
+        !_frames.hasListener ||
+        _frames.isPaused ||
+        _writes >= _maxProbeWrites ||
+        content.isEmpty ||
+        content.length > maxSerialFrameContentLength) {
+      throw const _SafeBridgeError(WorkerBridgeFailure.protocol);
+    }
+    final request = _start(_Action.write, content);
+    _writes++;
+    _lastWriteId = request.id;
+    await request.done.future;
+  }
+
+  _ProxyRequest _start(_Action action, [Uint8List? bytes]) {
+    if (_work != null || _closing != null || peer.protocolFaulted) {
+      throw const _SafeBridgeError(WorkerBridgeFailure.protocol);
+    }
+    final now = Timeline.now;
+    if (action == _Action.write) _requestDeadline = now + _requestBudget!;
+    return _work = _ProxyRequest(
+      peer.send(token, action, now, bytes: bytes),
+      action,
+    );
+  }
+
+  void receive(_RootMessage message) {
+    switch (message) {
+      case _TransportFault():
+        if (_closing == null) {
+          _frames.addError(_SafeBridgeError(message.kind));
+        }
+      case _Frame():
+        _receiveFrame(message);
+      case _Result():
+        _receiveResult(message);
+    }
+  }
+
+  void _receiveResult(_Result result) {
+    if (result.operationId == _abandonedId && result.action != _Action.close) {
+      _abandonedId = null;
+      return;
+    }
+    final request = result.action == _Action.close ? _closeRequest : _work;
+    if (request == null ||
+        request.id != result.operationId ||
+        request.action != result.action ||
+        result.nativeGeneration <= 0 ||
+        (_nativeGeneration != null &&
+            result.nativeGeneration != _nativeGeneration) ||
+        (_initializationDeadline != null &&
+            result.initializationDeadline != _initializationDeadline) ||
+        (_requestBudget != null && result.requestBudget != _requestBudget) ||
+        ((result.action == _Action.close) != (result.release != null)) ||
+        (result.action == _Action.close && result.failure != null)) {
+      peer.failProtocol(this);
+      return;
+    }
+    if (result.action == _Action.close) {
+      _closeRequest = null;
+    } else {
+      _work = null;
+    }
+    _initializationDeadline ??= result.initializationDeadline;
+    _requestBudget ??= result.requestBudget;
+    final failure =
+        result.failure ??
+        (result.action == _Action.close ? null : _observeExpired());
+    if (failure != null) {
+      request.done.completeError(_SafeBridgeError(failure));
+    } else {
+      _nativeGeneration ??= result.nativeGeneration;
+      request.done.complete(result);
+    }
+  }
+
+  void _receiveFrame(_Frame frame) {
+    if (_closing != null) {
+      peer.root.send(
+        WorkerBridgeFact(
+          WorkerBridgeFactKind.stale,
+          WorkerBridgeStatus.skipped,
+          peer.generation,
+          nativeGeneration: frame.receipt.generation,
+          sequence: frame.sequence,
+          operationId: frame.operationId,
+          workerElapsedMicros: peer._clock.elapsedMicroseconds,
+        ),
+      );
+      return;
+    }
+    final receipt = frame.receipt;
+    if (frame.operationId != _lastWriteId ||
+        _nativeGeneration != receipt.generation ||
+        _framesSeen >= _writes ||
+        receipt.nativeSequence <= _lastNativeSequence ||
+        receipt.nativeMicros < _lastNativeMicros ||
+        receipt.nativeLength != frame.bytes.length ||
+        (receipt.expectedLength != null &&
+            receipt.expectedLength != frame.bytes.length) ||
+        frame.bytes.isEmpty ||
+        frame.bytes.length > maxSerialFrameContentLength ||
+        !_frames.hasListener ||
+        _frames.isPaused) {
+      peer.failProtocol(this);
+      return;
+    }
+    if (_observeExpired() case final failure?) {
+      _frames.addError(_SafeBridgeError(failure));
+      return;
+    }
+    _framesSeen++;
+    _lastNativeSequence = receipt.nativeSequence;
+    _lastNativeMicros = receipt.nativeMicros;
+    peer.root.send(
+      _frameFact(
+        WorkerBridgeFactKind.frameWorker,
+        frame,
+        workerElapsedMicros: peer._clock.elapsedMicroseconds,
+      ),
+    );
+    _frames.add(Uint8List.fromList(frame.bytes));
+  }
+
+  WorkerBridgeFailure? _observeExpired() =>
+      _deadlineFailure ??= _expiredDeadline(
+        Timeline.now,
+        _initializationDeadline!,
+        _requestDeadline,
+      );
+
+  void failProtocol() {
+    const error = _SafeBridgeError(WorkerBridgeFailure.protocol);
+    if (_closing == null) _frames.addError(error);
+  }
+
+  @override
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
+    final work = _work;
+    _work = null;
+    if (work != null) {
+      _abandonedId = work.id;
+      work.done.completeError(
+        const _SafeBridgeError(WorkerBridgeFailure.closing),
+      );
+    }
+    final id = peer.send(
+      token,
+      _Action.close,
+      Timeline.now,
+      initializedMicros: _initializedMicros,
+      workerDeadlineFailure: _deadlineFailure,
+    );
+    try {
+      final request = _closeRequest = _ProxyRequest(id, _Action.close);
+      final result = await request.done.future.timeout(peer.cleanupBudget);
+      switch (result.release!) {
+        case WorkerBridgeRelease.confirmed:
+          released = true;
+        case WorkerBridgeRelease.unknown:
+          throw const _SafeBridgeError(WorkerBridgeFailure.closeUnknown);
+        case WorkerBridgeRelease.failed:
+          throw const _SafeBridgeError(WorkerBridgeFailure.closeFailed);
+      }
+    } on TimeoutException {
+      throw const _SafeBridgeError(WorkerBridgeFailure.closeUnknown);
+    } finally {
+      _closeRequest = null;
+      // MeshCoreSession retires its listener after this Future settles.
+      unawaited(_frames.close());
+      peer.root.send(
+        WorkerBridgeFact(
+          WorkerBridgeFactKind.proxyClosed,
+          released ? WorkerBridgeStatus.confirmed : WorkerBridgeStatus.unknown,
+          peer.generation,
+          nativeGeneration: _nativeGeneration,
+          operationId: id,
+          workerElapsedMicros: peer._clock.elapsedMicroseconds,
+        ),
+      );
+    }
+  }
+}

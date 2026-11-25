@@ -1,0 +1,482 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:meshchan_ble_probe/src/backend.dart';
+import 'package:meshchan_ble_probe/src/cooperation_storage_fixture.dart';
+import 'package:meshchan_ble_probe/src/probe.dart';
+import 'package:meshchan_ble_probe/src/worker_bridge.dart';
+import 'package:meshchan_core/meshchan_core.dart'
+    show CoreErrorCode, CoreException, CoreStorage;
+import 'package:meshcore_link/meshcore_link.dart';
+
+import '../tool/cooperation_test_fixture.dart';
+
+const _target = ProbeTarget(
+  id: 'PRIVATE_COOP_UUID',
+  name: 'PRIVATE_COOP_ADVERT',
+);
+
+final class _ProbeFixtureBackend implements ProbeBackend {
+  _ProbeFixtureBackend(this.scenario);
+  final _Scenario scenario;
+  final _discoveries = StreamController<ProbeTarget>.broadcast();
+  final links = <_ProbeFixtureLink>[];
+
+  @override
+  Stream<ProbeTarget> get discoveries => _discoveries.stream;
+  @override
+  Stream<ProbeAdapterState> get states => const Stream.empty();
+  @override
+  Future<ProbeAdapterState> getState() async => ProbeAdapterState.poweredOn;
+  @override
+  Future<void> startScan() async => _discoveries.add(_target);
+  @override
+  Future<void> stopScan() async {}
+  @override
+  ProbeLink link(ProbeTarget target, int generation) {
+    expect(identical(target, _target), isTrue);
+    final link = _ProbeFixtureLink(generation, scenario);
+    links.add(link);
+    return link;
+  }
+}
+
+enum _Scenario {
+  normal,
+  duplicateNative,
+  duplicateBridge,
+  unexpectedNative,
+  quitDuringCleanup,
+}
+
+final class _ProbeFixtureLink implements ProbeLink {
+  _ProbeFixtureLink(this.generation, this.scenario);
+  final int generation;
+  final _Scenario scenario;
+  final notifyEnableRequested = Completer<void>();
+  final allowNotifyEnable = Completer<void>();
+  final disconnectRequested = Completer<void>();
+  final allowDisconnect = Completer<void>();
+  final _events = StreamController<ProbeLinkEvent>.broadcast(sync: true);
+  final writes = <Uint8List>[];
+  late ProbeNotification _lastResponse;
+  int sequence = 0, disconnects = 0, retires = 0;
+
+  @override
+  bool connectSubmitted = false;
+  @override
+  Stream<ProbeLinkEvent> get events => _events.stream;
+  @override
+  Future<void> connect() async {
+    expect(_events.hasListener, isTrue);
+    connectSubmitted = true;
+    sequence++;
+    _events.add(ProbeDartConnection(generation, true));
+  }
+
+  @override
+  Future<ProbeGatt> discoverGatt() async => const ProbeGatt(
+    withResponse: true,
+    withoutResponse: false,
+    txNotifiable: true,
+  );
+
+  @override
+  Future<void> setNotify(bool enabled) async {
+    if (enabled) {
+      notifyEnableRequested.complete();
+      await allowNotifyEnable.future;
+    } else if (scenario == _Scenario.duplicateNative) {
+      // Physical disconnect and retirement will still complete. This
+      // notification repeats the receipt after the session's logical success.
+      _events.add(_lastResponse);
+    }
+    _events.add(
+      ProbeNativeNotifyState(
+        generation,
+        enabled,
+        true,
+        ++sequence,
+        10 * sequence,
+      ),
+    );
+  }
+
+  @override
+  Future<int> maximumWriteLength(ProbeWriteType type) async => 185;
+
+  @override
+  Future<void> write(Uint8List value) async {
+    writes.add(Uint8List.fromList(value));
+    final bytes = switch (value.first) {
+      0x16 => Uint8List(82)..setRange(0, 2, [0x0d, 10]),
+      0x01 =>
+        Uint8List(64)
+          ..[0] = 0x05
+          ..setRange(58, 64, utf8.encode(privateNodeName)),
+      _ => throw StateError(privateMarker),
+    };
+    _lastResponse = ProbeNotification(
+      generation,
+      bytes,
+      ++sequence,
+      bytes.length,
+      10 * sequence,
+    );
+    if (value.first != 0x01 ||
+        (scenario != _Scenario.duplicateBridge &&
+            scenario != _Scenario.unexpectedNative)) {
+      emitLastResponse();
+    }
+  }
+
+  void emitLastResponse() => _events.add(_lastResponse);
+
+  void emitUnexpectedResponse() {
+    final bytes = _lastResponse.bytes;
+    _events.add(
+      ProbeNotification(
+        generation,
+        bytes,
+        ++sequence,
+        bytes.length,
+        10 * sequence,
+      ),
+    );
+  }
+
+  @override
+  Future<void> disconnect() async {
+    disconnects++;
+    disconnectRequested.complete();
+    if (scenario == _Scenario.quitDuringCleanup) await allowDisconnect.future;
+    _events.add(
+      ProbeNativeDisconnect(generation, true, ++sequence, 10 * sequence),
+    );
+    _events.add(ProbeDartConnection(generation, false));
+  }
+
+  @override
+  Future<void> retire() async {
+    retires++;
+    await _events.close();
+  }
+}
+
+List<Map<String, Object?>> _workerRows(String json) {
+  final report = jsonDecode(json) as Map<String, Object?>;
+  return (report['cooperation'] as List<Object?>).cast<Map<String, Object?>>();
+}
+
+void main() {
+  test(
+    'disposing an idle controller releases its worker and SQLite owner',
+    () async {
+      final directory = await createCooperationStorageFixture();
+      final rootClosed = Completer<void>();
+      var workerExited = false;
+      final fixture = CooperationFixture(
+        createStorage: () async => directory,
+        createBridge: (onFact, cleanupBudget) => WorkerBridge(
+          onFact: (fact) {
+            onFact(fact);
+            if (fact.kind == WorkerBridgeFactKind.workerExit) {
+              workerExited = true;
+            }
+            if (fact.kind == WorkerBridgeFactKind.rootPortClosed) {
+              rootClosed.complete();
+            }
+          },
+          cleanupBudget: cleanupBudget,
+        ),
+      );
+      final controller = ProbeController(
+        () => _ProbeFixtureBackend(_Scenario.normal),
+        synthetic: true,
+        cooperation: fixture,
+      );
+      addTearDown(() async {
+        if (await fixture.shutdown()) await directory.delete(recursive: true);
+      });
+      await controller.startWorker();
+      expect(fixture.ready, isTrue);
+      await expectLater(
+        CoreStorage.open(dataDirectory: directory),
+        throwsA(
+          isA<CoreException>().having(
+            (error) => error.code,
+            'code',
+            CoreErrorCode.dataDirectoryBusy,
+          ),
+        ),
+      );
+
+      controller.dispose();
+      await rootClosed.future.timeout(const Duration(seconds: 2));
+      expect(workerExited, isTrue);
+      final storage = await CoreStorage.open(dataDirectory: directory);
+      try {
+        final draft = (await storage.drafts.list()).items.single;
+        expect(draft.title, cooperationDraftTitle);
+        expect(draft.body, cooperationDraftBody);
+      } finally {
+        await storage.close();
+      }
+    },
+  );
+
+  test('disposing during fixture creation prevents worker startup', () async {
+    final directory = await createCooperationStorageFixture();
+    final storage = Completer<Directory>();
+    var bridgeCreations = 0;
+    final fixture = CooperationFixture(
+      createStorage: () => storage.future,
+      createBridge: (onFact, cleanupBudget) {
+        bridgeCreations++;
+        return WorkerBridge(onFact: onFact, cleanupBudget: cleanupBudget);
+      },
+    );
+    final controller = ProbeController(
+      () => _ProbeFixtureBackend(_Scenario.normal),
+      synthetic: true,
+      cooperation: fixture,
+    );
+    addTearDown(() async {
+      if (await fixture.shutdown()) await directory.delete(recursive: true);
+    });
+    final starting = controller.startWorker();
+    controller.dispose();
+    storage.complete(directory);
+
+    await starting.timeout(fixtureWait);
+    expect(bridgeCreations, 0);
+    expect(await File('${directory.path}/meshchan.sqlite').exists(), isFalse);
+  });
+
+  for (final scenario in _Scenario.values) {
+    final duplicateNative = scenario == _Scenario.duplicateNative;
+    final duplicateBridge = scenario == _Scenario.duplicateBridge;
+    final unexpectedNative = scenario == _Scenario.unexpectedNative;
+    final quitDuringCleanup = scenario == _Scenario.quitDuringCleanup;
+    final expectedPass =
+        !duplicateNative && !duplicateBridge && !unexpectedNative;
+    test(
+      switch (scenario) {
+        _Scenario.normal =>
+          'probe uses real worker APP_START and saves only structural evidence',
+        _Scenario.duplicateNative =>
+          'late native duplicate fails the case while preserving both releases',
+        _Scenario.duplicateBridge =>
+          'duplicate bridged SELF_INFO fails the case after logical success',
+        _Scenario.unexpectedNative => 'unexpected native response before Close fails the case after logical success',
+        _Scenario.quitDuringCleanup =>
+          'quit during disconnect preserves a successful worker check',
+      },
+      () async {
+        final backend = _ProbeFixtureBackend(scenario);
+        final appStartWritten = Completer<void>();
+        late final WorkerBridge bridge;
+        final fixture = CooperationFixture(
+          createBridge: duplicateBridge || unexpectedNative
+              ? (onFact, cleanupBudget) => bridge = WorkerBridge(
+                  cleanupBudget: cleanupBudget,
+                  syntheticFaults: true,
+                  onFact: (fact) {
+                    onFact(fact);
+                    if (fact.kind == WorkerBridgeFactKind.write &&
+                        fact.opcode == 0x01 &&
+                        fact.status == WorkerBridgeStatus.confirmed) {
+                      appStartWritten.complete();
+                    }
+                  },
+                )
+              : null,
+        );
+        var activations = 0;
+        final controller = ProbeController(
+          () {
+            activations++;
+            return backend;
+          },
+          synthetic: true,
+          cooperation: fixture,
+          cleanupBudget: const Duration(seconds: 3),
+        );
+        addTearDown(() async {
+          for (final link in backend.links) {
+            if (!link.allowNotifyEnable.isCompleted) {
+              link.allowNotifyEnable.complete();
+            }
+            if (!link.allowDisconnect.isCompleted) {
+              link.allowDisconnect.complete();
+            }
+          }
+          final closed = await controller.requestClose();
+          controller.dispose();
+          final path = fixture.fixturePath;
+          if (closed && path != null) {
+            await Directory(path).delete(recursive: true);
+          }
+          expect(closed, isTrue);
+        });
+        expect(fixture.fixturePath, isNull);
+        expect(controller.phase, 'Offline');
+        expect(controller.canScan, isFalse);
+        await controller.startScan();
+        expect(activations, 0);
+        await controller.startWorker();
+        expect(fixture.ready, isTrue);
+        expect(activations, 0);
+        await controller.startScan();
+        await controller.stopScan();
+        controller.select(controller.targets.single);
+        expect(activations, 1);
+        expect(controller.canRun, isTrue);
+
+        final running = controller.run(
+          nodeNameBytes: 6,
+          lengthBasis: LengthBasis.fixture,
+        );
+        final logicalSuccess = Completer<void>();
+        final notifyReady = Completer<_ProbeFixtureLink>();
+        void observe() {
+          final link = backend.links.firstOrNull;
+          if (link != null && !notifyReady.isCompleted) {
+            notifyReady.complete(link);
+          }
+          if (controller.logicalResult == 'Worker query and start passed' &&
+              !logicalSuccess.isCompleted) {
+            logicalSuccess.complete();
+          }
+        }
+
+        controller.addListener(observe);
+        observe();
+        final link = await notifyReady.future.timeout(fixtureWait);
+        await link.notifyEnableRequested.future.timeout(fixtureWait);
+        expect(link.writes, isEmpty);
+        link.allowNotifyEnable.complete();
+        if (duplicateBridge || unexpectedNative) {
+          await appStartWritten.future.timeout(fixtureWait);
+          if (duplicateBridge) {
+            bridge.injectFixtureWireFault(WorkerBridgeWireFault.duplicateFrame);
+          } else {
+            bridge.pauseFixtureWorker(const Duration(milliseconds: 50));
+          }
+          link.emitLastResponse();
+          if (unexpectedNative) link.emitUnexpectedResponse();
+        }
+        Future<bool>? closing;
+        if (quitDuringCleanup) {
+          await logicalSuccess.future.timeout(fixtureWait);
+          await link.disconnectRequested.future.timeout(fixtureWait);
+          expect(controller.cleanupPending, isTrue);
+          expect(controller.canCancel, isFalse);
+          var quitFinished = false;
+          closing = controller.requestClose().whenComplete(() {
+            quitFinished = true;
+          });
+          await Future<void>.delayed(Duration.zero);
+          expect(quitFinished, isFalse);
+          link.allowDisconnect.complete();
+        }
+        await running.timeout(fixtureWait);
+        controller.removeListener(observe);
+
+        expect(link.writes.map((bytes) => bytes.length), [2, 16]);
+        expect(link.writes.last, encodeAppStart(appName: 'Meshchan'));
+        expect(link.disconnects, 1);
+        expect(link.retires, 1);
+        expect(controller.logicalResult, 'Worker query and start passed');
+        expect(controller.cleanupState, 'Root and worker release confirmed');
+        expect(
+          controller.notificationState,
+          duplicateNative
+              ? 'Notification provenance unconfirmed'
+              : 'Both response receipts confirmed',
+        );
+        expect(fixture.passedAndReleased, expectedPass);
+        expect(fixture.caseStatus, expectedPass ? 'Passed' : 'Failed');
+        expect(controller.canRun, expectedPass && !quitDuringCleanup);
+        expect(await (closing ?? controller.requestClose()), isTrue);
+        final receipt = controller.evidenceJson;
+        final rows = _workerRows(receipt);
+        final settled = rows.singleWhere((row) => row['fact'] == 'caseSettled');
+        if (unexpectedNative) {
+          final fault = rows.singleWhere(
+            (row) =>
+                row['fact'] == 'transportFault' &&
+                row['category'] == 'transport',
+          );
+          final close = rows.singleWhere(
+            (row) => row['fact'] == 'close' && row['status'] == 'requested',
+          );
+          expect(fault['sequence'] as int, lessThan(close['sequence'] as int));
+        }
+        expect(settled['passed'], expectedPass);
+        expect(settled['bridgeFaulted'], !expectedPass);
+        expect(
+          settled['rootTransportFault'],
+          unexpectedNative ? 'earlyOrUnassociatedFrame' : isNull,
+        );
+        expect(settled['provenance'], !duplicateNative);
+        expect(settled['bridgeProtocolConfirmed'], !duplicateBridge);
+        expect(settled['initializationOnTime'], isTrue);
+        expect(settled['canceled'], isFalse);
+        expect(settled['rootReleased'], isTrue);
+        expect(settled['workerReleased'], isTrue);
+        if (duplicateBridge) {
+          expect(
+            rows.where(
+              (row) =>
+                  row['fact'] == 'transportFault' &&
+                  row['category'] == 'protocol',
+            ),
+            hasLength(1),
+          );
+        }
+        if (quitDuringCleanup) {
+          expect(rows.where((row) => row['fact'] == 'checkCancel'), isEmpty);
+          expect(
+            rows
+                .where((row) => row['fact'] == 'deviceCheck')
+                .every((row) => row['cancelApplied'] == false),
+            isTrue,
+          );
+        }
+        expect(
+          rows
+              .where((row) => row['fact'] == 'frameWorker')
+              .map(
+                (row) => [
+                  row['length'],
+                  row['nativeLength'],
+                  row['expectedLength'],
+                ],
+              ),
+          [
+            [82, 82, 82],
+            [64, 64, 64],
+          ],
+        );
+        final path = fixture.fixturePath!;
+        expect(
+          await File('$path/cooperation-evidence.json').readAsString(),
+          receipt,
+        );
+        for (final marker in [
+          _target.id,
+          _target.name,
+          privateMarker,
+          privateNodeName,
+          path,
+        ]) {
+          expect(receipt, isNot(contains(marker)));
+        }
+      },
+    );
+  }
+}

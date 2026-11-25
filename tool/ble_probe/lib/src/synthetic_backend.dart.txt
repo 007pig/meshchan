@@ -1,0 +1,141 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'backend.dart';
+
+const syntheticNodeNameBytes = 4;
+const _target = ProbeTarget(
+  id: 'synthetic-fixture',
+  name: 'Synthetic Companion',
+);
+
+/// Drives the desktop UI with owned in-memory data and no platform BLE API.
+final class SyntheticProbeBackend implements ProbeBackend {
+  SyntheticProbeBackend({
+    this.connectDelay = const Duration(milliseconds: 1200),
+    this.confirmRelease = true,
+  });
+
+  final Duration connectDelay;
+  final bool confirmRelease;
+  final _discoveries = StreamController<ProbeTarget>.broadcast();
+
+  @override
+  Stream<ProbeTarget> get discoveries => _discoveries.stream;
+
+  @override
+  Stream<ProbeAdapterState> get states => const Stream.empty();
+
+  @override
+  Future<ProbeAdapterState> getState() async => ProbeAdapterState.poweredOn;
+
+  @override
+  Future<void> startScan() async => _discoveries.add(_target);
+
+  @override
+  Future<void> stopScan() async {}
+
+  @override
+  ProbeLink link(ProbeTarget target, int generation) {
+    if (!identical(target, _target)) {
+      throw const ProbeBackendException(ProbeBackendFailure.targetUnavailable);
+    }
+    return _SyntheticLink(generation, connectDelay, confirmRelease);
+  }
+}
+
+final class _SyntheticLink implements ProbeLink {
+  _SyntheticLink(this.generation, this.connectDelay, this.confirmRelease);
+
+  final int generation;
+  final Duration connectDelay;
+  final bool confirmRelease;
+  final _events = StreamController<ProbeLinkEvent>.broadcast(sync: true);
+  final _clock = Stopwatch()..start();
+  final _connecting = Completer<void>();
+  Timer? _connectTimer;
+  int _sequence = 0;
+
+  @override
+  Stream<ProbeLinkEvent> get events => _events.stream;
+
+  @override
+  bool get connectSubmitted => _connectTimer != null;
+
+  @override
+  Future<void> connect() {
+    _connectTimer = Timer(connectDelay, () {
+      _events.add(ProbeDartConnection(generation, true));
+      _connecting.complete();
+    });
+    return _connecting.future;
+  }
+
+  @override
+  Future<ProbeGatt> discoverGatt() async => const ProbeGatt(
+    withResponse: true,
+    withoutResponse: false,
+    txNotifiable: true,
+  );
+
+  @override
+  Future<void> setNotify(bool enabled) async => _events.add(
+    ProbeNativeNotifyState(
+      generation,
+      enabled,
+      true,
+      ++_sequence,
+      _clock.elapsedMicroseconds,
+    ),
+  );
+
+  @override
+  Future<int> maximumWriteLength(ProbeWriteType type) async => 185;
+
+  @override
+  Future<void> write(Uint8List value) async {
+    final Uint8List response;
+    switch (value.firstOrNull) {
+      case 0x16:
+        response = Uint8List(82)..setRange(0, 2, const [0x0d, 10]);
+      case 0x01:
+        response = Uint8List(58 + syntheticNodeNameBytes)
+          ..[0] = 0x05
+          ..setRange(58, 62, const [0x54, 0x65, 0x73, 0x74]);
+      default:
+        throw const ProbeBackendException(ProbeBackendFailure.write);
+    }
+    _events.add(
+      ProbeNotification(
+        generation,
+        response,
+        ++_sequence,
+        response.length,
+        _clock.elapsedMicroseconds,
+      ),
+    );
+  }
+
+  @override
+  Future<void> disconnect() async {
+    _connectTimer?.cancel();
+    if (!_connecting.isCompleted) {
+      _connecting.completeError(
+        const ProbeBackendException(ProbeBackendFailure.connect),
+      );
+    }
+    if (!confirmRelease) return;
+    _events.add(
+      ProbeNativeDisconnect(
+        generation,
+        true,
+        ++_sequence,
+        _clock.elapsedMicroseconds,
+      ),
+    );
+    _events.add(ProbeDartConnection(generation, false));
+  }
+
+  @override
+  Future<void> retire() => _events.close();
+}

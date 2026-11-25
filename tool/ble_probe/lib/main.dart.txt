@@ -1,0 +1,420 @@
+import 'dart:async';
+import 'dart:ui' show PlatformDispatcher;
+
+import 'package:flutter/services.dart';
+import 'package:material_ui/material_ui.dart';
+
+import 'src/backend.dart';
+import 'src/darwin_backend.dart';
+import 'src/probe.dart';
+import 'src/synthetic_backend.dart';
+
+const _window = MethodChannel('org.meshchan.probe.ble2a3/window');
+typedef ManagerCounts = ({int central, int peripheral});
+
+void main(List<String> arguments) {
+  WidgetsFlutterBinding.ensureInitialized();
+  final synthetic = arguments.contains('--fake-backend');
+  final controller = ProbeController(
+    synthetic ? SyntheticProbeBackend.new : DarwinProbeBackend.new,
+    synthetic: synthetic,
+  );
+  var runtimeFailureRecorded = false;
+  void recordRuntimeFailure() {
+    if (runtimeFailureRecorded) return;
+    runtimeFailureRecorded = true;
+    // An error can arrive during a widget build. Let that frame unwind before
+    // the controller reports the fixed error category and starts cleanup.
+    scheduleMicrotask(controller.recordRuntimeFailure);
+  }
+
+  FlutterError.onError = (_) => recordRuntimeFailure();
+  PlatformDispatcher.instance.onError = (_, _) {
+    recordRuntimeFailure();
+    return true;
+  };
+  ErrorWidget.builder = (_) =>
+      ErrorWidget('The probe encountered an internal error.');
+  runApp(
+    ProbeApp(
+      controller: controller,
+      synthetic: synthetic,
+      handleWindowClose: true,
+      readManagerCounts: synthetic ? null : readDarwinStartupCounts,
+    ),
+  );
+}
+
+class ProbeApp extends StatelessWidget {
+  const ProbeApp({
+    super.key,
+    required this.controller,
+    this.synthetic = false,
+    this.handleWindowClose = false,
+    this.readManagerCounts,
+  });
+
+  final ProbeController controller;
+  final bool synthetic;
+  final bool handleWindowClose;
+  final Future<ManagerCounts> Function()? readManagerCounts;
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'Meshchan BLE Probe',
+    debugShowCheckedModeBanner: false,
+    theme: ThemeData(colorSchemeSeed: const Color(0xff245f70)),
+    home: _ProbeScreen(
+      controller: controller,
+      synthetic: synthetic,
+      handleWindowClose: handleWindowClose,
+      readManagerCounts: readManagerCounts,
+    ),
+  );
+}
+
+class _ProbeScreen extends StatefulWidget {
+  const _ProbeScreen({
+    required this.controller,
+    required this.synthetic,
+    required this.handleWindowClose,
+    required this.readManagerCounts,
+  });
+
+  final ProbeController controller;
+  final bool synthetic;
+  final bool handleWindowClose;
+  final Future<ManagerCounts> Function()? readManagerCounts;
+
+  @override
+  State<_ProbeScreen> createState() => _ProbeScreenState();
+}
+
+class _ProbeScreenState extends State<_ProbeScreen> {
+  int? _nodeNameBytes;
+  LengthBasis? _lengthBasis;
+  bool _showEvidence = false;
+  bool _closing = false;
+  bool _fixtureSubmitted = false;
+  ManagerCounts? _managerCounts;
+
+  ProbeController get _probe => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.handleWindowClose) _window.setMethodCallHandler(_windowRequest);
+  }
+
+  @override
+  void dispose() {
+    if (widget.handleWindowClose) _window.setMethodCallHandler(null);
+    super.dispose();
+  }
+
+  Future<bool> _windowRequest(MethodCall call) async {
+    if (call.method != 'requestClose' || _closing) return false;
+    setState(() => _closing = true);
+    var allowed = false;
+    try {
+      allowed = await _probe.requestClose();
+    } catch (_) {
+      // Failing closed keeps the owner and its release evidence in memory.
+    }
+    if (!allowed && mounted) {
+      setState(() => _closing = false);
+      _message('Close is waiting for release confirmation.');
+    }
+    return allowed;
+  }
+
+  void _message(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _perform(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      _message('The probe action could not complete.');
+    }
+  }
+
+  Future<void> _copyEvidence() async {
+    try {
+      await Clipboard.setData(ClipboardData(text: _probe.evidenceJson));
+      _message('Structural evidence copied.');
+    } catch (_) {
+      _message('The clipboard is unavailable.');
+    }
+  }
+
+  Future<void> _readManagerCounts(Future<ManagerCounts> Function() read) async {
+    try {
+      final counts = await read();
+      if (mounted) setState(() => _managerCounts = counts);
+    } catch (_) {
+      _message('Manager counters are unavailable.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: _probe,
+    builder: (context, _) {
+      final bytes = _nodeNameBytes;
+      final basis = _lengthBasis;
+      final canRun =
+          !_closing && _probe.canRun && bytes != null && basis != null;
+      final editable = !_closing && !_fixtureSubmitted;
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(
+            widget.synthetic ? 'BLE Probe · Synthetic' : 'Meshchan BLE Probe',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => setState(() => _showEvidence = !_showEvidence),
+              child: Text(_showEvidence ? 'Back to controls' : 'View evidence'),
+            ),
+            const SizedBox(width: 12),
+          ],
+        ),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 780),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+              children: [
+                _StatusPanel(probe: _probe, closing: _closing),
+                const SizedBox(height: 20),
+                if (_showEvidence) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      children: [
+                        FilledButton.tonal(
+                          onPressed: () => unawaited(_copyEvidence()),
+                          child: const Text('Copy evidence JSON'),
+                        ),
+                        if (widget.readManagerCounts case final read?)
+                          OutlinedButton(
+                            onPressed: () =>
+                                unawaited(_readManagerCounts(read)),
+                            child: const Text('Read manager counts'),
+                          ),
+                        if (_probe.canCancel)
+                          OutlinedButton(
+                            onPressed: _closing
+                                ? null
+                                : () => unawaited(_perform(_probe.cancel)),
+                            child: const Text('Cancel / Disconnect'),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_managerCounts case final counts?)
+                    Text(
+                      'Manager counts snapshot  ·  Central ${counts.central}  ·  Peripheral ${counts.peripheral}',
+                    ),
+                  Text(
+                    _probe.evidenceJson,
+                    style: const TextStyle(fontFamily: 'monospace'),
+                  ),
+                ] else ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: !_closing && _probe.canScan
+                            ? () => unawaited(_perform(_probe.startScan))
+                            : null,
+                        child: const Text('Start scan'),
+                      ),
+                      OutlinedButton(
+                        onPressed: !_closing && _probe.canStopScan
+                            ? () => unawaited(_perform(_probe.stopScan))
+                            : null,
+                        child: const Text('Stop scan'),
+                      ),
+                      OutlinedButton(
+                        onPressed: !_closing && _probe.canCancel
+                            ? () => unawaited(_perform(_probe.cancel))
+                            : null,
+                        child: const Text('Cancel / Disconnect'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      labelText: 'Target from this scan',
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<ProbeTarget>(
+                        isExpanded: true,
+                        value: _probe.selected,
+                        hint: const Text('Choose an identified device'),
+                        items: _probe.targets.map((target) {
+                          final name = target.name.isEmpty
+                              ? 'Unnamed device'
+                              : target.name;
+                          return DropdownMenuItem(
+                            value: target,
+                            child: Text(
+                              '$name · ${target.id}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: !_closing && _probe.canSelect
+                            ? (target) {
+                                if (target != null) _probe.select(target);
+                              }
+                            : null,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  // The two values come from the preconnection fixture. The
+                  // form has no field for the node name or any pairing secret.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'On-wire node name bytes',
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<int>(
+                              value: bytes,
+                              isExpanded: true,
+                              isDense: true,
+                              hint: const Text('Choose byte count'),
+                              items: [
+                                for (
+                                  var count = 0;
+                                  count <= maxProbeNodeNameBytes;
+                                  count++
+                                )
+                                  DropdownMenuItem(
+                                    value: count,
+                                    child: Text('$count'),
+                                  ),
+                              ],
+                              onChanged: editable
+                                  ? (next) =>
+                                        setState(() => _nodeNameBytes = next)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'Length source',
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<LengthBasis>(
+                              value: basis,
+                              isExpanded: true,
+                              isDense: true,
+                              hint: const Text('Choose the source'),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: LengthBasis.fixture,
+                                  child: Text('Known fixture'),
+                                ),
+                                DropdownMenuItem(
+                                  value: LengthBasis.deviceConfiguration,
+                                  child: Text('Known device configuration'),
+                                ),
+                              ],
+                              onChanged: editable
+                                  ? (next) =>
+                                        setState(() => _lengthBasis = next)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton(
+                      onPressed: canRun
+                          ? () {
+                              setState(() => _fixtureSubmitted = true);
+                              unawaited(
+                                _perform(
+                                  () => _probe.run(
+                                    nodeNameBytes: bytes,
+                                    lengthBasis: basis,
+                                  ),
+                                ),
+                              );
+                            }
+                          : null,
+                      child: Text(
+                        _probe.isReconnect
+                            ? 'Reconnect and query'
+                            : 'Connect and query',
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _StatusPanel extends StatelessWidget {
+  const _StatusPanel({required this.probe, required this.closing});
+
+  final ProbeController probe;
+  final bool closing;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainer,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (closing || probe.cleanupPending) ...[
+            const LinearProgressIndicator(),
+            const SizedBox(height: 8),
+          ],
+          Text('Phase  ${probe.phase}'),
+          Text('Logical result  ${probe.logicalResult}'),
+          Text('Notifications  ${probe.notificationState}'),
+          Text('Release  ${probe.cleanupState}'),
+          const SizedBox(height: 8),
+          const Text(
+            'Scan 10 s  ·  Initialize 15 s total  ·  Request 5 s  ·  Observe release 10 s',
+          ),
+        ],
+      ),
+    ),
+  );
+}

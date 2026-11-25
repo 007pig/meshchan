@@ -1,0 +1,564 @@
+part of 'probe.dart';
+
+enum _Skip { notEnabled, enableUnsettled, linkUnavailable, alreadyTerminal }
+
+final class _Exchange {
+  _Exchange(this.commandOpcode, this.responseOpcode, this.expectedLength);
+
+  final int commandOpcode;
+  final int responseOpcode;
+  final int expectedLength;
+  bool responseSeen = false;
+  bool writeDone = false;
+
+  bool get settled => responseSeen && writeDone;
+}
+
+final class _ProbeTransport implements CompanionTransport {
+  _ProbeTransport(
+    this._createLink,
+    this._generation,
+    this._nameBytes,
+    this._cleanupBudget,
+    this._notifyOffGrace,
+    this._evidence,
+    this._changed,
+  ) {
+    _frames = StreamController(
+      onPause: _observeClose,
+      onCancel: () {
+        _evidence.add(
+          _Fact.sessionSubscriptions,
+          generation: _generation,
+          status: _Status.confirmed,
+        );
+        _observeClose();
+      },
+    );
+  }
+
+  final ProbeLink Function() _createLink;
+  final int _generation;
+  final int _nameBytes;
+  final Duration _cleanupBudget;
+  final Duration _notifyOffGrace;
+  final _Evidence _evidence;
+  final void Function() _changed;
+
+  late final StreamController<Uint8List> _frames;
+  ProbeLink? _link;
+  StreamSubscription<ProbeLinkEvent>? _events;
+  final _pending = <_Operation>{};
+  Completer<void> _progress = Completer<void>();
+  Future<void>? _closing;
+  bool _connectFutureSucceeded = false;
+  bool _nativeConnectFailed = false;
+  bool _nativeDisconnected = false;
+  bool _dartDisconnected = false;
+  bool _dartConnected = false;
+  bool _notifyEnableRequested = false;
+  bool notificationUnconfirmed = false;
+  int _acceptedReceipts = 0;
+  bool get bothReceiptsConfirmed => _acceptedReceipts == 2;
+  _Outcome? _firstFault;
+  bool _notifyEnabled = false;
+  bool _notifyDisabled = false;
+  bool _stopped = false;
+  bool _ready = false;
+  int? _maxWithResponse;
+  int? _lastNativeSequence;
+  int? _lastNativeMicros;
+  _Exchange? _exchange;
+  _Phase phase = _Phase.connecting;
+
+  @override
+  Stream<Uint8List> get frames => _frames.stream;
+
+  @override
+  Future<void> open() async {
+    _requireActive();
+    if (!_frames.hasListener || _link != null) {
+      throw const _ProbeFailure(_Outcome.backend);
+    }
+    final link = _link = _createLink();
+    _events = link.events.listen(
+      _see,
+      onError: (Object _) => _fail(_Outcome.backend),
+      onDone: () => _fail(_Outcome.backend),
+    );
+    _step(_Phase.connecting);
+    await _track(_Operation.connect, link.connect);
+    _connectFutureSucceeded = true;
+    await _waitUntil(() => _dartConnected || _stopped || _dartDisconnected);
+    _requireActive();
+
+    _step(_Phase.discoveringGatt);
+    final gatt = await _track(_Operation.discoverGatt, link.discoverGatt);
+    _requireActive();
+    _evidence.add(
+      _Fact.gattProperties,
+      generation: _generation,
+      withResponse: gatt.withResponse,
+      withoutResponse: gatt.withoutResponse,
+      txNotifiable: gatt.txNotifiable,
+    );
+    if (!gatt.withResponse || gatt.withoutResponse || !gatt.txNotifiable) {
+      throw const _ProbeFailure(_Outcome.unexpectedGatt);
+    }
+
+    _step(_Phase.enablingNotify);
+    _notifyEnableRequested = true;
+    await _track(_Operation.notifyOn, () => link.setNotify(true));
+    await _waitUntil(() => _notifyEnabled || _stopped);
+    _requireActive();
+
+    _step(_Phase.writeLimits);
+    _maxWithResponse = await _writeMaximum(
+      link,
+      ProbeWriteType.withResponse,
+      _Operation.maximumWithResponse,
+    );
+    // CoreBluetooth exposes a per-type maximum independent of RX properties.
+    // The unsupported write type is observed here without submitting a write.
+    await _writeMaximum(
+      link,
+      ProbeWriteType.withoutResponse,
+      _Operation.maximumWithoutResponse,
+    );
+    _requireActive();
+    _ready = true;
+    _step(_Phase.queryStart);
+  }
+
+  Future<int> _writeMaximum(
+    ProbeLink link,
+    ProbeWriteType type,
+    _Operation operation,
+  ) async {
+    _requireActive();
+    final maximum = await _track(
+      operation,
+      () => link.maximumWriteLength(type),
+    );
+    _requireActive();
+    _evidence.add(
+      _Fact.nativeWriteMaximum,
+      generation: _generation,
+      category: type,
+      length: maximum,
+    );
+    if (maximum < 0) throw const _ProbeFailure(_Outcome.writeLimit);
+    return maximum;
+  }
+
+  @override
+  Future<void> sendFrame(Uint8List content) async {
+    _requireActive();
+    final previous = _exchange;
+    final next = switch (previous?.commandOpcode) {
+      null
+          when listEquals(
+            content,
+            encodeDeviceQuery(
+              appTargetVersion: meshCoreSessionAppTargetVersion,
+            ),
+          ) =>
+        _Exchange(0x16, 0x0d, _deviceInfoLength),
+      0x16
+          when previous!.settled &&
+              listEquals(content, encodeAppStart(appName: _appName)) =>
+        _Exchange(0x01, 0x05, _selfInfoPrefix + _nameBytes),
+      _ => throw const _ProbeFailure(_Outcome.commandOutsideProbe),
+    };
+    if (!_ready || !_frames.hasListener || _frames.isPaused) {
+      throw const _ProbeFailure(_Outcome.backend);
+    }
+    if (content.length > _maxWithResponse!) {
+      throw const _ProbeFailure(_Outcome.writeLimit);
+    }
+    _exchange = next;
+    _evidence.add(
+      _Fact.writeDispatch,
+      generation: _generation,
+      opcode: next.commandOpcode,
+      length: content.length,
+      category: ProbeWriteType.withResponse,
+    );
+    try {
+      await _track(
+        _Operation.write,
+        () => _link!.write(Uint8List.fromList(content)),
+      );
+      next.writeDone = true;
+      _writeResult(next, _Status.confirmed);
+    } catch (_) {
+      _writeResult(next, _Status.failed);
+      rethrow;
+    }
+  }
+
+  void _writeResult(_Exchange exchange, _Status status) {
+    _evidence.add(
+      _Fact.writeResult,
+      generation: _generation,
+      opcode: exchange.commandOpcode,
+      status: status,
+    );
+    _changed();
+  }
+
+  void _see(ProbeLinkEvent event) {
+    if (event.generation != _generation) {
+      _evidence.add(
+        _Fact.staleEvent,
+        generation: _generation,
+        status: _Status.skipped,
+      );
+      _changed();
+      return;
+    }
+    switch (event) {
+      case ProbeNotification():
+        if (!_stopped) {
+          _receive(event);
+        } else if (bothReceiptsConfirmed) {
+          _flagProvenance();
+        }
+      case ProbeProvenanceUnconfirmed():
+        if (!_stopped || bothReceiptsConfirmed) _flagProvenance();
+      case ProbeNativeConnectionFailed():
+        _nativeConnectFailed = true;
+        _evidence.add(
+          _Fact.nativeConnectFailed,
+          generation: _generation,
+          nativeSequence: event.nativeSequence,
+          nativeMicros: event.nativeMicros,
+        );
+        _fail(_Outcome.backend);
+      case ProbeNativeDisconnect():
+        _nativeDisconnected = true;
+        _evidence.add(
+          _Fact.nativeDisconnect,
+          generation: _generation,
+          localRequested: event.localRequested,
+          nativeSequence: event.nativeSequence,
+          nativeMicros: event.nativeMicros,
+        );
+        if (!_stopped) {
+          _fail(
+            event.localRequested
+                ? _Outcome.unexpectedDisconnect
+                : _Outcome.peerDisconnected,
+          );
+        }
+      case ProbeDartConnection():
+        if (event.connected && (_nativeDisconnected || _nativeConnectFailed)) {
+          _evidence.add(
+            _Fact.staleEvent,
+            generation: _generation,
+            status: _Status.skipped,
+          );
+          _changed();
+          return;
+        }
+        if (event.connected) {
+          _dartConnected = true;
+        } else {
+          _dartDisconnected = true;
+        }
+        _evidence.add(
+          _Fact.dartConnection,
+          generation: _generation,
+          enabled: event.connected,
+        );
+      // A native terminal callback identifies the disconnect source. Its
+      // plugin mirror can precede the observation receipt on the Dart side.
+      case ProbeNativeNotifyState():
+        _evidence.add(
+          _Fact.nativeNotifyState,
+          generation: _generation,
+          enabled: event.enabled,
+          errorFree: event.errorFree,
+          nativeSequence: event.nativeSequence,
+          nativeMicros: event.nativeMicros,
+        );
+        if (event.errorFree &&
+            event.enabled &&
+            _notifyEnableRequested &&
+            !_stopped) {
+          _notifyEnabled = true;
+        } else if (event.errorFree && !event.enabled && _stopped) {
+          _notifyDisabled = true;
+        } else if (!_stopped) {
+          _fail(_Outcome.backend);
+        }
+    }
+    _signal();
+    _changed();
+  }
+
+  void _receive(ProbeNotification event) {
+    final bytes = event.bytes;
+    final exchange = _exchange;
+    final validReceipt =
+        event.nativeSequence > (_lastNativeSequence ?? 0) &&
+        event.nativeMicros >= (_lastNativeMicros ?? 0) &&
+        event.nativeLength == bytes.length;
+    final opcode = bytes.isEmpty ? null : bytes.first;
+    final matchedLength = exchange == null || opcode != exchange.responseOpcode
+        ? null
+        : bytes.length == exchange.expectedLength;
+    _evidence.add(
+      _Fact.notification,
+      generation: _generation,
+      commandOpcode: exchange?.commandOpcode,
+      opcode: switch (opcode) {
+        0x01 || 0x05 || 0x0d => opcode,
+        _ => null,
+      },
+      length: bytes.length,
+      nativeLength: event.nativeLength,
+      nativeSequence: event.nativeSequence,
+      nativeMicros: event.nativeMicros,
+      expectedLength: matchedLength == null ? null : exchange?.expectedLength,
+      provenance: validReceipt,
+      matchedLength: matchedLength,
+    );
+    if (!validReceipt) {
+      notificationUnconfirmed = true;
+      _fail(_Outcome.provenanceUnconfirmed);
+      return;
+    }
+    _lastNativeSequence = event.nativeSequence;
+    _lastNativeMicros = event.nativeMicros;
+    if (bytes.isEmpty || bytes.length > maxSerialFrameContentLength) {
+      _fail(_Outcome.invalidFrame);
+    } else if (!_ready ||
+        exchange == null ||
+        exchange.responseSeen ||
+        (opcode != exchange.responseOpcode && opcode != 0x01)) {
+      _fail(_Outcome.earlyOrUnassociatedFrame);
+    } else if (matchedLength == false) {
+      _fail(_Outcome.lengthMismatch);
+    } else {
+      // Forward an owned complete value. MeshCoreSession still decodes it and
+      // waits for both the typed response and the matching local write result.
+      exchange.responseSeen = true;
+      if (matchedLength == true) _acceptedReceipts++;
+      _frames.add(Uint8List.fromList(bytes));
+    }
+  }
+
+  void _flagProvenance() {
+    notificationUnconfirmed = true;
+    _evidence.add(
+      _Fact.notification,
+      generation: _generation,
+      provenance: false,
+    );
+    _fail(_Outcome.provenanceUnconfirmed);
+  }
+
+  void _fail(_Outcome outcome) {
+    if (_stopped) return;
+    _firstFault = outcome;
+    _stopped = true;
+    _frames.addError(_ProbeFailure(outcome));
+    _signal();
+  }
+
+  void _requireActive() {
+    if (_stopped) throw _ProbeFailure(_firstFault ?? _Outcome.canceled);
+    if (_dartDisconnected) {
+      throw const _ProbeFailure(_Outcome.unexpectedDisconnect);
+    }
+  }
+
+  void _step(_Phase value) {
+    phase = value;
+    _evidence.add(_Fact.phase, generation: _generation, status: value);
+    _changed();
+  }
+
+  Future<T> _track<T>(_Operation operation, Future<T> Function() invoke) async {
+    if (!_pending.add(operation)) {
+      throw const _ProbeFailure(_Outcome.backend);
+    }
+    _evidence.add(
+      _Fact.operation,
+      generation: _generation,
+      operation: operation,
+      status: _Status.requested,
+    );
+    try {
+      final result = await invoke();
+      _evidence.add(
+        _Fact.operation,
+        generation: _generation,
+        operation: operation,
+        status: _Status.confirmed,
+      );
+      return result;
+    } catch (error) {
+      _evidence.add(
+        _Fact.operation,
+        generation: _generation,
+        operation: operation,
+        status: _Status.failed,
+        category: error is ProbeBackendException ? error.category : null,
+      );
+      rethrow;
+    } finally {
+      _pending.remove(operation);
+      _signal();
+      _changed();
+    }
+  }
+
+  void _signal() {
+    final progress = _progress;
+    _progress = Completer<void>();
+    progress.complete();
+  }
+
+  Future<void> _waitUntil(bool Function() observed) async {
+    while (!observed()) {
+      await _progress.future;
+    }
+  }
+
+  void _observeClose() {
+    unawaited(close().then<void>((_) {}, onError: (Object _) {}));
+  }
+
+  @override
+  Future<void> close() {
+    if (_closing case final pending?) return pending;
+    final done = Completer<void>();
+    _closing = done.future;
+    _stopped = true;
+    _signal();
+    unawaited(_observeRelease(done));
+    return done.future;
+  }
+
+  Future<void> _observeRelease(Completer<void> done) async {
+    try {
+      await _release().timeout(_cleanupBudget);
+      done.complete();
+    } catch (_) {
+      _evidence.add(
+        _Fact.pendingOperations,
+        generation: _generation,
+        status: _Status.unknown,
+        pendingCount: _pending.length,
+      );
+      for (final operation in _pending) {
+        _evidence.add(
+          _Fact.operation,
+          generation: _generation,
+          operation: operation,
+          status: _Status.pending,
+        );
+      }
+      done.completeError(const _ProbeFailure(_Outcome.backend));
+    } finally {
+      unawaited(_frames.close());
+    }
+  }
+
+  bool get _terminal =>
+      _nativeConnectFailed || (_nativeDisconnected && _dartDisconnected);
+
+  Future<void> _release() async {
+    final link = _link;
+    if (link == null) return;
+    await _turnOffNotify(link);
+    final pendingArm =
+        !link.connectSubmitted && _pending.contains(_Operation.connect);
+    final nativeTerminal = _nativeConnectFailed || _nativeDisconnected;
+    if (!nativeTerminal && (link.connectSubmitted || pendingArm)) {
+      // Submit once, even when connect/GATT/notify/write never completed.
+      unawaited(
+        _track(
+          _Operation.disconnect,
+          link.disconnect,
+        ).then<void>((_) {}, onError: (Object _) {}),
+      );
+    } else {
+      _evidence.add(
+        _Fact.operation,
+        generation: _generation,
+        operation: _Operation.disconnect,
+        status: _Status.skipped,
+        category: nativeTerminal
+            ? _Skip.alreadyTerminal
+            : _Skip.linkUnavailable,
+      );
+    }
+    // Terminal link evidence and platform request settlement are separate.
+    // Keep the lease until every issued operation is demonstrably done.
+    await _waitUntil(
+      () => _pending.isEmpty && (!link.connectSubmitted || _terminal),
+    );
+    await _track(_Operation.retire, link.retire);
+    await _events?.cancel();
+    _evidence.add(
+      _Fact.linkSubscription,
+      generation: _generation,
+      status: _Status.confirmed,
+    );
+    _evidence.add(
+      _Fact.pendingOperations,
+      generation: _generation,
+      status: _Status.confirmed,
+      pendingCount: 0,
+    );
+    _changed();
+  }
+
+  Future<void> _turnOffNotify(ProbeLink link) async {
+    final skip = _terminal || _nativeDisconnected || _dartDisconnected
+        ? _Skip.alreadyTerminal
+        : !_connectFutureSucceeded
+        ? _Skip.linkUnavailable
+        : !_notifyEnableRequested
+        ? _Skip.notEnabled
+        : _pending.contains(_Operation.notifyOn)
+        ? _Skip.enableUnsettled
+        : null;
+    if (skip != null) {
+      _evidence.add(
+        _Fact.operation,
+        generation: _generation,
+        operation: _Operation.notifyOff,
+        status: _Status.skipped,
+        category: skip,
+      );
+      return;
+    }
+
+    try {
+      await (() async {
+        await _track(_Operation.notifyOff, () => link.setNotify(false));
+        await _waitUntil(() => _notifyDisabled || _terminal);
+      })().timeout(_notifyOffGrace);
+      if (!_notifyDisabled) {
+        _evidence.add(
+          _Fact.nativeNotifyState,
+          generation: _generation,
+          enabled: false,
+          status: _Status.skipped,
+          category: _Skip.alreadyTerminal,
+        );
+      }
+    } catch (_) {
+      _evidence.add(
+        _Fact.nativeNotifyState,
+        generation: _generation,
+        enabled: false,
+        status: _Status.unknown,
+      );
+    }
+  }
+}

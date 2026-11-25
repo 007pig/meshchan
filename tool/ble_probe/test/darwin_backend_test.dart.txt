@@ -1,0 +1,458 @@
+import 'dart:async';
+
+import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
+import 'package:bluetooth_low_energy_darwin/meshchan_probe_stamp.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:logging/logging.dart';
+import 'package:meshchan_ble_probe/src/backend.dart';
+import 'package:meshchan_ble_probe/src/darwin_backend.dart';
+import 'package:meshchan_ble_probe/src/probe.dart';
+
+const _channel = MethodChannel('org.meshchan.probe.ble2a3/test-observation');
+final _service = UUID.fromString('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+final _rx = _characteristic('2', [GATTCharacteristicProperty.write]);
+final _tx = _characteristic('3', [GATTCharacteristicProperty.notify]);
+
+GATTCharacteristic _characteristic(
+  String uuidDigit,
+  List<GATTCharacteristicProperty> properties,
+) => GATTCharacteristic.mutable(
+  uuid: UUID.fromString('6e40000$uuidDigit-b5a3-f393-e0a9-e50e24dcca9e'),
+  properties: properties,
+  permissions: [],
+  descriptors: [],
+);
+
+final class _SyntheticPeripheral implements Peripheral {
+  _SyntheticPeripheral(int value) : uuid = UUID.short(value);
+
+  @override
+  final UUID uuid;
+}
+
+final class _SyntheticCentral implements CentralManager {
+  final discoveries = StreamController<DiscoveredEventArgs>.broadcast();
+  final connections =
+      StreamController<PeripheralConnectionStateChangedEventArgs>.broadcast();
+  final notifications =
+      StreamController<GATTCharacteristicNotifiedEventArgs>.broadcast();
+  final states =
+      StreamController<BluetoothLowEnergyStateChangedEventArgs>.broadcast();
+  final logs = Logger('CentralManager');
+  final _peripheral = _SyntheticPeripheral(1);
+  final _other = _SyntheticPeripheral(2);
+  bool scanning = false;
+  bool failScan = false;
+  int connectCalls = 0;
+  int disconnectCalls = 0;
+  Completer<void>? connectResult;
+  Completer<void>? disconnectResult;
+
+  @override
+  Stream<DiscoveredEventArgs> get discovered => discoveries.stream;
+
+  @override
+  Stream<PeripheralConnectionStateChangedEventArgs>
+  get connectionStateChanged => connections.stream;
+
+  @override
+  Stream<GATTCharacteristicNotifiedEventArgs> get characteristicNotified =>
+      notifications.stream;
+
+  @override
+  Stream<BluetoothLowEnergyStateChangedEventArgs> get stateChanged =>
+      states.stream;
+
+  @override
+  BluetoothLowEnergyState get state => BluetoothLowEnergyState.poweredOn;
+
+  @override
+  Future<void> startDiscovery({List<UUID>? serviceUUIDs}) async {
+    expect(serviceUUIDs, [_service]);
+    if (failScan) {
+      logs.info('synthetic frame bytes and PIN marker');
+      logs.info('synthetic peripheral UUID and advertising marker');
+      final exception = Exception('synthetic device exception marker');
+      logs.severe('synthetic initialization failure', exception);
+      throw exception;
+    }
+    scanning = true;
+    for (final device in [_peripheral, _other, _peripheral]) {
+      discoveries.add(
+        DiscoveredEventArgs(device, 0, Advertisement(name: 'Synthetic target')),
+      );
+    }
+  }
+
+  @override
+  Future<void> stopDiscovery() async {
+    scanning = false;
+  }
+
+  @override
+  Future<void> connect(Peripheral peripheral) async {
+    connectCalls++;
+    await connectResult?.future;
+  }
+
+  @override
+  Future<void> disconnect(Peripheral peripheral) async {
+    disconnectCalls++;
+    await disconnectResult?.future;
+  }
+
+  @override
+  Future<List<GATTService>> discoverGATT(Peripheral peripheral) async {
+    return [
+      GATTService(
+        uuid: _service,
+        isPrimary: true,
+        includedServices: [],
+        characteristics: [_rx, _tx],
+      ),
+    ];
+  }
+
+  void pluginConnection(ConnectionState state, [List<int>? stamp]) {
+    final event = PeripheralConnectionStateChangedEventArgs(_peripheral, state);
+    stampMeshchanProbeEvent(event, stamp);
+    connections.add(event);
+  }
+
+  void pluginValue({
+    Peripheral? target,
+    GATTCharacteristic? characteristic,
+    List<int>? stamp,
+    Uint8List? value,
+  }) {
+    final event = GATTCharacteristicNotifiedEventArgs(
+      target ?? _peripheral,
+      characteristic ?? _tx,
+      value ?? Uint8List(82),
+    );
+    stampMeshchanProbeEvent(event, stamp);
+    notifications.add(event);
+  }
+
+  Future<void> dispose() async {
+    await Future.wait([
+      discoveries.close(),
+      states.close(),
+      connections.close(),
+      notifications.close(),
+    ]);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Future<void> _turn() => Future<void>.delayed(Duration.zero);
+
+Future<void> _sendNative(
+  TestDefaultBinaryMessenger messenger,
+  String kind,
+  int sequence, {
+  int generation = 2,
+  Map<String, Object> extra = const {},
+}) async {
+  await messenger.handlePlatformMessage(
+    _channel.name,
+    _channel.codec.encodeMethodCall(
+      MethodCall('receipt', {
+        'kind': kind,
+        'generation': generation,
+        'sequence': sequence,
+        'micros': sequence * 100,
+        ...extra,
+      }),
+    ),
+    null,
+  );
+}
+
+void main() {
+  final messenger =
+      TestWidgetsFlutterBinding.ensureInitialized().defaultBinaryMessenger;
+
+  late _SyntheticCentral central;
+  late DarwinProbeBackend backend;
+  late List<String> methodCalls;
+  late int managerAllocations;
+  Completer<bool>? arm;
+
+  setUp(() {
+    central = _SyntheticCentral();
+    managerAllocations = 0;
+    methodCalls = [];
+    arm = null;
+    backend = DarwinProbeBackend(
+      createManager: () {
+        managerAllocations++;
+        return central;
+      },
+      observationChannel: _channel,
+    );
+    messenger.setMockMethodCallHandler(_channel, (call) async {
+      methodCalls.add(call.method);
+      return switch (call.method) {
+        'isScanning' => central.scanning,
+        'arm' => arm == null ? true : await arm!.future,
+        'bindTx' || 'retire' => true,
+        _ => throw StateError('Unexpected synthetic channel method'),
+      };
+    });
+  });
+
+  tearDown(() async {
+    _channel.setMethodCallHandler(null);
+    messenger.setMockMethodCallHandler(_channel, null);
+    await central.dispose();
+  });
+
+  Future<List<ProbeTarget>> scan() async {
+    final targets = <ProbeTarget>[];
+    final discovery = backend.discoveries.listen(targets.add);
+    await backend.startScan();
+    await _turn();
+    await backend.stopScan();
+    await discovery.cancel();
+    return targets;
+  }
+
+  test(
+    'inert observers, suppressed plugin log records and mapped errors',
+    () async {
+      final level = Logger.root.level;
+      final previousHierarchy = hierarchicalLoggingEnabled;
+      final logRecords = <LogRecord>[];
+      final logSubscription = Logger.root.onRecord.listen(logRecords.add);
+      addTearDown(logSubscription.cancel);
+      addTearDown(() {
+        Logger.root.level = level;
+        hierarchicalLoggingEnabled = previousHierarchy;
+      });
+      Logger.root.level = Level.ALL;
+      final discovery = backend.discoveries.listen((_) {});
+      final state = backend.states.listen((_) {});
+      addTearDown(discovery.cancel);
+      addTearDown(state.cancel);
+      expect(managerAllocations, 0);
+      expect(methodCalls, isEmpty);
+
+      central.failScan = true;
+      String? safeFailure;
+      try {
+        await backend.startScan();
+      } on ProbeBackendException catch (error) {
+        safeFailure = error.toString();
+      }
+      await backend.stopScan();
+      expect(managerAllocations, 1);
+      expect(logRecords, isEmpty);
+      expect(safeFailure, 'Probe backend: scanStart');
+    },
+  );
+
+  test('an explicitly selected discovery owns the physical attempt', () async {
+    final targets = await scan();
+    expect(targets, hasLength(2));
+    final selected = targets.first;
+    expect(
+      () => backend.link(ProbeTarget(id: selected.id, name: selected.name), 2),
+      throwsA(isA<ProbeBackendException>()),
+    );
+
+    final link = backend.link(selected, 2);
+    final events = <ProbeLinkEvent>[];
+    final subscription = link.events.listen(events.add);
+    await link.connect();
+    await _sendNative(messenger, 'connected', 1);
+    central.pluginConnection(ConnectionState.connected, [2, 1]);
+    final gatt = await link.discoverGatt();
+    expect(gatt.withResponse, isTrue);
+    expect(gatt.withoutResponse, isFalse);
+    expect(gatt.txNotifiable, isTrue);
+
+    // These plugin events must never enter the attempt's frame path.
+    central.pluginValue(target: central._other);
+    central.pluginValue(characteristic: _rx);
+    central.pluginValue(stamp: [1, 3]);
+    await _sendNative(
+      messenger,
+      'value',
+      9,
+      generation: 1,
+      extra: {'length': 82, 'errorFree': true, 'enabled': true},
+    );
+    await _turn();
+    expect(events.whereType<ProbeNotification>(), isEmpty);
+
+    // Dart can run before the sideband observation. Mutating the plugin
+    // buffer after Dart delivery must not mutate the owned frame.
+    final value = Uint8List(82)..[0] = 0x16;
+    central.pluginValue(stamp: [2, 2], value: value);
+    await _turn();
+    value[0] = 0;
+    expect(events.whereType<ProbeNotification>(), isEmpty);
+    await _sendNative(
+      messenger,
+      'value',
+      2,
+      extra: {'length': 82, 'errorFree': true, 'enabled': true},
+    );
+    await _turn();
+    final frame = events.whereType<ProbeNotification>().single;
+    expect(
+      (frame.nativeSequence, frame.nativeLength, frame.bytes[0]),
+      (2, 82, 0x16),
+    );
+
+    // The native callback and exact plugin disconnect mirror settle
+    // independently. A bare disconnect Future provides neither.
+    await link.disconnect();
+    await link.disconnect();
+    expect(central.disconnectCalls, 1);
+    expect(events.whereType<ProbeNativeDisconnect>(), isEmpty);
+    await _sendNative(
+      messenger,
+      'disconnected',
+      3,
+      extra: {'localRequested': true},
+    );
+    await _turn();
+    expect(
+      events.whereType<ProbeNativeDisconnect>().single.localRequested,
+      isTrue,
+    );
+    expect(events.whereType<ProbeDartConnection>().last.connected, isTrue);
+    central.pluginConnection(ConnectionState.disconnected, [2, 3]);
+    await _turn();
+    expect(events.whereType<ProbeDartConnection>().last.connected, isFalse);
+    await link.retire();
+    await subscription.cancel();
+
+    // CoreBluetooth may return the same characteristic object after the
+    // preceding connection has been retired.
+    final reconnect = backend.link(selected, 3);
+    final reopenedEvents = <ProbeLinkEvent>[];
+    final reopenedSubscription = reconnect.events.listen(reopenedEvents.add);
+    await reconnect.connect();
+    await _sendNative(messenger, 'connected', 1, generation: 3);
+    central.pluginConnection(ConnectionState.connected, [3, 1]);
+    expect((await reconnect.discoverGatt()).txNotifiable, isTrue);
+    central.pluginValue(characteristic: _tx, stamp: [2, 2]);
+    central.pluginValue(characteristic: _tx, stamp: [3, 2]);
+    await _sendNative(
+      messenger,
+      'value',
+      2,
+      generation: 3,
+      extra: {'length': 82, 'errorFree': true, 'enabled': true},
+    );
+    await _turn();
+    expect(reopenedEvents.whereType<ProbeNotification>().single.generation, 3);
+    await reconnect.disconnect();
+    await _sendNative(
+      messenger,
+      'disconnected',
+      3,
+      generation: 3,
+      extra: {'localRequested': true},
+    );
+    central.pluginConnection(ConnectionState.disconnected, [3, 3]);
+    await _turn();
+    await reconnect.retire();
+    await reopenedSubscription.cancel();
+  });
+
+  test('cancel before native arm acknowledgement suppresses connect', () async {
+    final targets = await scan();
+    arm = Completer<bool>();
+    final link = backend.link(targets.first, 2);
+    final connect = link.connect();
+    final failure = expectLater(connect, throwsA(isA<ProbeBackendException>()));
+    await _turn();
+    await link.disconnect();
+    expect(link.connectSubmitted, isFalse);
+    arm!.complete(true);
+    await failure;
+    await link.retire();
+    expect(central.connectCalls, 0);
+    expect(central.disconnectCalls, 0);
+    expect(methodCalls, containsAllInOrder(['arm', 'retire']));
+  });
+
+  test('a lost arm acknowledgement still requires native retirement', () async {
+    final targets = await scan();
+    arm = Completer<bool>();
+    final link = backend.link(targets.first, 2);
+    final connect = link.connect();
+    final failure = expectLater(connect, throwsA(isA<ProbeBackendException>()));
+    await _turn();
+    arm!.completeError(PlatformException(code: 'synthetic-reply-loss'));
+    await failure;
+    await link.retire();
+    expect(central.connectCalls, 0);
+    expect(methodCalls, containsAllInOrder(['arm', 'retire']));
+  });
+
+  test('a definite arm refusal owns no native observation to retire', () async {
+    final targets = await scan();
+    arm = Completer<bool>()..complete(false);
+    final link = backend.link(targets.first, 2);
+    await expectLater(link.connect(), throwsA(isA<ProbeBackendException>()));
+    expect(link.connectSubmitted, isFalse);
+    await link.retire();
+    expect(central.connectCalls, 0);
+    expect(
+      methodCalls.where((method) => method == 'arm' || method == 'retire'),
+      ['arm'],
+    );
+    final next = backend.link(targets.first, 3);
+    await next.retire();
+  });
+
+  for (final terminal in ['connectFailed', 'disconnected']) {
+    test('pending connect cancellation settles after $terminal', () async {
+      central.connectResult = Completer<void>();
+      central.disconnectResult = Completer<void>();
+      final controller = ProbeController(() => backend, synthetic: true);
+      addTearDown(controller.dispose);
+      await controller.startScan();
+      await _turn();
+      await controller.stopScan();
+      controller.select(controller.targets.first);
+      final run = controller.run(
+        nodeNameBytes: 6,
+        lengthBasis: LengthBasis.deviceConfiguration,
+      );
+      await _turn();
+      expect(central.connectCalls, 1);
+      final cancel = controller.cancel();
+      await _turn();
+      expect(central.disconnectCalls, 1);
+
+      await _sendNative(
+        messenger,
+        terminal,
+        1,
+        generation: 1,
+        extra: terminal == 'disconnected' ? {'localRequested': true} : {},
+      );
+      if (terminal == 'disconnected') {
+        central.pluginConnection(ConnectionState.disconnected, [1, 1]);
+      }
+      await _turn();
+      expect(controller.cleanupState, 'Observing release');
+      central.connectResult!.completeError(StateError('synthetic cancel'));
+      central.disconnectResult!.complete();
+      await Future.wait([run, cancel]);
+      expect(controller.logicalResult, 'Canceled');
+      expect(controller.cleanupState, 'Release confirmed');
+      expect(methodCalls, contains('retire'));
+      expect(await controller.requestClose(), isTrue);
+    });
+  }
+}

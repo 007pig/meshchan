@@ -1,0 +1,149 @@
+import 'dart:typed_data';
+
+/// Selection-only identity. Keep these fields out of evidence and logs.
+final class ProbeTarget {
+  const ProbeTarget({required this.id, required this.name});
+
+  final String id;
+  final String name;
+}
+
+enum ProbeAdapterState {
+  unknown,
+  resetting,
+  unsupported,
+  unauthorized,
+  poweredOff,
+  poweredOn,
+}
+
+enum ProbeWriteType { withResponse, withoutResponse }
+
+enum ProbeBackendFailure {
+  adapter,
+  scanStart,
+  scanStop,
+  targetUnavailable,
+  connect,
+  gatt,
+  notify,
+  writeLength,
+  write,
+  disconnect,
+  observation,
+}
+
+final class ProbeBackendException implements Exception {
+  const ProbeBackendException(this.category);
+
+  final ProbeBackendFailure category;
+
+  @override
+  String toString() => 'Probe backend: ${category.name}';
+}
+
+final class ProbeGatt {
+  const ProbeGatt({
+    required this.withResponse,
+    required this.withoutResponse,
+    required this.txNotifiable,
+  });
+
+  final bool withResponse;
+  final bool withoutResponse;
+  final bool txNotifiable;
+}
+
+abstract interface class ProbeBackend {
+  Stream<ProbeTarget> get discoveries;
+  Stream<ProbeAdapterState> get states;
+  Future<ProbeAdapterState> getState();
+  Future<void> startScan();
+  Future<void> stopScan();
+  ProbeLink link(ProbeTarget target, int generation);
+}
+
+abstract interface class ProbeLink {
+  Stream<ProbeLinkEvent> get events;
+  bool get connectSubmitted;
+  Future<void> connect();
+  Future<ProbeGatt> discoverGatt();
+  Future<void> setNotify(bool enabled);
+  Future<int> maximumWriteLength(ProbeWriteType type);
+  Future<void> write(Uint8List value);
+  Future<void> disconnect();
+
+  /// Retire the native observation and settle the underlying subscriptions.
+  /// Call after the attempt's platform work and release evidence have settled.
+  Future<void> retire();
+}
+
+sealed class ProbeLinkEvent {
+  const ProbeLinkEvent(this.generation);
+
+  final int generation;
+}
+
+final class ProbeNotification extends ProbeLinkEvent {
+  ProbeNotification(
+    super.generation,
+    Uint8List bytes,
+    this.nativeSequence,
+    this.nativeLength,
+    this.nativeMicros,
+  ) : bytes = Uint8List.fromList(bytes).asUnmodifiableView();
+
+  final Uint8List bytes;
+  final int nativeSequence;
+  final int nativeLength;
+  final int nativeMicros;
+}
+
+final class ProbeProvenanceUnconfirmed extends ProbeLinkEvent {
+  const ProbeProvenanceUnconfirmed(super.generation);
+}
+
+final class ProbeNativeConnectionFailed extends ProbeLinkEvent {
+  const ProbeNativeConnectionFailed(
+    super.generation,
+    this.nativeSequence,
+    this.nativeMicros,
+  );
+
+  final int nativeSequence;
+  final int nativeMicros;
+}
+
+final class ProbeNativeDisconnect extends ProbeLinkEvent {
+  const ProbeNativeDisconnect(
+    super.generation,
+    this.localRequested,
+    this.nativeSequence,
+    this.nativeMicros,
+  );
+
+  final bool localRequested;
+  final int nativeSequence;
+  final int nativeMicros;
+}
+
+final class ProbeDartConnection extends ProbeLinkEvent {
+  const ProbeDartConnection(super.generation, this.connected);
+
+  final bool connected;
+}
+
+final class ProbeNativeNotifyState extends ProbeLinkEvent {
+  const ProbeNativeNotifyState(
+    super.generation,
+    this.enabled,
+    this.errorFree,
+    this.nativeSequence,
+    this.nativeMicros,
+  );
+
+  final bool enabled;
+  final bool errorFree;
+  final int nativeSequence;
+  final int nativeMicros;
+}

@@ -461,6 +461,11 @@ location.
 
 ## Step 3 macOS BLE host
 
+The [Step 3 validation record](../validation/phase-2a3-ble-host.md) records
+the isolated implementation, the first `DEVICE_QUERY` deadline, and the
+passing paired retest on the same Heltec V4.3. The retest meets the
+[limited Step 4 entry](../validation/phase-2a3-ble-host.md#step-4-entry).
+
 **Planned / Not executed in Step 2.** Use an isolated minimal macOS Flutter
 host and an explicitly authorized, identified target. Record exact macOS and
 toolchain versions, pinned plugin/Darwin/interface set, target model/chip and

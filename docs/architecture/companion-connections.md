@@ -24,6 +24,7 @@ decision in the applicable later step.
 | Historical acceptance | The selected USB and openHop runs belong to the inventoried Beta Build 5, the original RC1 Build 9, and the restored RC1 Build 10 image. Each record carries its own source and limits. [Step 1 evidence ledger](../validation/phase-2a-connections.md#historical-evidence) |
 | Step 1 changes | This architecture document and the [Step 1 validation record](../validation/phase-2a-connections.md) document the reviewed checkout. |
 | Step 2 changes | The [transport baseline](companion-transport-baseline.md) pins the USB, TCP, and BLE sources, records initial acceptance targets, and sets the macOS BLE verification order. The [Step 2 validation record](../validation/phase-2a2-protocol-backends.md) records the separate checkout and static checks. |
+| Step 3 changes | The [standalone macOS BLE probe](../../tool/ble_probe/README.md) carries the pinned backend, a private transport, and structural evidence for finite query/start. The [Step 3 validation record](../validation/phase-2a3-ble-host.md) tracks software and real-device evidence. |
 | Planned changes and open questions | The [proposed responsibilities](#responsibilities-and-future-seams), [compatibility inventory](#compatibility-inventory), and [handoffs](#phase-and-step-handoffs) identify the future work and the evidence it still needs. |
 
 ## Current call paths
@@ -196,7 +197,11 @@ The [Step 2 transport baseline](companion-transport-baseline.md) records the
 shared inner-frame contract, USB/TCP serial envelopes and firmware-specific
 BLE characteristic boundaries. It places `bluetooth_low_energy` 6.2.1 first
 for the minimal macOS host and leaves plugin execution location open for
-worker cooperation tests. The first BLE target still needs identification.
+worker cooperation tests. The first host attempt on a Heltec V4.3 timed out
+on the query and confirmed release. The [separately authorized paired
+retest](../validation/phase-2a3-ble-host.md#paired-host-retest) completed both
+commands, verified native notifications and expected lengths, and confirmed
+release on the same target.
 
 ## Phase and step handoffs
 
@@ -213,8 +218,8 @@ worker cooperation tests. The first BLE target still needs identification.
 | --- | --- | --- |
 | 1 | Completed | Fix the scope and baseline in this document and the [validation record](../validation/phase-2a-connections.md). |
 | 2 | Completed | Pin the protocol baseline, acceptance targets, and BLE candidates in the [transport baseline](companion-transport-baseline.md) and [validation record](../validation/phase-2a2-protocol-backends.md). |
-| 3 | Planned, next | Confirm a target and prerequisites, then run the [minimal locally signed macOS BLE host plan](companion-transport-baseline.md#step-3-macos-ble-host). |
-| 4 | Planned | Verify [BLE and Dart worker cooperation](companion-transport-baseline.md#step-4-worker-cooperation) before deciding where the backend runs. |
+| 3 | Host and software checks complete, paired main scenario passed | The [real scenario ledger](../validation/phase-2a3-ble-host.md#real-ble-scenario-ledger) retains both attempts, actual release, and remaining coverage. |
+| 4 | Limited query/start entry met | Use the [Step 3 entry evidence](../validation/phase-2a3-ble-host.md#step-4-entry) to plan [BLE and Dart worker cooperation](companion-transport-baseline.md#step-4-worker-cooperation) on the same backend version set and target. |
 | 5 | Planned | Implement the pure Dart connection target model. |
 | 6 | Planned | Implement transport creation by target. |
 | 7 | Planned | Migrate internal CLI entry points. |

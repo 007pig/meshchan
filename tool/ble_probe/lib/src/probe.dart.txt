@@ -1,0 +1,651 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:meshcore_link/meshcore_link.dart';
+
+import 'backend.dart';
+
+part 'probe_transport.dart';
+
+const _appName = 'Meshchan BLE Probe';
+const _deviceInfoLength = 82;
+const _selfInfoPrefix = 58;
+// The pinned Companion stores its name in 32 bytes including the terminator.
+const maxProbeNodeNameBytes = 31;
+
+enum LengthBasis { fixture, deviceConfiguration }
+
+enum _Fact {
+  offlineStartup,
+  runtimeFailure,
+  scanStarted,
+  adapterState,
+  scanStart,
+  scanStop,
+  nativeScanStop,
+  scanSubscriptions,
+  selected,
+  attemptStarted,
+  phase,
+  gattProperties,
+  nativeWriteMaximum,
+  nativeNotifyState,
+  notification,
+  writeDispatch,
+  writeResult,
+  nativeConnectFailed,
+  nativeDisconnect,
+  dartConnection,
+  staleEvent,
+  operation,
+  pendingOperations,
+  sessionSubscriptions,
+  linkSubscription,
+  logicalResult,
+  cleanup,
+  quit,
+}
+
+enum _Status {
+  requested,
+  confirmed,
+  failed,
+  deadline,
+  skipped,
+  pending,
+  unknown,
+}
+
+enum _Operation {
+  connect,
+  discoverGatt,
+  notifyOn,
+  maximumWithResponse,
+  maximumWithoutResponse,
+  write,
+  notifyOff,
+  disconnect,
+  retire,
+}
+
+enum _Phase {
+  connecting,
+  discoveringGatt,
+  enablingNotify,
+  writeLimits,
+  queryStart,
+}
+
+enum _Outcome {
+  passed,
+  canceled,
+  initializationDeadline,
+  requestDeadline,
+  provenanceUnconfirmed,
+  earlyOrUnassociatedFrame,
+  invalidFrame,
+  lengthMismatch,
+  unexpectedGatt,
+  writeLimit,
+  commandOutsideProbe,
+  peerDisconnected,
+  unexpectedDisconnect,
+  backend,
+  protocol,
+  deviceRejected,
+}
+
+final class _ProbeFailure implements Exception {
+  const _ProbeFailure(this.outcome);
+  final _Outcome outcome;
+}
+
+final class _Evidence {
+  _Evidence(this.synthetic);
+
+  final bool synthetic;
+  final _clock = Stopwatch()..start();
+  final _rows = <Map<String, Object>>[];
+
+  void add(
+    _Fact fact, {
+    int? generation,
+    Enum? status,
+    Enum? category,
+    Enum? operation,
+    int? opcode,
+    int? commandOpcode,
+    int? length,
+    int? expectedLength,
+    int? nativeLength,
+    int? nativeSequence,
+    int? nativeMicros,
+    int? nodeNameBytes,
+    int? pendingCount,
+    int? scanMs,
+    int? initializationMs,
+    int? requestMs,
+    int? cleanupMs,
+    bool? withResponse,
+    bool? withoutResponse,
+    bool? txNotifiable,
+    bool? provenance,
+    bool? matchedLength,
+    bool? localRequested,
+    bool? enabled,
+    bool? errorFree,
+  }) {
+    _rows.add({
+      'sequence': _rows.length + 1,
+      'elapsedMicros': _clock.elapsedMicroseconds,
+      'fact': fact.name,
+      'generation': ?generation,
+      'status': ?status?.name,
+      'category': ?category?.name,
+      'operation': ?operation?.name,
+      'opcode': ?opcode,
+      'commandOpcode': ?commandOpcode,
+      'length': ?length,
+      'expectedLength': ?expectedLength,
+      'nativeLength': ?nativeLength,
+      'nativeSequence': ?nativeSequence,
+      'nativeMicros': ?nativeMicros,
+      'nodeNameBytes': ?nodeNameBytes,
+      'pendingCount': ?pendingCount,
+      'scanMs': ?scanMs,
+      'initializationMs': ?initializationMs,
+      'requestMs': ?requestMs,
+      'cleanupMs': ?cleanupMs,
+      'withResponse': ?withResponse,
+      'withoutResponse': ?withoutResponse,
+      'txNotifiable': ?txNotifiable,
+      'provenance': ?provenance,
+      'matchedLength': ?matchedLength,
+      'localRequested': ?localRequested,
+      'enabled': ?enabled,
+      'errorFree': ?errorFree,
+    });
+  }
+
+  String get json => const JsonEncoder.withIndent('  ').convert({
+    'schema': 1,
+    'mode': synthetic ? 'synthetic' : 'real',
+    'events': _rows,
+  });
+}
+
+/// Single-process admission for one scan, one attempt, and at most one
+/// explicit follow-on attempt to the same identified target.
+final class ProbeController extends ChangeNotifier {
+  ProbeController(
+    this._createBackend, {
+    bool synthetic = false,
+    this.scanBudget = const Duration(seconds: 10),
+    this.initializationBudget = const Duration(seconds: 15),
+    this.requestBudget = const Duration(seconds: 5),
+    this.cleanupBudget = const Duration(seconds: 10),
+    this.notifyOffGrace = const Duration(milliseconds: 500),
+  }) : _evidence = _Evidence(synthetic) {
+    _evidence.add(_Fact.offlineStartup);
+  }
+
+  final ProbeBackend Function() _createBackend;
+  final Duration scanBudget;
+  final Duration initializationBudget;
+  final Duration requestBudget;
+  final Duration cleanupBudget;
+  final Duration notifyOffGrace;
+  final _Evidence _evidence;
+
+  ProbeBackend? _backend;
+  final _targets = <String, ProbeTarget>{};
+  ProbeTarget? _selected;
+  final _scanEnded = Completer<void>();
+  final _adapterReady = Completer<ProbeAdapterState>();
+  StreamSubscription<ProbeTarget>? _discoveries;
+  StreamSubscription<ProbeAdapterState>? _states;
+  Timer? _scanTimer;
+  Future<void>? _scanStop;
+  Future<void>? _nativeScanStart;
+  Future<void>? _nativeStateQuery;
+  ProbeAdapterState? _lastAdapterState;
+  bool _scanAttempted = false;
+  bool _scanConfirmed = false;
+  bool _scanUnknown = false;
+  bool _scanFailed = false;
+  bool _quitInProgress = false;
+  bool _disposed = false;
+
+  _Attempt? _attempt;
+  int _generation = 0;
+  int? _nameBytes;
+  LengthBasis? _basis;
+
+  List<ProbeTarget> get targets => List.unmodifiable(_targets.values);
+  ProbeTarget? get selected => _selected;
+  bool get canScan => !_quitInProgress && !_scanAttempted;
+  bool get canStopScan => _scanAttempted && _scanStop == null;
+  bool get canSelect =>
+      !_quitInProgress &&
+      _generation == 0 &&
+      (canStopScan || (_scanConfirmed && !_scanFailed));
+  bool get isReconnect => _generation == 1;
+  bool get canRun =>
+      !_quitInProgress &&
+      _scanConfirmed &&
+      !_scanFailed &&
+      _selected != null &&
+      (_generation == 0 ||
+          (isReconnect &&
+              _attempt!.releaseConfirmed &&
+              !_attempt!._transport.notificationUnconfirmed));
+  bool get canCancel => _attempt != null && _attempt!.outcome == null;
+  bool get cleanupPending =>
+      (_scanStop != null && !_scanConfirmed && !_scanUnknown) ||
+      (_attempt?.cleaningUp ?? false);
+  String get phase => _attempt?.phaseLabel ?? _scanPhase;
+  String get logicalResult => _attempt?.outcomeLabel ?? _scanResult;
+  String get cleanupState => _attempt?.cleanupLabel ?? _scanCleanup;
+  String get notificationState {
+    final transport = _attempt?._transport;
+    if (transport?.notificationUnconfirmed == true) {
+      return 'Notification provenance unconfirmed';
+    }
+    return transport?.bothReceiptsConfirmed == true
+        ? 'Both response receipts confirmed'
+        : 'Awaiting response evidence';
+  }
+
+  String get evidenceJson => _evidence.json;
+
+  void recordRuntimeFailure() {
+    _evidence.add(_Fact.runtimeFailure, status: _Status.failed);
+    if (canStopScan) {
+      _failScan();
+    } else if (_attempt case final attempt?) {
+      attempt._transport._fail(_Outcome.backend);
+    }
+  }
+
+  String _scanPhase = 'Offline';
+  String _scanResult = 'Idle';
+  String _scanCleanup = 'No active work';
+
+  void _changed() {
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> startScan() async {
+    if (!canScan) return;
+    _scanAttempted = true;
+    _scanPhase = 'Waiting for Bluetooth';
+    _scanResult = 'Scan in progress';
+    _scanCleanup = 'Scan owned';
+    _evidence.add(_Fact.scanStarted, scanMs: scanBudget.inMilliseconds);
+    _scanTimer = Timer(scanBudget, () {
+      if (!canStopScan) return;
+      _evidence.add(_Fact.scanStop, status: _Status.deadline);
+      if (_scanPhase == 'Waiting for Bluetooth') {
+        _scanFailed = true;
+        _scanResult = 'Bluetooth readiness deadline';
+      }
+      unawaited(stopScan());
+    });
+    _changed();
+    try {
+      final backend = _backend = _createBackend();
+      _discoveries = backend.discoveries.listen((target) {
+        if (!canStopScan || _nativeScanStart == null) return;
+        _targets.putIfAbsent(target.id, () => target);
+        _changed();
+      }, onError: (Object _) => _failScan());
+      _states = backend.states.listen(
+        _seeAdapter,
+        onError: (Object _) => _failScan(),
+      );
+      // A platform state query can itself be delayed while the manager is initializing.
+      // Its result is ignored after stop, and it can never submit discovery on its own.
+      _nativeStateQuery = Future.sync(backend.getState)
+          .then<void>(_seeAdapter, onError: (Object _) => _failScan());
+      final state = await Future.any<ProbeAdapterState?>([
+        _adapterReady.future,
+        _scanEnded.future.then((_) => null),
+      ]);
+      if (!canStopScan || state == null) return;
+      if (_lastAdapterState != ProbeAdapterState.poweredOn) {
+        _failScan(_lastAdapterState);
+        return;
+      }
+      _scanPhase = 'Scanning';
+      _evidence.add(_Fact.scanStart, status: _Status.requested);
+      final start = Completer<void>();
+      _nativeScanStart = start.future;
+      try {
+        await backend.startScan();
+        _evidence.add(_Fact.scanStart, status: _Status.confirmed);
+      } catch (_) {
+        _evidence.add(_Fact.scanStart, status: _Status.failed);
+        _failScan();
+        _scanFailed = true;
+        _scanResult = 'Scan failed';
+      } finally {
+        start.complete();
+      }
+    } catch (_) {
+      _failScan();
+    } finally {
+      _changed();
+    }
+  }
+
+  void _seeAdapter(ProbeAdapterState state) {
+    if (!canStopScan) return;
+    _lastAdapterState = state;
+    _evidence.add(_Fact.adapterState, status: state);
+    if (_nativeScanStart != null && state != ProbeAdapterState.poweredOn) {
+      _failScan(state);
+    } else if (!_adapterReady.isCompleted &&
+        state != ProbeAdapterState.unknown &&
+        state != ProbeAdapterState.resetting) {
+      _adapterReady.complete(state);
+    }
+    _changed();
+  }
+
+  void _failScan([ProbeAdapterState? state]) {
+    if (!canStopScan) return;
+    _scanFailed = true;
+    _scanResult = switch (state) {
+      ProbeAdapterState.unauthorized => 'Bluetooth permission denied',
+      ProbeAdapterState.poweredOff => 'Bluetooth is off',
+      ProbeAdapterState.unsupported => 'Bluetooth is unsupported',
+      _ => 'Scan failed',
+    };
+    _evidence.add(_Fact.scanStart, status: _Status.failed, category: state);
+    unawaited(stopScan());
+  }
+
+  Future<void> stopScan() {
+    if (_scanStop case final pending?) return pending;
+    if (!canStopScan) return Future.value();
+    final done = Completer<void>();
+    _scanStop = done.future;
+    _scanTimer?.cancel();
+    _scanEnded.complete();
+    _scanPhase = 'Stopping scan';
+    _scanCleanup = 'Observing scan release';
+    _evidence.add(_Fact.scanStop, status: _Status.requested);
+    _changed();
+    unawaited(_settleScan(done));
+    return done.future;
+  }
+
+  Future<void> _settleScan(Completer<void> done) async {
+    try {
+      await _releaseScan().timeout(cleanupBudget);
+      _scanConfirmed = true;
+      _scanCleanup = 'Scan release confirmed';
+      _scanPhase = 'Scan stopped';
+      if (!_scanFailed) {
+        _scanResult = _targets.isEmpty
+            ? 'No matching target observed'
+            : 'Scan complete';
+      }
+      _evidence.add(_Fact.scanStop, status: _Status.confirmed);
+    } catch (_) {
+      _scanUnknown = true;
+      _scanCleanup = 'Scan release unknown';
+      _scanPhase = 'Scan closed to further actions';
+      _evidence.add(_Fact.scanStop, status: _Status.unknown);
+    } finally {
+      done.complete();
+      _changed();
+    }
+  }
+
+  Future<void> _releaseScan() async {
+    try {
+      // The backend stops its own scan observers even if discovery never ran.
+      // When discovery did run, stop also verifies native scan state.
+      await _backend?.stopScan();
+      if (_nativeScanStart case final start?) {
+        await start;
+        _evidence.add(_Fact.nativeScanStop, status: _Status.confirmed);
+      } else {
+        _evidence.add(_Fact.nativeScanStop, status: _Status.skipped);
+      }
+      await _nativeStateQuery;
+    } catch (_) {
+      _evidence.add(_Fact.nativeScanStop, status: _Status.failed);
+      rethrow;
+    } finally {
+      await Future.wait<void>([
+        if (_discoveries case final subscription?) subscription.cancel(),
+        if (_states case final subscription?) subscription.cancel(),
+      ]);
+      _evidence.add(_Fact.scanSubscriptions, status: _Status.confirmed);
+    }
+  }
+
+  void select(ProbeTarget target) {
+    if (!canSelect || !identical(_targets[target.id], target)) return;
+    _selected = target;
+    _evidence.add(_Fact.selected, status: _Status.confirmed);
+    _changed();
+  }
+
+  Future<void> run({
+    required int nodeNameBytes,
+    required LengthBasis lengthBasis,
+  }) async {
+    if (!canRun ||
+        nodeNameBytes < 0 ||
+        nodeNameBytes > maxProbeNodeNameBytes ||
+        (isReconnect &&
+            (nodeNameBytes != _nameBytes || lengthBasis != _basis))) {
+      return;
+    }
+    _nameBytes = nodeNameBytes;
+    _basis = lengthBasis;
+    final generation = ++_generation;
+    _evidence.add(
+      _Fact.attemptStarted,
+      generation: generation,
+      category: lengthBasis,
+      nodeNameBytes: nodeNameBytes,
+      initializationMs: initializationBudget.inMilliseconds,
+      requestMs: requestBudget.inMilliseconds,
+      cleanupMs: cleanupBudget.inMilliseconds,
+    );
+    final attempt = _attempt = _Attempt(
+      createLink: () => _backend!.link(_selected!, generation),
+      generation: generation,
+      nameBytes: nodeNameBytes,
+      initializationBudget: initializationBudget,
+      requestBudget: requestBudget,
+      cleanupBudget: cleanupBudget,
+      notifyOffGrace: notifyOffGrace,
+      evidence: _evidence,
+      changed: _changed,
+    );
+    final running = attempt.run();
+    _changed();
+    await running;
+  }
+
+  Future<void> cancel() async {
+    if (canStopScan ||
+        (_scanStop != null && !_scanConfirmed && !_scanUnknown)) {
+      await stopScan();
+    } else if (_attempt case final attempt?) {
+      await attempt.cancel();
+    }
+  }
+
+  Future<bool> requestClose() async {
+    _quitInProgress = true;
+    _evidence.add(_Fact.quit, status: _Status.requested);
+    _changed();
+    await cancel();
+    final allowed =
+        (!_scanAttempted || _scanConfirmed) &&
+        (_attempt == null || _attempt!.releaseConfirmed);
+    _evidence.add(
+      _Fact.quit,
+      status: allowed ? _Status.confirmed : _Status.unknown,
+    );
+    if (!allowed) _quitInProgress = false;
+    _changed();
+    return allowed;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    unawaited(cancel());
+    super.dispose();
+  }
+}
+
+final class _Attempt {
+  _Attempt({
+    required ProbeLink Function() createLink,
+    required this.generation,
+    required int nameBytes,
+    required Duration initializationBudget,
+    required Duration requestBudget,
+    required Duration cleanupBudget,
+    required Duration notifyOffGrace,
+    required _Evidence evidence,
+    required void Function() changed,
+  }) : _transport = _ProbeTransport(
+         createLink,
+         generation,
+         nameBytes,
+         cleanupBudget,
+         notifyOffGrace,
+         evidence,
+         changed,
+       ),
+       _evidence = evidence,
+       _changed = changed {
+    _session = MeshCoreSession(
+      transport: _transport,
+      appName: _appName,
+      initializationTimeout: initializationBudget,
+      requestTimeout: requestBudget,
+    );
+  }
+
+  final int generation;
+  final _ProbeTransport _transport;
+  final _Evidence _evidence;
+  final void Function() _changed;
+  late final MeshCoreSession _session;
+  _Outcome? outcome;
+  bool releaseConfirmed = false;
+  bool _cleanupComplete = false;
+  Future<void>? _closing;
+
+  bool get cleaningUp => outcome != null && !_cleanupComplete;
+  String get phaseLabel => outcome == null
+      ? switch (_transport.phase) {
+          _Phase.connecting => 'Connecting',
+          _Phase.discoveringGatt => 'Discovering GATT',
+          _Phase.enablingNotify => 'Preparing TX notifications',
+          _Phase.writeLimits => 'Checking write limits',
+          _Phase.queryStart => 'Query and start',
+        }
+      : _cleanupComplete
+      ? 'Attempt closed'
+      : 'Releasing connection';
+  String get outcomeLabel => switch (outcome) {
+    null => 'In progress',
+    _Outcome.passed => 'Query and start passed',
+    _Outcome.canceled => 'Canceled',
+    _Outcome.initializationDeadline => 'Initialization deadline',
+    _Outcome.requestDeadline => 'Companion request deadline',
+    _Outcome.provenanceUnconfirmed => 'Notification provenance unconfirmed',
+    _Outcome.earlyOrUnassociatedFrame => 'Early or unassociated notification',
+    _Outcome.invalidFrame => 'Invalid notification frame',
+    _Outcome.lengthMismatch => 'Independent response length mismatch',
+    _Outcome.unexpectedGatt => 'Unexpected GATT properties',
+    _Outcome.writeLimit => 'Insufficient or invalid write limit',
+    _Outcome.commandOutsideProbe => 'Unexpected outgoing command',
+    _Outcome.peerDisconnected => 'Peer disconnected',
+    _Outcome.unexpectedDisconnect => 'Unconfirmed disconnect',
+    _Outcome.backend => 'Bluetooth operation failed',
+    _Outcome.protocol => 'Companion protocol error',
+    _Outcome.deviceRejected => 'Companion command rejected',
+  };
+  String get cleanupLabel => releaseConfirmed
+      ? 'Release confirmed'
+      : _cleanupComplete
+      ? 'Release unknown'
+      : cleaningUp
+      ? 'Observing release'
+      : 'Connection owned';
+
+  Future<void> run() async {
+    try {
+      // Session subscribes first, and does not dispatch until transport.open finishes.
+      await _session.connect();
+      _settle(_Outcome.passed);
+    } on MeshCoreSessionFailure catch (failure) {
+      final cause = failure.cause;
+      _settle(
+        cause is _ProbeFailure
+            ? cause.outcome
+            : switch (failure.kind) {
+                MeshCoreSessionFailureKind.initializationTimeout =>
+                  _Outcome.initializationDeadline,
+                MeshCoreSessionFailureKind.requestTimeout =>
+                  _Outcome.requestDeadline,
+                MeshCoreSessionFailureKind.protocol => _Outcome.protocol,
+                MeshCoreSessionFailureKind.deviceRejected =>
+                  _Outcome.deviceRejected,
+                MeshCoreSessionFailureKind.canceled => _Outcome.canceled,
+                MeshCoreSessionFailureKind.disconnected =>
+                  _Outcome.unexpectedDisconnect,
+                _ => _Outcome.backend,
+              },
+      );
+    } catch (_) {
+      _settle(_Outcome.backend);
+    }
+    await _close();
+  }
+
+  Future<void> cancel() {
+    _settle(_Outcome.canceled);
+    return _close();
+  }
+
+  void _settle(_Outcome value) {
+    if (outcome != null) return;
+    outcome = value;
+    _evidence.add(_Fact.logicalResult, generation: generation, status: value);
+    _changed();
+  }
+
+  Future<void> _close() => _closing ??= _observeClose();
+
+  Future<void> _observeClose() async {
+    try {
+      // Session owns cancellation of its own Dart input subscription.
+      await _session.close();
+      releaseConfirmed = true;
+    } catch (_) {
+      releaseConfirmed = false;
+    } finally {
+      _cleanupComplete = true;
+      _evidence.add(
+        _Fact.cleanup,
+        generation: generation,
+        status: releaseConfirmed ? _Status.confirmed : _Status.unknown,
+      );
+      _changed();
+    }
+  }
+}

@@ -1,0 +1,1067 @@
+import 'dart:async';
+import 'dart:developer';
+import 'dart:io' show sleep;
+import 'dart:isolate';
+import 'dart:typed_data';
+
+import 'package:logging/logging.dart';
+import 'package:meshcore_link/meshcore_link.dart';
+
+import '../runtime/protocol.dart';
+import '../runtime/worker.dart';
+
+part 'worker_proxy.dart';
+
+enum WorkerBridgeFactKind {
+  handshake,
+  open,
+  write,
+  frameRoot,
+  frameWorker,
+  close,
+  proxyClosed,
+  rootSubscriptionClosed,
+  transportFault,
+  stale,
+  releaseReport,
+  releaseAcknowledged,
+  workerPortsClosed,
+  workerExit,
+  rootPortClosed,
+}
+
+enum WorkerBridgeStatus { requested, confirmed, failed, unknown, skipped }
+
+enum WorkerBridgeFailure {
+  transport,
+  protocol,
+  provenance,
+  initializationDeadline,
+  requestDeadline,
+  peerClosed,
+  closeUnknown,
+  closeFailed,
+  closing,
+}
+
+enum WorkerBridgeRelease { confirmed, unknown, failed }
+
+/// An explicit transport cleanup failure, as distinct from an absent proof.
+final class WorkerBridgeCloseFailed implements Exception {
+  const WorkerBridgeCloseFailed();
+}
+
+enum WorkerBridgeWireFault {
+  duplicateRequest,
+  staleRequest,
+  missingFrame,
+  duplicateFrame,
+  reorderedFrame,
+  staleFrame,
+}
+
+final class WorkerBridgeReceipt {
+  const WorkerBridgeReceipt({
+    required this.generation,
+    required this.nativeSequence,
+    required this.nativeMicros,
+    required this.nativeLength,
+    this.expectedLength,
+  });
+
+  final int generation, nativeSequence, nativeMicros, nativeLength;
+  final int? expectedLength;
+}
+
+/// The only bridge fields that may be mapped into exported evidence.
+final class WorkerBridgeFact {
+  const WorkerBridgeFact(
+    this.kind,
+    this.status,
+    this.runtimeGeneration, {
+    this.nativeGeneration,
+    this.sequence,
+    this.operationId,
+    this.opcode,
+    this.length,
+    this.nativeLength,
+    this.expectedLength,
+    this.nativeSequence,
+    this.nativeMicros,
+    this.workerElapsedMicros,
+    this.category,
+    this.provenance,
+  });
+
+  final WorkerBridgeFactKind kind;
+  final WorkerBridgeStatus status;
+  final int runtimeGeneration;
+  final int? nativeGeneration, sequence, operationId, opcode, length;
+  final int? nativeLength, expectedLength, nativeSequence, nativeMicros;
+  final int? workerElapsedMicros;
+  final WorkerBridgeFailure? category;
+  final bool? provenance;
+}
+
+enum _Action {
+  open(WorkerBridgeFactKind.open),
+  write(WorkerBridgeFactKind.write),
+  close(WorkerBridgeFactKind.close);
+
+  const _Action(this.fact);
+  final WorkerBridgeFactKind fact;
+}
+
+final class _SafeBridgeError implements Exception {
+  const _SafeBridgeError(this.category);
+  final WorkerBridgeFailure category;
+
+  @override
+  String toString() => 'BLE bridge: ${category.name}';
+}
+
+final class _Hello {
+  const _Hello(this.generation, this.port);
+  final int generation;
+  final SendPort port;
+}
+
+/// Request sequence is also the operation ID. It is scoped to one worker.
+final class _Request {
+  const _Request(
+    this.generation,
+    this.token,
+    this.sequence,
+    this.action,
+    this.dispatchedMicros, {
+    this.bytes,
+    this.initializedMicros,
+    this.workerDeadlineFailure,
+  });
+
+  final int generation, sequence, dispatchedMicros;
+  final int? initializedMicros;
+  final WorkerBridgeFailure? workerDeadlineFailure;
+  final String token;
+  final _Action action;
+  final Uint8List? bytes;
+}
+
+sealed class _RootMessage {
+  const _RootMessage(this.generation, this.token, this.sequence);
+  final int generation, sequence;
+  final String token;
+}
+
+final class _Result extends _RootMessage {
+  const _Result(
+    super.generation,
+    super.token,
+    super.sequence,
+    this.operationId,
+    this.action,
+    this.nativeGeneration,
+    this.initializationDeadline, {
+    required this.requestBudget,
+    this.failure,
+    this.release,
+  });
+
+  final int operationId,
+      nativeGeneration,
+      initializationDeadline,
+      requestBudget;
+  final _Action action;
+  final WorkerBridgeFailure? failure;
+  final WorkerBridgeRelease? release;
+}
+
+final class _Frame extends _RootMessage {
+  _Frame(
+    super.generation,
+    super.token,
+    super.sequence,
+    this.operationId,
+    Uint8List bytes,
+    this.receipt,
+  ) : bytes = Uint8List.fromList(bytes);
+
+  final int operationId;
+  final Uint8List bytes;
+  final WorkerBridgeReceipt receipt;
+}
+
+final class _TransportFault extends _RootMessage {
+  const _TransportFault(
+    super.generation,
+    super.token,
+    super.sequence,
+    this.kind,
+  );
+  final WorkerBridgeFailure kind;
+}
+
+final class _WorkerProtocolFault {
+  const _WorkerProtocolFault(this.generation, this.token);
+  final int generation;
+  final String token;
+}
+
+enum _FixtureControl { crash, releaseAcknowledgment }
+
+final class _FixtureWorkerPause {
+  const _FixtureWorkerPause(this.duration);
+  final Duration duration;
+}
+
+final class _RootAttempt {
+  _RootAttempt(
+    this.token,
+    this.nativeGeneration,
+    this.initializationDeadline,
+    this.requestBudget,
+    this.transport,
+    this.receiptOf,
+    this.provenanceConfirmed,
+  );
+
+  final String token;
+  final int nativeGeneration;
+  final int initializationDeadline, requestBudget;
+  final CompanionTransport transport;
+  final WorkerBridgeReceipt? Function(Uint8List) receiptOf;
+  final bool Function() provenanceConfirmed;
+  final proxyClosed = Completer<bool>();
+  StreamSubscription<Uint8List>? subscription;
+  Timer? initializationTimer, requestTimer;
+  int? writeDeadline, responseOpcode, closeOperationId;
+  Future<WorkerBridgeRelease>? closing;
+  WorkerBridgeRelease? release;
+  WorkerBridgeFailure? fault;
+  bool openStarted = false, ready = false, writePending = false;
+  bool provenanceFailed = false;
+  bool finalExchangeDispatched = false;
+  bool initializationOnTime = false;
+  int writes = 0, frames = 0, lastWriteId = 0, lastNativeSequence = 0;
+  int lastNativeMicros = 0;
+}
+
+const _maxProbeWrites = 2;
+
+WorkerBridgeFailure? _expiredDeadline(
+  int now,
+  int initializationDeadline,
+  int? requestDeadline,
+) {
+  if (requestDeadline != null &&
+      requestDeadline < initializationDeadline &&
+      now >= requestDeadline) {
+    return WorkerBridgeFailure.requestDeadline;
+  }
+  return now >= initializationDeadline
+      ? WorkerBridgeFailure.initializationDeadline
+      : null;
+}
+
+/// Root-only broker. The factory and subscription stay on the Flutter root.
+final class WorkerBridge {
+  WorkerBridge({
+    required this.onFact,
+    this.cleanupBudget = const Duration(seconds: 10),
+    this.syntheticFaults = false,
+    this.holdFixtureAcknowledgment = false,
+  }) {
+    if (cleanupBudget <= Duration.zero ||
+        (holdFixtureAcknowledgment && !syntheticFaults)) {
+      throw ArgumentError('Invalid BLE worker bridge configuration.');
+    }
+    _subscription = _receipts.listen(_receive);
+  }
+
+  final void Function(WorkerBridgeFact) onFact;
+  final Duration cleanupBudget;
+  final bool syntheticFaults, holdFixtureAcknowledgment;
+  final _receipts = ReceivePort();
+  late final StreamSubscription<Object?> _subscription;
+  final _hello = Completer<void>();
+  final _workerPortsClosed = Completer<void>();
+  SendPort? _worker;
+  _RootAttempt? _attempt;
+  int? _generation;
+  int _lastNativeGeneration = 0, _incomingSequence = 0, _outgoingSequence = 0;
+  bool _poisoned = false, _workerExited = false, _closed = false;
+  bool _releaseReported = false, _releaseAcknowledged = false;
+  WorkerBridgeWireFault? _wireFault;
+  Future<bool>? _finishing;
+
+  void Function(WorkerBootstrap) get entry => _workerEntry(
+    _receipts.sendPort,
+    cleanupBudget,
+    syntheticFaults,
+    holdFixtureAcknowledgment,
+  );
+
+  void bindRuntime(int generation) {
+    if (_generation != null || generation <= 0) {
+      throw StateError('The BLE bridge is already bound.');
+    }
+    _generation = generation;
+  }
+
+  Future<void> get ready => _hello.future;
+  WorkerBridgeRelease? get release => _attempt?.release;
+  bool get attemptFaulted => _attempt?.fault != null;
+  bool get initializationOnTime => _attempt?.initializationOnTime == true;
+
+  Future<bool> confirmAttemptProtocol() async {
+    final attempt = _attempt;
+    if (attempt == null || _poisoned) return false;
+    // The runtime snapshot uses another port. The proxy close receipt comes
+    // through the same port as any preceding worker protocol fault.
+    final closed = await attempt.proxyClosed.future.timeout(
+      cleanupBudget,
+      onTimeout: () => false,
+    );
+    return closed && !_poisoned;
+  }
+
+  bool get provenanceConfirmed {
+    final attempt = _attempt;
+    return attempt == null ||
+        (!attempt.provenanceFailed && _probeProvenanceConfirmed(attempt));
+  }
+
+  bool _probeProvenanceConfirmed(_RootAttempt attempt) {
+    try {
+      return attempt.provenanceConfirmed();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool get canPrepareAttempt =>
+      _worker != null &&
+      !_workerExited &&
+      !_closed &&
+      !_poisoned &&
+      (_attempt == null ||
+          (release == WorkerBridgeRelease.confirmed && provenanceConfirmed));
+
+  /// The token carries no device information and cannot discover any target.
+  String prepareAttempt({
+    required int nativeGeneration,
+    required CompanionTransport transport,
+    required WorkerBridgeReceipt? Function(Uint8List) receiptOf,
+    required bool Function() provenanceConfirmed,
+    Duration initializationBudget = const Duration(seconds: 15),
+    Duration requestBudget = const Duration(seconds: 5),
+  }) {
+    if (initializationBudget <= Duration.zero ||
+        requestBudget <= Duration.zero) {
+      throw ArgumentError('BLE bridge budgets must be positive.');
+    }
+    if (!canPrepareAttempt || nativeGeneration <= _lastNativeGeneration) {
+      throw StateError('The BLE bridge cannot admit this attempt.');
+    }
+    _lastNativeGeneration = nativeGeneration;
+    final token = 'ble-fixture-$_generation-$nativeGeneration';
+    _attempt = _RootAttempt(
+      token,
+      nativeGeneration,
+      Timeline.now + initializationBudget.inMicroseconds,
+      requestBudget.inMicroseconds,
+      transport,
+      receiptOf,
+      provenanceConfirmed,
+    );
+    return token;
+  }
+
+  void observeRuntime(RuntimeSnapshot snapshot) {
+    if (snapshot.generation != _generation) return;
+    if (snapshot.workerExited && !_workerExited) {
+      _workerExited = true;
+      _observe(WorkerBridgeFactKind.workerExit, WorkerBridgeStatus.confirmed);
+      // RuntimeController saw and acknowledged the release before the worker
+      // could exit normally. Its exit event can outrun our audit port.
+      if (snapshot.phase != RuntimePhase.closed) _peerLost();
+    } else if (snapshot.phase == RuntimePhase.fault &&
+        (snapshot.error?.host == CoordinationFault.workerFailed ||
+            snapshot.error?.host == CoordinationFault.workerExited ||
+            snapshot.error?.host == CoordinationFault.requestUnknown)) {
+      _peerLost();
+    }
+  }
+
+  void _peerLost() {
+    if (_poisoned) return;
+    _poisoned = true;
+    final attempt = _attempt;
+    if (attempt != null && attempt.release != WorkerBridgeRelease.confirmed) {
+      _fault(attempt, WorkerBridgeFailure.peerClosed, notifyWorker: false);
+    }
+  }
+
+  void simulateWorkerLoss() {
+    if (!syntheticFaults || _worker == null) {
+      throw StateError('Fixture fault control is unavailable.');
+    }
+    _worker!.send(_FixtureControl.crash);
+  }
+
+  void releaseFixtureAcknowledgment() {
+    if (!holdFixtureAcknowledgment || _worker == null) {
+      throw StateError('Fixture acknowledgement control is unavailable.');
+    }
+    _worker!.send(_FixtureControl.releaseAcknowledgment);
+  }
+
+  void injectFixtureWireFault(WorkerBridgeWireFault fault) {
+    if (!syntheticFaults || _wireFault != null) {
+      throw StateError('Fixture wire fault control is unavailable.');
+    }
+    _wireFault = fault;
+  }
+
+  void pauseFixtureWorker(Duration duration) {
+    if (!syntheticFaults || _worker == null) {
+      throw StateError('Fixture fault control is unavailable.');
+    }
+    _worker!.send(_FixtureWorkerPause(duration));
+  }
+
+  void pauseFixtureReceipts(Future<void> resume) {
+    if (!syntheticFaults) {
+      throw StateError('Fixture fault control is unavailable.');
+    }
+    _subscription.pause(resume);
+  }
+
+  void _receive(Object? message) {
+    if (_closed || _generation == null) return;
+    switch (message) {
+      case _Hello():
+        if (message.generation != _generation) {
+          _observe(WorkerBridgeFactKind.stale, WorkerBridgeStatus.skipped);
+          return;
+        }
+        if (_worker != null) {
+          _protocolFault(_attempt);
+          return;
+        }
+        _worker = message.port;
+        _observe(WorkerBridgeFactKind.handshake, WorkerBridgeStatus.confirmed);
+        _hello.complete();
+      case _Request():
+        if (_wireFault == WorkerBridgeWireFault.staleRequest) {
+          _wireFault = null;
+          _request(
+            _Request(
+              message.generation - 1,
+              message.token,
+              message.sequence,
+              message.action,
+              message.dispatchedMicros,
+            ),
+          );
+        }
+        _request(message);
+        if (_wireFault == WorkerBridgeWireFault.duplicateRequest) {
+          _wireFault = null;
+          _request(message);
+        }
+      case _WorkerProtocolFault():
+        if (message.generation == _generation &&
+            message.token == _attempt?.token) {
+          _protocolFault(_attempt);
+        }
+      case WorkerBridgeFact():
+        if (message.runtimeGeneration != _generation) return;
+        switch (message.kind) {
+          case WorkerBridgeFactKind.releaseReport:
+            _releaseReported = message.status == WorkerBridgeStatus.confirmed;
+          case WorkerBridgeFactKind.releaseAcknowledged:
+            _releaseAcknowledged = true;
+          case WorkerBridgeFactKind.workerPortsClosed:
+            if (!_releaseReported ||
+                !_releaseAcknowledged ||
+                _workerPortsClosed.isCompleted) {
+              _protocolFault(_attempt);
+              return;
+            }
+            onFact(message);
+            _workerPortsClosed.complete();
+            return;
+          case WorkerBridgeFactKind.frameWorker:
+          case WorkerBridgeFactKind.proxyClosed:
+          case WorkerBridgeFactKind.stale:
+            // The worker returns structural evidence only. Accept late
+            // observation from an earlier generation without mutating its lease.
+            if ((message.nativeGeneration ?? 0) > _lastNativeGeneration) {
+              _protocolFault(_attempt);
+              return;
+            }
+            final attempt = _attempt;
+            if (message.kind == WorkerBridgeFactKind.proxyClosed &&
+                attempt != null &&
+                message.nativeGeneration == attempt.nativeGeneration &&
+                message.operationId == attempt.closeOperationId &&
+                !attempt.proxyClosed.isCompleted) {
+              attempt.proxyClosed.complete(
+                message.status == WorkerBridgeStatus.confirmed,
+              );
+            }
+          default:
+            _protocolFault(_attempt);
+            return;
+        }
+        onFact(message);
+      default:
+        _protocolFault(_attempt);
+    }
+  }
+
+  void _request(_Request request) {
+    final attempt = _attempt;
+    if (request.generation != _generation || request.token != attempt?.token) {
+      _observe(WorkerBridgeFactKind.stale, WorkerBridgeStatus.skipped);
+      return;
+    }
+    if (_worker == null || request.sequence != _incomingSequence + 1) {
+      _protocolFault(attempt);
+      return;
+    }
+    _incomingSequence = request.sequence;
+    final current = attempt!;
+    final bytes = request.bytes;
+    if ((request.action == _Action.write) != (bytes != null)) {
+      _protocolFault(current);
+      return;
+    }
+    _observe(
+      request.action.fact,
+      WorkerBridgeStatus.requested,
+      attempt: current,
+      sequence: request.sequence,
+      operationId: request.sequence,
+      opcode: bytes?.firstOrNull,
+      length: bytes?.length,
+    );
+
+    // Close crosses the same identity fence, but has its own work slot.
+    // A pending connect or write never delays processing the control request.
+    if (request.action == _Action.close) {
+      current.closeOperationId ??= request.sequence;
+      _observeWorkerInitialization(current, request);
+      unawaited(_replyClose(current, request));
+      return;
+    }
+    if (_poisoned || current.closing != null) {
+      _reply(current, request, failure: WorkerBridgeFailure.closing);
+      return;
+    }
+    // Dart's Timeline.now uses the same OS monotonic clock across isolates
+    // in this VM. Deadlines include time spent in event queues. Local
+    // Stopwatch readings used for evidence remain in their own domains.
+    final now = Timeline.now;
+    final writeDeadline = request.action == _Action.write
+        ? request.dispatchedMicros + current.requestBudget
+        : null;
+    final expired = _expiredDeadline(
+      now,
+      current.initializationDeadline,
+      writeDeadline,
+    );
+    if (expired != null) {
+      _reply(current, request, failure: expired);
+      _fault(current, expired);
+      return;
+    }
+    switch (request.action) {
+      case _Action.open:
+        if (current.openStarted) {
+          _protocolFault(current);
+          return;
+        }
+        current.openStarted = true;
+        current.initializationTimer = Timer(
+          Duration(microseconds: current.initializationDeadline - now),
+          () => _initializationBudgetElapsed(current),
+        );
+        unawaited(_open(current, request));
+      case _Action.write:
+        if (!current.ready ||
+            current.writeDeadline != null ||
+            current.writes >= _maxProbeWrites ||
+            !_allowedWrite(bytes!, current.writes)) {
+          _protocolFault(current);
+          return;
+        }
+        current.writes++;
+        current.lastWriteId = request.sequence;
+        current.writePending = true;
+        current.responseOpcode = null;
+        current.writeDeadline = writeDeadline;
+        if (writeDeadline! < current.initializationDeadline) {
+          current.requestTimer = Timer(
+            Duration(microseconds: writeDeadline - Timeline.now),
+            () => _fault(current, WorkerBridgeFailure.requestDeadline),
+          );
+        }
+        unawaited(_write(current, request, bytes));
+      case _Action.close:
+        throw StateError('Close must be processed independently.');
+    }
+  }
+
+  bool _allowedWrite(Uint8List bytes, int priorWrites) {
+    final expected = priorWrites == 0
+        ? encodeDeviceQuery(appTargetVersion: meshCoreSessionAppTargetVersion)
+        : encodeAppStart(appName: 'Meshchan');
+    if (bytes.length != expected.length) return false;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] != expected[i]) return false;
+    }
+    return true;
+  }
+
+  void _initializationBudgetElapsed(_RootAttempt attempt) {
+    if (attempt.finalExchangeDispatched) {
+      // The worker may already be ready with its Close queued. Release the
+      // physical lease on time and classify initialization from its receipt.
+      unawaited(_close(attempt));
+    } else {
+      _fault(attempt, WorkerBridgeFailure.initializationDeadline);
+    }
+  }
+
+  void _observeWorkerInitialization(_RootAttempt attempt, _Request close) {
+    final initialized = close.initializedMicros;
+    if (close.workerDeadlineFailure case final failure?) {
+      _fault(attempt, failure);
+    } else if (initialized != null &&
+        initialized >= attempt.initializationDeadline) {
+      _fault(attempt, WorkerBridgeFailure.initializationDeadline);
+    } else if (initialized != null) {
+      if (!attempt.finalExchangeDispatched ||
+          initialized > close.dispatchedMicros) {
+        _protocolFault(attempt);
+      } else {
+        attempt.initializationOnTime = true;
+      }
+    }
+  }
+
+  Future<void> _open(_RootAttempt attempt, _Request request) async {
+    try {
+      attempt.subscription = attempt.transport.frames.listen(
+        (bytes) => _frame(attempt, bytes),
+        onError: (Object _) => _transportFault(attempt),
+        onDone: () {
+          if (attempt.closing == null) _transportFault(attempt);
+        },
+      );
+      await attempt.transport.open();
+      if (attempt.closing == null) {
+        if (_observeExpired(attempt)) return;
+        attempt.ready = true;
+        _reply(attempt, request);
+      }
+    } catch (_) {
+      if (attempt.closing == null) {
+        _reply(attempt, request, failure: WorkerBridgeFailure.transport);
+        _transportFault(attempt);
+      }
+    }
+  }
+
+  Future<void> _write(
+    _RootAttempt attempt,
+    _Request request,
+    Uint8List bytes,
+  ) async {
+    if (_observeExpired(attempt)) return;
+    try {
+      await attempt.transport.sendFrame(Uint8List.fromList(bytes));
+      attempt.writePending = false;
+      if (attempt.closing == null && !_observeExpired(attempt)) {
+        _finishNativeRequest(attempt);
+      }
+      // The status of a native write that settled while closing is still a
+      // useful root fact. Its abandoned proxy Future cannot be resurrected.
+      _reply(attempt, request);
+    } catch (_) {
+      attempt.writePending = false;
+      _reply(attempt, request, failure: WorkerBridgeFailure.transport);
+      if (attempt.closing == null) _transportFault(attempt);
+    }
+  }
+
+  void _frame(_RootAttempt attempt, Uint8List bytes) {
+    if (attempt.closing != null || !identical(attempt, _attempt)) {
+      _observe(
+        WorkerBridgeFactKind.stale,
+        WorkerBridgeStatus.skipped,
+        attempt: attempt,
+        length: bytes.length,
+      );
+      return;
+    }
+    if (_observeExpired(attempt)) return;
+    final WorkerBridgeReceipt? receipt;
+    try {
+      receipt = attempt.receiptOf(bytes);
+    } catch (_) {
+      _fault(attempt, WorkerBridgeFailure.provenance);
+      return;
+    }
+    if (receipt == null ||
+        receipt.generation != attempt.nativeGeneration ||
+        receipt.nativeSequence <= attempt.lastNativeSequence ||
+        receipt.nativeMicros < attempt.lastNativeMicros ||
+        receipt.nativeLength != bytes.length) {
+      _fault(attempt, WorkerBridgeFailure.provenance);
+      return;
+    }
+    if (!attempt.ready ||
+        attempt.frames >= attempt.writes ||
+        bytes.isEmpty ||
+        bytes.length > maxSerialFrameContentLength ||
+        (receipt.expectedLength != null &&
+            receipt.expectedLength != bytes.length)) {
+      _protocolFault(attempt);
+      return;
+    }
+    attempt.frames++;
+    attempt.lastNativeSequence = receipt.nativeSequence;
+    attempt.lastNativeMicros = receipt.nativeMicros;
+    final frame = _Frame(
+      _generation!,
+      attempt.token,
+      ++_outgoingSequence,
+      attempt.lastWriteId,
+      bytes,
+      receipt,
+    );
+    onFact(_frameFact(WorkerBridgeFactKind.frameRoot, frame));
+    _sendFrame(frame);
+    final expectedOpcode = attempt.writes == 1 ? 0x0d : 0x05;
+    if (bytes.first == expectedOpcode || bytes.first == 0x01) {
+      attempt.responseOpcode = bytes.first;
+      _finishNativeRequest(attempt);
+    }
+  }
+
+  void _finishNativeRequest(_RootAttempt attempt) {
+    final opcode = attempt.responseOpcode;
+    if (attempt.writePending || opcode == null) return;
+    // Both native pieces are on time. The worker independently checks the
+    // same cutoff as it processes the queued frame and write result.
+    attempt.requestTimer?.cancel();
+    attempt.requestTimer = null;
+    attempt.writeDeadline = null;
+    if (attempt.writes == _maxProbeWrites && opcode == 0x05) {
+      attempt.finalExchangeDispatched = true;
+    }
+  }
+
+  bool _observeExpired(_RootAttempt attempt) {
+    final failure = _expiredDeadline(
+      Timeline.now,
+      attempt.initializationDeadline,
+      attempt.writeDeadline,
+    );
+    if (failure == null) return false;
+    _fault(attempt, failure);
+    return true;
+  }
+
+  void _sendFrame(_Frame frame) {
+    switch (_wireFault) {
+      case WorkerBridgeWireFault.missingFrame:
+        _wireFault = null;
+        return;
+      case WorkerBridgeWireFault.duplicateFrame:
+        _wireFault = null;
+        _worker?.send(frame);
+      case WorkerBridgeWireFault.reorderedFrame:
+        _wireFault = null;
+        _worker?.send(
+          _Frame(
+            frame.generation,
+            frame.token,
+            frame.sequence + 1,
+            frame.operationId,
+            frame.bytes,
+            frame.receipt,
+          ),
+        );
+        return;
+      case WorkerBridgeWireFault.staleFrame:
+        _wireFault = null;
+        _worker?.send(
+          _Frame(
+            frame.generation,
+            'retired-attempt',
+            frame.sequence,
+            frame.operationId,
+            frame.bytes,
+            frame.receipt,
+          ),
+        );
+      default:
+        break;
+    }
+    _worker?.send(frame);
+  }
+
+  void _transportFault(_RootAttempt attempt) {
+    _fault(
+      attempt,
+      _probeProvenanceConfirmed(attempt)
+          ? WorkerBridgeFailure.transport
+          : WorkerBridgeFailure.provenance,
+    );
+  }
+
+  void _protocolFault(_RootAttempt? attempt) {
+    if (_poisoned) return;
+    _poisoned = true;
+    if (attempt != null) {
+      _fault(attempt, WorkerBridgeFailure.protocol);
+    } else {
+      _observe(
+        WorkerBridgeFactKind.transportFault,
+        WorkerBridgeStatus.failed,
+        category: WorkerBridgeFailure.protocol,
+      );
+    }
+  }
+
+  void _fault(
+    _RootAttempt attempt,
+    WorkerBridgeFailure category, {
+    bool notifyWorker = true,
+  }) {
+    if (!identical(attempt, _attempt)) return;
+    if (category == WorkerBridgeFailure.provenance) {
+      if (attempt.provenanceFailed) return;
+      attempt.provenanceFailed = true;
+    }
+    if (attempt.fault != category) {
+      attempt.fault = category;
+      final sequence = notifyWorker && !_workerExited && _worker != null
+          ? ++_outgoingSequence
+          : null;
+      _observe(
+        WorkerBridgeFactKind.transportFault,
+        WorkerBridgeStatus.failed,
+        attempt: attempt,
+        sequence: sequence,
+        category: category,
+        provenance: category == WorkerBridgeFailure.provenance ? false : null,
+      );
+      if (sequence != null) {
+        _worker!.send(
+          _TransportFault(_generation!, attempt.token, sequence, category),
+        );
+      }
+    }
+    unawaited(_close(attempt));
+  }
+
+  Future<void> _replyClose(_RootAttempt attempt, _Request request) async {
+    final release = await _close(attempt);
+    _reply(attempt, request, release: release);
+  }
+
+  void _reply(
+    _RootAttempt attempt,
+    _Request request, {
+    WorkerBridgeFailure? failure,
+    WorkerBridgeRelease? release,
+  }) {
+    final deliver = !_workerExited && !_closed && identical(attempt, _attempt);
+    final sequence = deliver ? ++_outgoingSequence : null;
+    _observe(
+      request.action.fact,
+      switch (release) {
+        WorkerBridgeRelease.unknown => WorkerBridgeStatus.unknown,
+        WorkerBridgeRelease.failed => WorkerBridgeStatus.failed,
+        _ =>
+          failure == null
+              ? WorkerBridgeStatus.confirmed
+              : WorkerBridgeStatus.failed,
+      },
+      attempt: attempt,
+      sequence: sequence,
+      operationId: request.sequence,
+      opcode: request.bytes?.firstOrNull,
+      category: failure,
+    );
+    // A result lost with its peer never grants permission to retry.
+    if (sequence != null) {
+      _worker?.send(
+        _Result(
+          _generation!,
+          attempt.token,
+          sequence,
+          request.sequence,
+          request.action,
+          attempt.nativeGeneration,
+          attempt.initializationDeadline,
+          requestBudget: attempt.requestBudget,
+          failure: failure,
+          release: release,
+        ),
+      );
+    }
+  }
+
+  Future<WorkerBridgeRelease> closeAttempt() {
+    final attempt = _attempt;
+    return attempt == null
+        ? Future.value(WorkerBridgeRelease.confirmed)
+        : _close(attempt);
+  }
+
+  Future<WorkerBridgeRelease> _close(_RootAttempt attempt) {
+    if (attempt.closing case final future?) return future;
+    final completion = Completer<WorkerBridgeRelease>();
+    attempt.closing = completion.future;
+    attempt.initializationTimer?.cancel();
+    attempt.initializationTimer = null;
+    attempt.requestTimer?.cancel();
+    attempt.requestTimer = null;
+    unawaited(() async {
+      var release = WorkerBridgeRelease.confirmed;
+      try {
+        await _releaseRootTransport(attempt);
+      } on WorkerBridgeCloseFailed {
+        release = WorkerBridgeRelease.failed;
+      } catch (_) {
+        release = WorkerBridgeRelease.unknown;
+      }
+      attempt.release = release;
+      if (!_probeProvenanceConfirmed(attempt)) {
+        _fault(attempt, WorkerBridgeFailure.provenance);
+      }
+      // Physical release is independent of the terminal provenance verdict.
+      _observe(
+        WorkerBridgeFactKind.close,
+        switch (release) {
+          WorkerBridgeRelease.confirmed => WorkerBridgeStatus.confirmed,
+          WorkerBridgeRelease.failed => WorkerBridgeStatus.failed,
+          WorkerBridgeRelease.unknown => WorkerBridgeStatus.unknown,
+        },
+        attempt: attempt,
+        provenance: !attempt.provenanceFailed,
+      );
+      completion.complete(release);
+    }());
+    return completion.future;
+  }
+
+  Future<void> _releaseRootTransport(_RootAttempt attempt) async {
+    final elapsed = Stopwatch()..start();
+    try {
+      await attempt.transport.close().timeout(cleanupBudget);
+    } finally {
+      final subscription = attempt.subscription;
+      if (subscription == null) {
+        _observe(
+          WorkerBridgeFactKind.rootSubscriptionClosed,
+          WorkerBridgeStatus.skipped,
+          attempt: attempt,
+        );
+      } else {
+        try {
+          await subscription.cancel().timeout(cleanupBudget - elapsed.elapsed);
+          _observe(
+            WorkerBridgeFactKind.rootSubscriptionClosed,
+            WorkerBridgeStatus.confirmed,
+            attempt: attempt,
+          );
+        } catch (_) {
+          _observe(
+            WorkerBridgeFactKind.rootSubscriptionClosed,
+            WorkerBridgeStatus.unknown,
+            attempt: attempt,
+          );
+          rethrow;
+        }
+      }
+    }
+  }
+
+  Future<bool> finish({bool workerWasSpawned = true}) {
+    if (_closed) return Future.value(true);
+    if (workerWasSpawned && !_workerExited) return Future.value(false);
+    if (_attempt != null && release != WorkerBridgeRelease.confirmed) {
+      return Future.value(false);
+    }
+    return _finishing ??= _finish(workerWasSpawned);
+  }
+
+  Future<bool> _finish(bool workerWasSpawned) async {
+    if (workerWasSpawned) {
+      try {
+        await _workerPortsClosed.future.timeout(cleanupBudget);
+      } on TimeoutException {
+        _finishing = null;
+        return false;
+      }
+    }
+    _closed = true;
+    _receipts.close();
+    await _subscription.cancel();
+    _observe(WorkerBridgeFactKind.rootPortClosed, WorkerBridgeStatus.confirmed);
+    return true;
+  }
+
+  void _observe(
+    WorkerBridgeFactKind kind,
+    WorkerBridgeStatus status, {
+    _RootAttempt? attempt,
+    int? sequence,
+    int? operationId,
+    int? opcode,
+    int? length,
+    WorkerBridgeFailure? category,
+    bool? provenance,
+  }) => onFact(
+    WorkerBridgeFact(
+      kind,
+      status,
+      _generation!,
+      nativeGeneration: attempt?.nativeGeneration,
+      sequence: sequence,
+      operationId: operationId,
+      opcode: opcode,
+      length: length,
+      category: category,
+      provenance: provenance,
+    ),
+  );
+}
+
+WorkerBridgeFact _frameFact(
+  WorkerBridgeFactKind kind,
+  _Frame frame, {
+  int? workerElapsedMicros,
+}) => WorkerBridgeFact(
+  kind,
+  WorkerBridgeStatus.confirmed,
+  frame.generation,
+  nativeGeneration: frame.receipt.generation,
+  sequence: frame.sequence,
+  operationId: frame.operationId,
+  opcode: frame.bytes.first,
+  length: frame.bytes.length,
+  nativeLength: frame.receipt.nativeLength,
+  expectedLength: frame.receipt.expectedLength,
+  nativeSequence: frame.receipt.nativeSequence,
+  nativeMicros: frame.receipt.nativeMicros,
+  workerElapsedMicros: workerElapsedMicros,
+  provenance: true,
+);

@@ -20,6 +20,10 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = Path('tool/ble_probe')
 LINK = Path('packages/meshcore_link')
+CORE = Path('packages/meshchan_core')
+RUNTIME = Path('apps/meshchan_app/lib/runtime')
+RUNTIME_FILES = ('controller.dart', 'worker.dart', 'protocol.dart', 'device_protocol.dart',
+                 'device_check.dart', 'recording_adapter.dart', 'build_version.dart')
 HOST_NAME = 'meshchan_ble_probe'
 DISPLAY_NAME = 'Meshchan BLE Probe'
 BUNDLE_ID = 'org.meshchan.probe.ble2a3'
@@ -69,14 +73,14 @@ def remove_workspace_resolution(original):
     lines = original.splitlines(keepends=True)
     workspace_line = b'resolution: workspace'
     if sum(line.rstrip(b'\r\n') == workspace_line for line in lines) != 1:
-        raise ValueError('Expected exactly one workspace resolution in meshcore_link')
+        raise ValueError('Expected exactly one workspace resolution in the copied manifest')
     return b''.join(line for line in lines if line.rstrip(b'\r\n') != workspace_line)
 
 
-def copy_meshcore(root, source, destination):
-    fixed_paths = ('LICENSE', 'COPYRIGHT', str(LINK / 'pubspec.yaml'))
-    entries = git(root, 'ls-tree', '-r', '-z', source, '--', *fixed_paths,
-                  str(LINK / 'lib')).split(b'\0')
+def copy_git_snapshot(root, source, directory, destination, required, *,
+                      additional=(), workspace_manifest=False):
+    entries = git(root, 'ls-tree', '-r', '-z', source, '--', *required,
+                  *additional).split(b'\0')
     records = {}
     for entry in filter(None, entries):
         metadata, filename = entry.decode().split('\t', maxsplit=1)
@@ -85,22 +89,32 @@ def copy_meshcore(root, source, destination):
             raise ValueError(f'Expected a regular tracked file at {filename}')
         original = git(root, 'cat-file', 'blob', object_id)
         repository_path = Path(filename)
-        relative = (repository_path.relative_to(LINK)
-                    if repository_path.is_relative_to(LINK) else repository_path)
+        relative = (repository_path.relative_to(directory)
+                    if repository_path.is_relative_to(directory) else repository_path)
         contents = (remove_workspace_resolution(original)
-                    if relative == Path('pubspec.yaml') else original)
+                    if workspace_manifest and relative == Path('pubspec.yaml') else original)
         output = destination / relative
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(contents)
+        with output.open('xb') as stream:
+            stream.write(contents)
         checkout_file = root / repository_path
         working_hash = (digest(checkout_file)
                         if checkout_file.is_file() and not checkout_file.is_symlink() else None)
         records[filename] = {'vendorPath': relative.as_posix(), 'gitBlob': object_id,
                              'sourceSha256': sha256(original), 'vendorSha256': sha256(contents),
                              'worktreeSha256': working_hash}
-    if not {*fixed_paths, str(LINK / 'lib/meshcore_link.dart')} <= records.keys():
-        raise ValueError('The selected source is missing required meshcore_link inputs')
+    missing = set(required) - records.keys()
+    if missing:
+        raise ValueError(f'The selected source is missing required inputs: {", ".join(sorted(missing))}')
     return records
+
+
+def copy_package(root, source, package, destination, *required):
+    files = ('LICENSE', 'COPYRIGHT', str(package / 'pubspec.yaml'),
+             str(package / f'lib/{package.name}.dart'),
+             *(str(package / path) for path in required))
+    return copy_git_snapshot(root, source, package, destination, files,
+                             additional=(str(package / 'lib'),), workspace_manifest=True)
 
 
 def read_darwin_archive(local_archive):
@@ -164,7 +178,7 @@ def template_overlays(directory):
     files = {Path('pubspec.lock'): directory / 'pubspec.lock'}
     for name in ('pubspec.yaml', 'analysis_options.yaml'):
         files[Path(name)] = directory / f'{name}.template'
-    for folder in ('lib', 'test', 'macos'):
+    for folder in ('lib', 'test', 'tool', 'macos'):
         pattern = '*.swift' if folder == 'macos' else '*.dart.txt'
         for path in sorted((directory / folder).rglob(pattern)):
             if path.is_file():
@@ -190,10 +204,14 @@ def verify_resolution(host, root, expected_lock):
     dart_tool = host / '.dart_tool'
     graph_path = dart_tool / 'package_graph.json'
     graph = json.loads(graph_path.read_bytes())
-    versions = {item['name']: item['version'] for item in graph['packages']}
+    packages = {item['name']: item for item in graph['packages']}
+    versions = {name: item['version'] for name, item in packages.items()}
     for name in (*HOSTED_PINS, DARWIN):
         if versions.get(name) != BLE_VERSION:
             raise ValueError(f'Expected {name} {BLE_VERSION} in the resolved probe graph')
+    if not {'meshcore_link', 'drift', 'sqlite3'} <= set(
+            packages.get('meshchan_core', {}).get('dependencies', ())):
+        raise ValueError('The private core storage dependency graph is incomplete')
     config_path = dart_tool / 'package_config.json'
     config = json.loads(config_path.read_bytes())
     package_paths = {}
@@ -205,10 +223,13 @@ def verify_resolution(host, root, expected_lock):
         if path.is_relative_to(root):
             raise ValueError('Probe dependency resolves inside the live product checkout')
         package_paths[item['name']] = path
-    for name in ('meshcore_link', DARWIN):
+    for name in ('meshchan_core', 'meshcore_link', DARWIN):
         if package_paths.get(name) != host.parent / 'vendor' / name:
             raise ValueError(f'{name} is not resolved from its private vendor copy')
-    return {'versions': versions, 'packageConfigSha256': digest(config_path),
+    return {'versions': versions, 'graph': graph,
+            'privatePackageRoots': {name: str(package_paths[name].relative_to(host.parent))
+                                    for name in ('meshchan_core', 'meshcore_link', DARWIN)},
+            'packageConfigSha256': digest(config_path),
             'packageGraphSha256': digest(graph_path),
             'lockSha256': sha256(actual_lock)}
 
@@ -220,7 +241,8 @@ def prepare(root, path, flutter, source, local_archive, offline):
     head = git(root, 'rev-parse', 'HEAD').decode().strip()
     source_commit = git(root, 'rev-parse', '--verify', '--end-of-options',
                         f'{source}^{{commit}}').decode().strip()
-    status_paths = ('tool/prepare_ble_probe.py', str(TEMPLATE), str(LINK), 'LICENSE', 'COPYRIGHT')
+    status_paths = ('tool/prepare_ble_probe.py', str(TEMPLATE), str(LINK), str(CORE),
+                    str(RUNTIME), 'LICENSE', 'COPYRIGHT')
     inputs_status = git(root, 'status', '--short', '--untracked-files=all', '--', *status_paths)
     worktree_has_changes = bool(git(root, 'status', '--short'))
     root_lock_sha = digest(root / 'pubspec.lock')
@@ -237,7 +259,9 @@ def prepare(root, path, flutter, source, local_archive, offline):
         shutil.copyfile(root / TEMPLATE / patch.name, patch)
     vendor = target / 'vendor'
     vendor.mkdir()
-    link = copy_meshcore(root, source_commit, vendor / 'meshcore_link')
+    link = copy_package(root, source_commit, LINK, vendor / LINK.name)
+    core = copy_package(root, source_commit, CORE, vendor / CORE.name,
+                        'lib/src/storage/database.g.dart', 'lib/src/storage/schema.drift')
     darwin = copy_darwin(archive, vendor / DARWIN, observation_patch, lifecycle_patch)
 
     commands = []
@@ -263,29 +287,37 @@ def prepare(root, path, flutter, source, local_archive, offline):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(contents)
         template_hashes[template.relative_to(root).as_posix()] = sha256(contents)
+    runtime = copy_git_snapshot(root, source_commit, RUNTIME, host / 'lib/runtime',
+                                tuple(str(RUNTIME / name) for name in RUNTIME_FILES))
     configure_macos(host)
     before_pub = inventory(host)
     pub_flags = ('--offline',) if offline else ()
     flutter_run('pub', 'get', '--enforce-lockfile', *pub_flags, cwd=host)
     resolution = verify_resolution(host, root, expected_lock)
+    after_pub = inventory(host / 'macos')
+    plugin_dependencies = host / '.flutter-plugins-dependencies'
     if digest(root / 'pubspec.lock') != root_lock_sha:
         raise ValueError('The product root lockfile changed during generation')
 
     receipt = {
-        'sourceHead': head, 'meshcoreSourceCommit': source_commit,
+        'sourceHead': head, 'gitSnapshotCommit': source_commit,
         'sourceBranch': git(root, 'rev-parse', '--abbrev-ref', 'HEAD').decode().strip(),
         'worktreeHasChanges': worktree_has_changes,
         'worktreeProbeInputStatus': inputs_status.decode().splitlines(),
         'rootLockSha256': root_lock_sha,
-        'meshcoreLinkFiles': link, 'darwinObservation': darwin,
+        'meshcoreLinkFiles': link, 'meshchanCoreFiles': core, 'runtimeFiles': runtime,
+        'darwinObservation': darwin,
         'probeTemplateSha256s': template_hashes,
         'generatorSha256': digest(root / 'tool/prepare_ble_probe.py'),
         'hostInputsBeforePub': before_pub, 'sdk': sdk,
+        'macosInputsAfterPub': after_pub,
+        'flutterPluginDependenciesSha256': (digest(plugin_dependencies)
+                                            if plugin_dependencies.is_file() else None),
         'python': {'path': sys.executable, 'version': sys.version.split()[0]},
         'generatorInputs': {'destination': str(target), 'sourceReference': source,
                             'offlinePub': offline, 'darwinArchiveProvidedLocally': bool(local_archive)},
         'commands': commands, 'dependencies': resolution,
-        'probeOnlyChanges': ['remove resolution: workspace from copied meshcore_link manifest',
+        'probeOnlyChanges': ['remove resolution: workspace from copied package manifests',
                              'apply the observation patch to the private Darwin release copy',
                              'apply the connection lifecycle fixes to the observed Darwin copy',
                              'replace stock Dart files, add tests, and configure the probe runner'],
@@ -298,7 +330,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--destination', required=True, type=Path, help='New external directory')
     parser.add_argument('--flutter', required=True, type=Path, help='Absolute SDK Flutter executable')
-    parser.add_argument('--source', default='HEAD', help='Git commit for the meshcore_link snapshot')
+    parser.add_argument('--source', default='HEAD', help='Git commit for package and runtime snapshots')
     parser.add_argument('--darwin-archive', type=Path, help='Local copy of the pinned pub.dev release')
     parser.add_argument('--offline', action='store_true', help='Resolve the locked Pub cache offline')
     args = parser.parse_args()

@@ -1,0 +1,395 @@
+part of 'probe.dart';
+
+/// Owns one explicitly started runtime and its external storage fixture.
+/// The bridge owns the physical transport. FiniteDeviceCheck owns the session.
+final class CooperationFixture {
+  CooperationFixture({
+    Future<Directory> Function()? createStorage,
+    this.runtimeDeadline = const Duration(seconds: 30),
+    @visibleForTesting this._createBridge,
+  }) : _createStorage = createStorage ?? createCooperationStorageFixture;
+
+  final Future<Directory> Function() _createStorage;
+  final WorkerBridge Function(void Function(WorkerBridgeFact), Duration)?
+  _createBridge;
+  final Duration runtimeDeadline;
+  final String runId = DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+  final _clock = Stopwatch()..start();
+  final _evidence = <Map<String, Object>>[];
+  late final void Function() _changed;
+  late final String Function() _encode;
+  late final Duration _cleanupBudget;
+  RuntimeController? _runtime;
+  WorkerBridge? _bridge;
+  Directory? _directory;
+  StreamSubscription<RuntimeSnapshot>? _snapshots;
+  Future<void>? _starting;
+  Future<bool>? _stopping;
+  Future<void>? _canceling;
+  Future<bool> _evidenceWrite = Future.value(true);
+  _ProbeTransport? _transport;
+  DeviceCheckHandle? _handle;
+  Completer<void>? _settlement;
+  RuntimeSnapshot? _lastSnapshot;
+  DeviceCheckSnapshot? _check;
+  String? _logicalResult;
+  String? caseStatus;
+  bool _ready = false;
+  bool _stopped = false;
+  bool _faulted = false;
+  bool _canceled = false;
+  bool _bridgeProtocolConfirmed = false;
+  bool _rootClosed = false;
+  bool _running = false;
+
+  void _attach(
+    void Function() changed,
+    String Function() encode,
+    Duration cleanupBudget,
+  ) {
+    _changed = changed;
+    _encode = encode;
+    _cleanupBudget = cleanupBudget;
+  }
+
+  String? get fixturePath => _directory?.path;
+  bool get canStart => _starting == null && !_stopped && !_faulted;
+  bool get ready => _ready && !_stopped && !_faulted;
+  bool get canAttempt =>
+      ready &&
+      !_running &&
+      _bridge!.canPrepareAttempt &&
+      _runtime!.snapshot.gate == DeviceGateState.free &&
+      (_handle == null || _check?.settled == true);
+  bool get canCancel =>
+      !_canceled &&
+      _logicalResult == null &&
+      _handle != null &&
+      !(_settlement?.isCompleted ?? true);
+  bool get cleanupPending =>
+      _handle != null &&
+      !(_settlement?.isCompleted ?? true) &&
+      (_logicalResult != null || _canceled);
+  bool get passedAndReleased =>
+      !_faulted &&
+      !_canceled &&
+      _check?.info != null &&
+      _check?.failure == null &&
+      _check?.released == true &&
+      _transport?._firstFault == null &&
+      _bridge?.attemptFaulted == false &&
+      _bridge?.release == WorkerBridgeRelease.confirmed &&
+      _bridge?.initializationOnTime == true &&
+      _transport?.bothReceiptsConfirmed == true &&
+      _bridge?.provenanceConfirmed == true &&
+      _bridgeProtocolConfirmed;
+
+  String get workerStatus {
+    if (_rootClosed) return 'Runtime released and worker exited';
+    if (_stopped) return 'Shutdown requested';
+    if (_faulted) return 'Worker or bridge failed';
+    if (_ready) return 'Worker ready · owned SQLite fixture';
+    return _starting == null ? 'Worker offline' : 'Starting worker';
+  }
+
+  String? get _phase {
+    final transport = _transport;
+    if (transport == null) return null;
+    if (_settlement?.isCompleted == true) return 'Worker check settled';
+    if (cleanupPending) return 'Releasing connection';
+    return switch (transport.phase) {
+      _Phase.connecting => 'Opening worker transport',
+      _Phase.discoveringGatt => 'Discovering GATT',
+      _Phase.enablingNotify => 'Preparing TX notifications',
+      _Phase.writeLimits => 'Checking write limits',
+      _Phase.queryStart => 'Worker query and start',
+    };
+  }
+
+  String? get _cleanupState {
+    if (_transport == null) return null;
+    return switch (_bridge?.release) {
+      WorkerBridgeRelease.confirmed when _check?.released == true =>
+        'Root and worker release confirmed',
+      WorkerBridgeRelease.confirmed => 'Root released · worker release pending',
+      null when cleanupPending => 'Observing release',
+      null => 'Check owns the transport',
+      _ => 'Release unconfirmed',
+    };
+  }
+
+  void _fact(String fact, Map<String, Object> fields) {
+    _evidence.add({
+      'sequence': _evidence.length + 1,
+      'rootElapsedMicros': _clock.elapsedMicroseconds,
+      'fact': fact,
+      ...fields,
+    });
+    _changed();
+  }
+
+  void _bridgeFact(WorkerBridgeFact value) {
+    _fact(value.kind.name, {
+      'status': value.status.name,
+      'runtimeGeneration': value.runtimeGeneration,
+      'generation': ?value.nativeGeneration,
+      'bridgeSequence': ?value.sequence,
+      'operationId': ?value.operationId,
+      'opcode': ?value.opcode,
+      'length': ?value.length,
+      'nativeLength': ?value.nativeLength,
+      'expectedLength': ?value.expectedLength,
+      'nativeSequence': ?value.nativeSequence,
+      'nativeMicros': ?value.nativeMicros,
+      'workerElapsedMicros': ?value.workerElapsedMicros,
+      'category': ?value.category?.name,
+      'provenance': ?value.provenance,
+    });
+  }
+
+  Future<void> start() => _starting ??= _start();
+
+  Future<void> _start() async {
+    if (_stopped || _faulted) return;
+    _fact('workerStartup', {'status': 'requested'});
+    try {
+      final directory = _directory = await _createStorage();
+      if (_stopped || _faulted) return;
+      final bridge = _bridge =
+          _createBridge?.call(_bridgeFact, _cleanupBudget) ??
+          WorkerBridge(onFact: _bridgeFact, cleanupBudget: _cleanupBudget);
+      final runtime = _runtime = RuntimeController(
+        resolveDirectory: () async => directory.path,
+        entry: bridge.entry,
+        deadline: runtimeDeadline,
+      );
+      bridge.bindRuntime(runtime.generation);
+      _snapshots = runtime.changes.listen(_observeRuntime);
+      await runtime.start();
+      if (_stopped || _faulted) return;
+      await bridge.ready.timeout(runtimeDeadline);
+      if (_stopped || _faulted) return;
+      await writeCooperationStorageFixture(runtime);
+      _ready = true;
+      _fact('fixtureDraft', {'writeAndReadConfirmed': true});
+    } catch (_) {
+      _hostFailure();
+    } finally {
+      await _saveEvidence();
+    }
+  }
+
+  Future<void> _run(
+    _ProbeTransport transport,
+    DeviceCheckOptions options,
+  ) async {
+    final bridge = _bridge!;
+    final runtime = _runtime!;
+    _running = true;
+    _transport = transport;
+    _handle = null;
+    _check = null;
+    _logicalResult = null;
+    caseStatus = null;
+    _canceled = false;
+    _bridgeProtocolConfirmed = false;
+    _canceling = null;
+    final settled = _settlement = Completer<void>();
+    try {
+      final token = bridge.prepareAttempt(
+        nativeGeneration: transport._generation,
+        transport: transport,
+        initializationBudget: Duration(seconds: options.initializationSeconds),
+        requestBudget: Duration(seconds: options.requestSeconds),
+        receiptOf: (bytes) => transport.receipts![bytes],
+        provenanceConfirmed: () => !transport.notificationUnconfirmed,
+      );
+      final handle = _handle = runtime.startDeviceCheck(token, options);
+      _fact('checkRequested', {
+        'checkId': handle.id,
+        'generation': transport._generation,
+      });
+      await handle.accepted;
+      _fact('checkAdmission', {'checkId': handle.id, 'status': 'confirmed'});
+      await settled.future;
+      // Also clear the prepared lease when cancel preceded proxy construction.
+      await bridge.closeAttempt();
+      if (_check?.info != null && _check?.released == true) {
+        _bridgeProtocolConfirmed = await bridge.confirmAttemptProtocol();
+      }
+    } catch (_) {
+      _hostFailure();
+      await bridge.closeAttempt();
+    } finally {
+      if (!settled.isCompleted) settled.complete();
+      _running = false;
+      final passed = passedAndReleased;
+      caseStatus = passed
+          ? 'Passed'
+          : _canceled
+          ? 'Canceled'
+          : 'Failed';
+      _fact('caseSettled', {
+        'checkId': ?_handle?.id,
+        'generation': transport._generation,
+        'passed': passed,
+        'canceled': _canceled,
+        'rootTransportFault': ?transport._firstFault?.name,
+        'bridgeFaulted': bridge.attemptFaulted,
+        'provenance': bridge.provenanceConfirmed,
+        'bridgeProtocolConfirmed': _bridgeProtocolConfirmed,
+        'initializationOnTime': bridge.initializationOnTime,
+        'rootReleased': bridge.release == WorkerBridgeRelease.confirmed,
+        'workerReleased': _check?.released == true,
+      });
+      await _saveEvidence();
+    }
+  }
+
+  void _observeRuntime(RuntimeSnapshot snapshot) {
+    _bridge!.observeRuntime(snapshot);
+    final previous = _lastSnapshot;
+    _lastSnapshot = snapshot;
+    if (previous?.phase != snapshot.phase ||
+        previous?.owner != snapshot.owner ||
+        previous?.gate != snapshot.gate ||
+        previous?.workerExited != snapshot.workerExited) {
+      _fact('runtime', {
+        'runtimeGeneration': snapshot.generation,
+        'runtimeSequence': snapshot.sequence,
+        'phase': snapshot.phase.name,
+        'owner': snapshot.owner.name,
+        'gate': snapshot.gate.name,
+        'workerExited': snapshot.workerExited,
+      });
+    }
+    if (snapshot.phase == RuntimePhase.fault) {
+      _hostFailure();
+      return;
+    }
+    final check = snapshot.deviceCheck;
+    if (check == null || check.id != _handle?.id || identical(check, _check)) {
+      return;
+    }
+    _check = check;
+    if (check.info != null) {
+      _logicalResult ??= 'Worker query and start passed';
+    } else if (check.failure != null) {
+      _logicalResult ??= _canceled ? 'Canceled' : 'Worker check failed';
+    } else if (check.cancelApplied) {
+      _logicalResult ??= 'Canceled';
+    }
+    _fact('deviceCheck', {
+      'checkId': check.id,
+      'generation': _transport!._generation,
+      'runtimeSequence': snapshot.sequence,
+      'state': check.state.name,
+      'cancelApplied': check.cancelApplied,
+      'hasInformation': check.info != null,
+      'failure': ?check.failure?.kind,
+      'stage': ?check.failure?.stage,
+      'commandOpcode': ?check.failure?.commandOpcode,
+      'expectedResponseOpcode': ?check.failure?.expectedResponseOpcode,
+      'sessionCleanup': check.sessionCleanup.name,
+      'observerCleanup': check.observerCleanup.name,
+      'settled': check.settled,
+      'released': check.released,
+    });
+    if (_settlement case final settlement? when check.settled) {
+      if (!settlement.isCompleted) settlement.complete();
+    }
+  }
+
+  void _hostFailure() {
+    if (_faulted) return;
+    _faulted = true;
+    _transport?._fail(_Outcome.backend);
+    _logicalResult ??= 'Worker cooperation failed';
+    _fact('workerCooperation', {'status': 'failed'});
+    final settling = _settlement;
+    if (settling != null && !settling.isCompleted) settling.complete();
+  }
+
+  Future<void> cancel() {
+    if (!canCancel) return _canceling ?? Future.value();
+    return _canceling ??= _cancel();
+  }
+
+  Future<void> _cancel() async {
+    final handle = _handle!;
+    _canceled = true;
+    _fact('checkCancel', {'checkId': handle.id, 'status': 'requested'});
+    // Send the runtime's actual Cancel, and start physical cleanup without
+    // depending on its request acknowledgement or a pending native call.
+    final reply = _runtime!
+        .cancelDeviceCheck(handle.id)
+        .then<void>(
+          (_) => _fact('checkCancel', {
+            'checkId': handle.id,
+            'status': 'confirmed',
+          }),
+          onError: (Object _) =>
+              _fact('checkCancel', {'checkId': handle.id, 'status': 'unknown'}),
+        );
+    await _bridge!.closeAttempt();
+    await reply;
+  }
+
+  Future<bool> shutdown() async {
+    _stopped = true;
+    // Permit later authoritative runtime facts to reconcile an earlier
+    // timeout, while keeping the original close intent and physical lease.
+    final pending = _stopping ??= _shutdown();
+    final allowed = await pending;
+    if (!allowed && identical(_stopping, pending)) _stopping = null;
+    return allowed;
+  }
+
+  Future<bool> _shutdown() async {
+    await _starting;
+    final runtime = _runtime;
+    if (runtime == null || _rootClosed) return true;
+    await cancel();
+    if (_logicalResult != null && !_canceled) {
+      // The runtime stop signal also cancels an outstanding check. Let its
+      // normal release finish first, with a bounded fallback to shutdown.
+      await _settlement?.future.timeout(runtimeDeadline, onTimeout: () {});
+    }
+    final outcome = await runtime.shutdown();
+    final bridgeClosed =
+        outcome.canExit &&
+        await _bridge!.finish(workerWasSpawned: outcome.workerWasSpawned);
+    if (bridgeClosed) {
+      await _snapshots?.cancel();
+      _snapshots = null;
+      _rootClosed = true;
+    }
+    _fact('shutdown', {
+      'resourcesReleased': outcome.resourcesReleased,
+      'workerExited': outcome.workerExited,
+      'workerWasSpawned': outcome.workerWasSpawned,
+      'runtimePorts': runtime.openPortCount,
+      'bridgeClosed': bridgeClosed,
+      'canExit': outcome.canExit && bridgeClosed,
+    });
+    return outcome.canExit && bridgeClosed;
+  }
+
+  Future<bool> _saveEvidence() =>
+      _evidenceWrite = _evidenceWrite.then((_) => _writeEvidence());
+
+  Future<bool> _writeEvidence() async {
+    final directory = _directory;
+    if (directory == null) return true;
+    try {
+      final path = '${directory.path}/cooperation-evidence.json';
+      final file = await File('$path.tmp')
+          .writeAsString(_encode(), flush: true);
+      await file.rename(path);
+      return true;
+    } catch (_) {
+      _fact('evidenceFile', {'status': 'failed'});
+      return false;
+    }
+  }
+}

@@ -1,11 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:meshcore_link/meshcore_link.dart';
 
+import '../runtime/controller.dart';
+import '../runtime/protocol.dart';
 import 'backend.dart';
+import 'cooperation_storage_fixture.dart';
+import 'worker_bridge.dart';
 
+part 'cooperation.dart';
 part 'probe_transport.dart';
 
 const _appName = 'Meshchan BLE Probe';
@@ -168,12 +174,18 @@ final class _Evidence {
     });
   }
 
-  String get json => const JsonEncoder.withIndent('  ').convert({
-    'schema': 1,
-    'mode': synthetic ? 'synthetic' : 'real',
-    'events': _rows,
-  });
+  String encode(CooperationFixture? fixture) =>
+      const JsonEncoder.withIndent('  ').convert({
+        'schema': 1,
+        'mode': synthetic ? 'synthetic' : 'real',
+        if (fixture != null) 'execution': 'workerCooperation',
+        if (fixture != null) 'runId': fixture.runId,
+        'events': _rows,
+        if (fixture != null) 'cooperation': fixture._evidence,
+      });
 }
+
+enum _FinalEvidence { pending, copied, retained }
 
 /// Single-process admission for one scan, one attempt, and at most one
 /// explicit follow-on attempt to the same identified target.
@@ -181,6 +193,7 @@ final class ProbeController extends ChangeNotifier {
   ProbeController(
     this._createBackend, {
     bool synthetic = false,
+    this.cooperation,
     this.scanBudget = const Duration(seconds: 10),
     this.initializationBudget = const Duration(seconds: 15),
     this.requestBudget = const Duration(seconds: 5),
@@ -188,6 +201,7 @@ final class ProbeController extends ChangeNotifier {
     this.notifyOffGrace = const Duration(milliseconds: 500),
   }) : _evidence = _Evidence(synthetic) {
     _evidence.add(_Fact.offlineStartup);
+    cooperation?._attach(_changed, () => evidenceJson, cleanupBudget);
   }
 
   final ProbeBackend Function() _createBackend;
@@ -196,6 +210,7 @@ final class ProbeController extends ChangeNotifier {
   final Duration requestBudget;
   final Duration cleanupBudget;
   final Duration notifyOffGrace;
+  final CooperationFixture? cooperation;
   final _Evidence _evidence;
 
   ProbeBackend? _backend;
@@ -216,6 +231,7 @@ final class ProbeController extends ChangeNotifier {
   bool _scanFailed = false;
   bool _quitInProgress = false;
   bool _disposed = false;
+  _FinalEvidence? _finalEvidence;
 
   _Attempt? _attempt;
   int _generation = 0;
@@ -224,7 +240,10 @@ final class ProbeController extends ChangeNotifier {
 
   List<ProbeTarget> get targets => List.unmodifiable(_targets.values);
   ProbeTarget? get selected => _selected;
-  bool get canScan => !_quitInProgress && !_scanAttempted;
+  bool get canScan =>
+      !_quitInProgress &&
+      !_scanAttempted &&
+      (cooperation == null || cooperation!.canAttempt);
   bool get canStopScan => _scanAttempted && _scanStop == null;
   bool get canSelect =>
       !_quitInProgress &&
@@ -236,19 +255,24 @@ final class ProbeController extends ChangeNotifier {
       _scanConfirmed &&
       !_scanFailed &&
       _selected != null &&
+      (cooperation == null || cooperation!.canAttempt) &&
       (_generation == 0 ||
           (isReconnect &&
-              _attempt!.releaseConfirmed &&
-              !_attempt!._transport.notificationUnconfirmed));
-  bool get canCancel => _attempt != null && _attempt!.outcome == null;
+              (cooperation?.passedAndReleased ??
+                  (_attempt!.releaseConfirmed &&
+                      !_attempt!._transport.notificationUnconfirmed))));
+  bool get canCancel =>
+      cooperation?.canCancel ?? (_attempt != null && _attempt!.outcome == null);
   bool get cleanupPending =>
       (_scanStop != null && !_scanConfirmed && !_scanUnknown) ||
-      (_attempt?.cleaningUp ?? false);
-  String get phase => _attempt?.phaseLabel ?? _scanPhase;
-  String get logicalResult => _attempt?.outcomeLabel ?? _scanResult;
-  String get cleanupState => _attempt?.cleanupLabel ?? _scanCleanup;
+      (cooperation?.cleanupPending ?? _attempt?.cleaningUp ?? false);
+  String get phase => cooperation?._phase ?? _attempt?.phaseLabel ?? _scanPhase;
+  String get logicalResult =>
+      cooperation?._logicalResult ?? _attempt?.outcomeLabel ?? _scanResult;
+  String get cleanupState =>
+      cooperation?._cleanupState ?? _attempt?.cleanupLabel ?? _scanCleanup;
   String get notificationState {
-    final transport = _attempt?._transport;
+    final transport = cooperation?._transport ?? _attempt?._transport;
     if (transport?.notificationUnconfirmed == true) {
       return 'Notification provenance unconfirmed';
     }
@@ -257,12 +281,18 @@ final class ProbeController extends ChangeNotifier {
         : 'Awaiting response evidence';
   }
 
-  String get evidenceJson => _evidence.json;
+  String get evidenceJson => _evidence.encode(cooperation);
+
+  Future<void> startWorker() async {
+    if (!_quitInProgress) await cooperation?.start();
+  }
 
   void recordRuntimeFailure() {
     _evidence.add(_Fact.runtimeFailure, status: _Status.failed);
     if (canStopScan) {
       _failScan();
+    } else if (cooperation case final fixture?) {
+      fixture._hostFailure();
     } else if (_attempt case final attempt?) {
       attempt._transport._fail(_Outcome.backend);
     }
@@ -449,6 +479,7 @@ final class ProbeController extends ChangeNotifier {
     _nameBytes = nodeNameBytes;
     _basis = lengthBasis;
     final generation = ++_generation;
+    final target = _selected!;
     _evidence.add(
       _Fact.attemptStarted,
       generation: generation,
@@ -458,8 +489,28 @@ final class ProbeController extends ChangeNotifier {
       requestMs: requestBudget.inMilliseconds,
       cleanupMs: cleanupBudget.inMilliseconds,
     );
+    if (cooperation case final fixture?) {
+      await fixture._run(
+        _ProbeTransport(
+          () => _backend!.link(target, generation),
+          generation,
+          nodeNameBytes,
+          cleanupBudget,
+          notifyOffGrace,
+          _evidence,
+          _changed,
+          appName: 'Meshchan',
+          retainReceipts: true,
+        ),
+        DeviceCheckOptions(
+          initializationSeconds: initializationBudget.inSeconds,
+          requestSeconds: requestBudget.inSeconds,
+        ),
+      );
+      return;
+    }
     final attempt = _attempt = _Attempt(
-      createLink: () => _backend!.link(_selected!, generation),
+      createLink: () => _backend!.link(target, generation),
       generation: generation,
       nameBytes: nodeNameBytes,
       initializationBudget: initializationBudget,
@@ -478,32 +529,70 @@ final class ProbeController extends ChangeNotifier {
     if (canStopScan ||
         (_scanStop != null && !_scanConfirmed && !_scanUnknown)) {
       await stopScan();
+    } else if (cooperation case final fixture?) {
+      await fixture.cancel();
     } else if (_attempt case final attempt?) {
       await attempt.cancel();
     }
   }
 
-  Future<bool> requestClose() async {
+  Future<bool> requestClose({Future<String?> Function()? readClipboard}) async {
+    if (_finalEvidence == _FinalEvidence.retained) return true;
+    if (_finalEvidence == _FinalEvidence.copied) {
+      try {
+        if (await readClipboard?.call() == evidenceJson) return true;
+      } catch (_) {
+        // Retry the file save when the clipboard is unavailable.
+      }
+    }
+    if (_finalEvidence != null) return _retainFinalEvidence();
     _quitInProgress = true;
     _evidence.add(_Fact.quit, status: _Status.requested);
     _changed();
     await cancel();
-    final allowed =
+    final workerReleased = await cooperation?.shutdown() ?? true;
+    final released =
         (!_scanAttempted || _scanConfirmed) &&
-        (_attempt == null || _attempt!.releaseConfirmed);
+        (_attempt == null || _attempt!.releaseConfirmed) &&
+        workerReleased;
     _evidence.add(
       _Fact.quit,
-      status: allowed ? _Status.confirmed : _Status.unknown,
+      status: released ? _Status.confirmed : _Status.unknown,
     );
-    if (!allowed) _quitInProgress = false;
+    if (released) return _retainFinalEvidence();
+    await cooperation?._saveEvidence();
+    _quitInProgress = false;
     _changed();
-    return allowed;
+    return false;
+  }
+
+  bool get finalEvidencePending => _finalEvidence == _FinalEvidence.pending;
+
+  bool confirmFinalEvidenceCopy(String copied) {
+    if (!finalEvidencePending || copied != evidenceJson) return false;
+    _finalEvidence = _FinalEvidence.copied;
+    _changed();
+    return true;
+  }
+
+  Future<bool> _retainFinalEvidence() async {
+    final saved = await cooperation?._saveEvidence() ?? true;
+    _finalEvidence = saved ? _FinalEvidence.retained : _FinalEvidence.pending;
+    _changed();
+    return saved;
   }
 
   @override
   void dispose() {
     _disposed = true;
-    unawaited(cancel());
+    _quitInProgress = true;
+    if (cooperation case final fixture?) {
+      // Set the fixture's stop intent before pending startup can acquire storage.
+      unawaited(fixture.shutdown());
+      if (canStopScan) unawaited(stopScan());
+    } else {
+      unawaited(cancel());
+    }
     super.dispose();
   }
 }

@@ -1,0 +1,73 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:meshchan_ble_probe/src/cooperation_storage_fixture.dart';
+import 'package:meshchan_core/meshchan_core.dart';
+
+void _report(Map<String, Object> facts, {required bool passed}) {
+  stdout.writeln(jsonEncode({'passed': passed, ...facts}));
+  exitCode = passed ? 0 : 1;
+}
+
+/// Run as a separate Dart process while the probe holds the owner, and again
+/// after the signed host has quit. Report only structural fixture facts.
+Future<void> main(List<String> args) async {
+  if (args.length != 2 ||
+      !const {'busy', 'reopen'}.contains(args.firstOrNull)) {
+    _report({'category': 'usage'}, passed: false);
+    return;
+  }
+  final mode = args.first;
+  final directory = Directory(args[1]);
+  final CoreStorage storage;
+  try {
+    if (!await isExistingCooperationStorageFixture(directory)) {
+      _report({'mode': mode, 'category': 'notOwnedFixture'}, passed: false);
+      return;
+    }
+    storage = await CoreStorage.open(dataDirectory: directory);
+  } on CoreException catch (error) {
+    final busy =
+        error.code == CoreErrorCode.dataDirectoryBusy &&
+        !error.cleanupUnconfirmed;
+    _report({
+      'mode': mode,
+      'ownerBusy': busy,
+      'category': error.code.code,
+      'cleanupUnconfirmed': error.cleanupUnconfirmed,
+    }, passed: mode == 'busy' && busy);
+    return;
+  } catch (_) {
+    _report({'mode': mode, 'category': 'openFailed'}, passed: false);
+    return;
+  }
+  var draftMatches = false, historyEmpty = false, released = false;
+  if (mode == 'reopen') {
+    try {
+      final drafts = (await storage.drafts.list()).items;
+      draftMatches =
+          drafts.length == 1 &&
+          matchesCooperationDraft(
+            drafts.single.title,
+            drafts.single.body,
+            drafts.single.revision,
+          );
+      historyEmpty = (await storage.history.query()).items.isEmpty;
+    } catch (_) {
+      // Any read failure leaves its corresponding verification false.
+    }
+  }
+  try {
+    await storage.close();
+    released = storage.state == StorageState.closed;
+  } catch (_) {
+    // A thrown close cannot prove independent release.
+  }
+  _report({
+    'mode': mode,
+    'opened': true,
+    'draftMatches': draftMatches,
+    'historyEmpty': historyEmpty,
+    'released': released,
+  }, passed: mode == 'reopen' && draftMatches && historyEmpty && released);
+}

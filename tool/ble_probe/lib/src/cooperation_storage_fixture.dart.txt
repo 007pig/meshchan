@@ -1,0 +1,75 @@
+import 'dart:io';
+
+import '../runtime/controller.dart';
+
+const _directoryPrefix = 'meshchan-ble-worker-';
+const _markerName = '.meshchan-ble-worker-fixture';
+const cooperationDraftTitle = 'BLE worker fixture';
+const cooperationDraftBody = 'Owned offline write\r\nSQLite fixture — 你好\n';
+
+File _marker(Directory directory) => File('${directory.path}/$_markerName');
+String? _name(Directory directory) => directory.uri.pathSegments
+    .where((segment) => segment.isNotEmpty)
+    .lastOrNull;
+
+/// This lives outside both the checkout and the installed host's data paths.
+/// Keep it through Quit for an independent owner and persistence check.
+Future<Directory> createCooperationStorageFixture() async {
+  final temp = Directory(await Directory.systemTemp.resolveSymbolicLinks());
+  final directory = await temp.createTemp(_directoryPrefix);
+  try {
+    final marker = _marker(directory);
+    await marker.create(exclusive: true);
+    await marker.writeAsString('${_name(directory)}\n', flush: true);
+    return directory;
+  } catch (_) {
+    await directory.delete(recursive: true);
+    rethrow;
+  }
+}
+
+Future<void> writeCooperationStorageFixture(RuntimeController runtime) async {
+  final saved = await runtime.saveDraft(
+    title: cooperationDraftTitle,
+    body: cooperationDraftBody,
+    session: 1,
+  );
+  final stored = await runtime.readDraft(saved.id);
+  if (stored.id != saved.id ||
+      !matchesCooperationDraft(stored.title, stored.body, stored.revision)) {
+    throw StateError('fixtureDraftMismatch');
+  }
+}
+
+bool matchesCooperationDraft(String title, String body, int revision) =>
+    title == cooperationDraftTitle &&
+    body == cooperationDraftBody &&
+    revision == 1;
+
+/// Refuse aliases and unrelated directories before any CoreStorage call.
+/// The verifier requires a preexisting database. Only a fresh synthetic
+/// subprocess accepts the marker before it creates its database.
+Future<bool> isExistingCooperationStorageFixture(
+  Directory directory, {
+  bool requireDatabase = true,
+}) async {
+  if (!directory.isAbsolute || !await directory.exists()) return false;
+  final resolved = await directory.resolveSymbolicLinks();
+  final name = _name(directory);
+  if (directory.path != resolved ||
+      name == null ||
+      !name.startsWith(_directoryPrefix) ||
+      name == _directoryPrefix) {
+    return false;
+  }
+  final marker = _marker(directory);
+  final database = File('${directory.path}/meshchan.sqlite');
+  return await FileSystemEntity.type(marker.path, followLinks: false) ==
+          FileSystemEntityType.file &&
+      await marker.length() == name.length + 1 &&
+      await marker.readAsString() == '$name\n' &&
+      await FileSystemEntity.type(database.path, followLinks: false) ==
+          (requireDatabase
+              ? FileSystemEntityType.file
+              : FileSystemEntityType.notFound);
+}

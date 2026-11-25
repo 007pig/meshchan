@@ -13,7 +13,7 @@ from release_signed_runtime import signed_info
 from retain_release import MANIFEST, METADATA, RECEIPT, Mapping, bound_json, canonical
 
 
-DEFAULT_ARCHIVE = Path.home()/'Documents/my_projects/Meshchan Engineering Archive'
+DEFAULT_ARCHIVE = Path('/Volumes/WD_BLACK_4T_1/BuildArtifacts/Meshchan Engineering Archive')
 DMG_FILENAME = 'Meshchan-0.1.0-rc.1-build8-macos-arm64-local.dmg'
 DMG_SIZE = 675_911_154
 DMG_SHA256 = 'b42021e054e65e47893d84437100a6b9e51a2ea93eb7a060c12e70fdb4a6ca28'

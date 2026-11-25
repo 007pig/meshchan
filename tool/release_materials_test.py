@@ -25,7 +25,59 @@ from release_materials import (Collector, FIRST_PARTY, FRAMEWORK_SHADERS, HOOK_C
                               hook_dependencies_current, project_license_errors, sections,
                               product_inventory, serial_app_binding, sha, source_archive, verify_materials)
 from release_materials import (flutter_framework_archive, main, native_source_hashes, verified_material_icon_source,
+                              release_build_root, release_reference, release_relative_path, release_run_path,
                               verify_build_receipt, verify_build_source)
+
+
+class ReleaseBuildPathTests(unittest.TestCase):
+    def setUp(self):
+        self.base = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        self.root = self.base/'checkout'
+        self.root.mkdir()
+        self.local = self.root/'build'
+        self.external = self.base/'artifacts'
+        self.external.mkdir()
+
+    def test_linked_run_paths_round_trip_only_through_the_root_link(self):
+        self.assertEqual(release_build_root(self.root), self.local)
+        self.local.symlink_to(self.external, target_is_directory=True)
+        physical = release_build_root(self.root)
+        logical_run = self.local/'phase-1e4/some run'
+        run = self.external/'phase-1e4/some run'
+        self.assertEqual(physical, self.external)
+        self.assertEqual(release_run_path(self.root, physical, logical_run, 'phase-1e4'), run)
+        self.assertEqual(release_run_path(self.root, physical, run, 'phase-1e4'), run)
+        name = release_relative_path(self.root, physical, run/'evidence/log')
+        self.assertEqual(name, 'build/phase-1e4/some run/evidence/log')
+        self.assertEqual(release_reference(self.root, physical, name), run/'evidence/log')
+        with self.assertRaisesRegex(ValueError, 'owned run'):
+            release_run_path(self.root, physical, logical_run/'nested', 'phase-1e4', direct=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            release_run_path(self.root, physical, logical_run/'../new', 'phase-1e4')
+
+        run.parent.mkdir()
+        run.symlink_to(self.external/'missing', target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            release_run_path(self.root, physical, logical_run, 'phase-1e4')
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            release_reference(self.root, physical, name)
+
+    def test_link_target_must_be_canonical_and_disjoint(self):
+        aliased = self.base/'alias'
+        aliased.symlink_to(self.external, target_is_directory=True)
+        cases = (
+            (Path('../artifacts'), 'absolute canonical'),
+            (self.base/'missing', 'unavailable'),
+            (aliased, 'real canonical directory'),
+            (self.root, 'overlaps'),
+            (self.external, 'overlaps'),
+        )
+        for target, error in cases:
+            with self.subTest(target=target):
+                self.local.symlink_to(target, target_is_directory=True)
+                with self.assertRaisesRegex(ValueError, error):
+                    release_build_root(self.root, (self.external,))
+                self.local.unlink()
 
 
 class DeliveryTests(unittest.TestCase):

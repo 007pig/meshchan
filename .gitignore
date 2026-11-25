@@ -3,6 +3,7 @@
 .pub-cache/
 .packages
 build/
+/build
 coverage/
 # Python development-tool test imports.
 __pycache__/

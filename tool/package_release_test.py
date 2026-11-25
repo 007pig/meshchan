@@ -361,6 +361,133 @@ class PackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'overlaps'):
                 package.disjoint(output, [protected])
 
+    def link_build(self, checkout, target):
+        checkout.mkdir(exist_ok=True)
+        subprocess.run([*package.GIT, 'init', '-q', checkout], check=True, capture_output=True)
+        (checkout/'.gitignore').write_text('build/\n/build\n')
+        logical = checkout/'build'
+        if logical.exists():
+            logical.rename(target)
+        else:
+            target.mkdir()
+        logical.symlink_to(target, target_is_directory=True)
+        return target
+
+    def test_linked_package_and_frozen_build_run_with_separate_physical_outputs(self):
+        self.info['toolchain'] = {'host': {'os': 'Darwin', 'architecture': 'arm64'}}
+        self.pin = self.write_index()
+        checkout = self.root/'packaging checkout'
+        output_build = self.link_build(checkout, self.root/'packaging disk')
+        source_build = self.link_build(self.source, self.root/'frozen build disk')
+        physical_run = source_build/'phase-1e4/run-001'
+        output = output_build/'phase-1e5/new package'
+        args = SimpleNamespace(command='package', source_checkout=self.source, build_run=self.run_id,
+                               expected_build_info_sha256=self.pin,
+                               output=checkout/'build/phase-1e5/new package',
+                               extract_root=self.root/'package extraction', vm_config=None, timeout=10)
+        count = 0
+        phases = ('check-inputs', 'check-products', 'materials-recheck', 'check-commit')
+
+        def run_command(_runner, name, argv, cwd):
+            nonlocal count
+            self.assertEqual(cwd, self.source)
+            if name == 'frozen-check':
+                self.assertEqual(argv[argv.index('--output')+1], self.run_id)
+                self.assertIn('--require-frozen', argv)
+                count += 1
+                for phase in phases:
+                    folder = physical_run/'evidence'/f'{phase}-{count}'
+                    folder.mkdir()
+                    (folder/'build-receipt.json').write_text('{"status":"PASS"}\n')
+                return json.dumps({'status': 'PASS', 'buildStatus': 'PASS',
+                                   'materialsStatus': 'PASS', 'run': self.run_id})
+            self.assertEqual(name, 'relocated-products')
+            self.assertIn(physical_run/'evidence/build-receipt.json', argv)
+            return '{"status":"PASS"}'
+
+        with (patch.object(package, 'ROOT', checkout),
+              patch.object(package.platform, 'system', return_value='Darwin'),
+              patch.object(package.platform, 'machine', return_value='arm64'),
+              patch.object(package, 'protected_caches', return_value=[]),
+              patch.object(package, 'verify_frozen_helpers'),
+              patch.object(package, 'tool_identity', return_value={'inputs': {}}),
+              patch.object(package, 'validate_cli', return_value={'status': 'PASS'}),
+              patch.object(package.build.Runner, 'command', autospec=True, side_effect=run_command)):
+            for directory in (source_build, output_build):
+                with self.subTest(directory=directory):
+                    overlapping = SimpleNamespace(**(vars(args) | {'extract_root': directory/'extraction'}))
+                    with self.assertRaisesRegex(ValueError, 'overlaps'):
+                        package.run_package(overlapping)
+                    self.assertFalse(output.exists())
+                    self.assertFalse(overlapping.extract_root.exists())
+            original = package.run_package(args)
+            original_receipt = output/'evidence/package-receipt.json'
+            pin = digest(original_receipt)
+            checked = package.run_package(SimpleNamespace(**(vars(args) | {
+                'command': 'check', 'package_run': output, 'extract_root': self.root/'check extraction',
+                'expected_package_receipt_sha256': pin,
+            })))
+
+        self.assertEqual(count, 2)
+        self.assertEqual(digest(original_receipt), pin)
+        self.assertEqual(original['archive'], checked['archive'])
+        self.assertEqual(original['packageInfo'], checked['packageInfo'])
+        for record in (original, checked):
+            self.assertEqual(record['status'], 'INCOMPLETE')
+            self.assertEqual(record['buildRun'], self.run_id)
+            self.assertTrue(Path(record['stage']).is_relative_to(output))
+        for phase, ref in checked['frozenVerification']['ledgers'].items():
+            self.assertEqual(ref['path'], f'{self.run_id}/evidence/{phase}-2/build-receipt.json')
+            self.assertEqual(ref['sha256'], digest(self.source/ref['path']))
+
+    def test_linked_package_rejects_nested_alias_and_tracked_build(self):
+        checkout = self.root/'packaging checkout'
+        physical = self.link_build(checkout, self.root/'packaging disk')
+        phase = physical/'phase-1e5'
+        phase.mkdir()
+        existing = phase/'existing run'
+        existing.mkdir()
+        (phase/'alias').symlink_to(existing)
+        with patch.object(package, 'ROOT', checkout):
+            with self.assertRaisesRegex(ValueError, 'symlink'):
+                package.output_path(checkout/'build/phase-1e5/alias', new=False)
+            subprocess.run([*package.GIT, '-C', checkout, 'add', '-f', '--', 'build'],
+                           check=True, capture_output=True)
+            with self.assertRaisesRegex(ValueError, 'tracked source'):
+                package.output_path(checkout/'build/phase-1e5/new run', new=True)
+
+    def test_linked_build_rejects_git_metadata_paths_with_whitespace(self):
+        for index, name in enumerate(('metadata ', 'metadata\nwith\rcarriage return')):
+            with self.subTest(name=name):
+                checkout = self.root/f'checkout {index}'
+                metadata = self.root/name
+                subprocess.run([*package.GIT, 'init', '-q', '--separate-git-dir', metadata, checkout],
+                               env=package.controlled_environment(), check=True, capture_output=True)
+                target = metadata/'release build'
+                target.mkdir()
+                (checkout/'build').symlink_to(target, target_is_directory=True)
+
+                with self.assertRaisesRegex(ValueError, 'overlaps.*Git metadata'):
+                    package.build_directory(checkout)
+                self.assertEqual(package.git_metadata(checkout), [metadata, metadata])
+
+    def test_linked_package_admission_accounts_for_checkout_case_aliases(self):
+        checkout = self.root/'packaging checkout'
+        physical = self.link_build(checkout, self.root/'packaging disk')
+        local, tracked = checkout/'build', checkout/'BuIlD'
+        local.unlink()
+        tracked.symlink_to(physical, target_is_directory=True)
+        subprocess.run([*package.GIT, '-C', checkout, 'add', '-f', '--', tracked.name],
+                       check=True, capture_output=True)
+        path = local/'phase-1e5/run'
+        with patch.object(package, 'ROOT', checkout):
+            if local.is_symlink():
+                with self.assertRaisesRegex(ValueError, 'tracked source'):
+                    package.output_path(path, new=True)
+            else:
+                local.symlink_to(physical, target_is_directory=True)
+                self.assertEqual(package.output_path(path, new=True), physical/path.relative_to(local))
+
     def verify(self, command, name, initial, tools=None, receipt_pin=None):
         output = self.root/'packaging artifacts'
         evidence = output/'evidence'

@@ -10,6 +10,7 @@ import unittest
 import package_dmg as dmg
 import release_retention_inputs as retention
 import release_signed_runtime as runtime
+from retain_release import live_locator
 from release_materials import encoded, product_inventory, sha
 from release_retention_archive import scanned_input
 
@@ -307,9 +308,15 @@ class EvidenceTests(unittest.TestCase):
                     retention.frozen_build(reader, upstream, {})
 
     def test_frozen_build_accepts_a_pinned_materials_retry_directory(self):
+        for linked in (False, True):
+            with self.subTest(linked=linked):
+                self.check_frozen_materials_retry(linked)
+
+    def check_frozen_materials_retry(self, linked):
         source = self.original/'checkout'
         build_run = 'build/phase-1e4/run'
-        run = source/build_run
+        logical = source/build_run
+        run = self.original/'external artifacts/phase-1e4/run' if linked else logical
         evidence = run/'evidence'
         commit = 'a'*40
         identity = {'target': 'macos-arm64', 'appBuild': '10', 'productVersion': '0.1.0-rc.1'}
@@ -318,8 +325,11 @@ class EvidenceTests(unittest.TestCase):
         self.write(cli/'bin/meshctl', b'cli')
         self.write(run/'native-hooks/receipt.json', b'{}')
 
+        def logical_name(path):
+            return (logical/path.relative_to(run)).relative_to(source).as_posix()
+
         def ref(path, raw):
-            return {'path': path.relative_to(source).as_posix(), 'sha256': self.write(path, raw)}
+            return {'path': logical_name(path), 'sha256': self.write(path, raw)}
 
         inputs = encoded({'apps/meshctl/lib/src/meshctl.dart': 'b'*64})
         validation = encoded({'status': 'PASS', 'pathAudit': {
@@ -345,7 +355,7 @@ class EvidenceTests(unittest.TestCase):
                 'log': stdout['path'], 'logSha256': stdout['sha256'],
                 'stderrLog': stderr['path'], 'stderrLogSha256': stderr['sha256'],
                 'processTree': {'exited': True, 'childReaped': True}}
-        products = {'app': app.relative_to(source).as_posix(), 'cli': cli.relative_to(source).as_posix()}
+        products = {'app': logical_name(app), 'cli': logical_name(cli)}
         context = {'formatVersion': 1, 'sourceCommit': commit, 'recipeVersion': 57,
                    'engineeringDirtyMode': False, 'workingTree': '', **products}
         receipt = {
@@ -365,6 +375,8 @@ class EvidenceTests(unittest.TestCase):
                 'sourceInputIdentity': sha(encoded({})), 'helperHashes': {}, 'controlledConfiguration': {'generated': {}}}
         upstream = {'sourceCheckout': str(source), 'buildRun': build_run,
                     'sourceCommit': commit, 'buildRecipeVersion': 57}
+        if linked:
+            upstream['buildRunPath'] = str(run)
         material = b'fixture license\n'
         manifest = encoded({
             'sourceCommit': commit, 'products': {'buildReceipt': proof['build-receipt.json']}, 'openGates': [],
@@ -381,23 +393,59 @@ class EvidenceTests(unittest.TestCase):
             info['materials'] = {
                 'status': 'PASS', 'arguments': {'output': str(output)},
                 'references': {'materials-manifest.json': {
-                    'path': (manifest_dir/'materials-manifest.json').relative_to(source).as_posix(),
+                    'path': logical_name(manifest_dir/'materials-manifest.json'),
                     'sha256': upstream['materialsManifestSha256'],
                 }},
             }
             upstream['buildInfoSha256'] = self.write(run/'build-info.json', encoded(info))
             reader = retention.RetainedRead(self.locate, live=False)
-            return retention.frozen_build(reader, upstream, identity)[3]['materials']
+            self.lookups.clear()
+            material = retention.frozen_build(reader, upstream, identity)[3]['materials']
+            if linked:
+                self.assertTrue(all(path.is_relative_to(run) for path in self.lookups))
+                self.assertIn(material[0], reader.roots())
+            return material
 
         for name in ('materials', 'materials-retry'):
             destination = run/name
+            expected = (destination, product_inventory(self.locate(destination)))
             with self.subTest(name=name):
-                self.assertEqual(verify(destination, destination),
-                                 (destination, product_inventory(self.locate(destination))))
+                self.assertEqual(verify(destination, destination), expected)
+                if linked:
+                    self.assertEqual(verify(logical/name, destination), expected)
         with self.assertRaisesRegex(ValueError, 'direct child'):
             verify(run/'nested/materials-retry', run/'materials-retry')
         with self.assertRaisesRegex(ValueError, 'material manifest location'):
             verify(run/'materials-retry', run/'materials')
+
+    def test_live_frozen_build_uses_only_the_bound_physical_run(self):
+        source = self.root/'checkout'
+        source.mkdir()
+        external = self.root/'external artifacts'
+        run = external/'phase-1e4/run'
+        run.mkdir(parents=True)
+        (source/'build').symlink_to(external, target_is_directory=True)
+        build_run = 'build/phase-1e4/run'
+        raw = encoded({'formatVersion': 1, 'sourceCommit': 'a'*40, 'recipeVersion': 57,
+                       'runIdentity': build_run, 'identity': {}, 'buildStatus': 'PASS', 'productChecksStatus': 'PASS',
+                       'engineeringDirtyMode': True, 'workingTree': ''})
+        (run/'build-info.json').write_bytes(raw)
+        upstream = {'sourceCheckout': str(source), 'buildRun': build_run, 'buildRunPath': str(run),
+                    'sourceCommit': 'a'*40, 'buildRecipeVersion': 57, 'buildInfoSha256': sha(raw)}
+        cases = [
+            ([source], upstream, 'Input outside explicitly selected roots'),
+            ([source, external], upstream | {'buildInfoSha256': 'b'*64}, 'SHA-256'),
+            ([source, external], upstream, 'engineeringDirtyMode differs'),
+            ([source, external], upstream | {'buildRunPath': str(run.with_name('other'))},
+             'Physical build path differs'),
+            ([source, external], upstream | {'buildRunPath': str(source/build_run)},
+             'Physical build root overlaps'),
+        ]
+        for allowed, selected, error in cases:
+            with self.subTest(error=error):
+                reader = retention.RetainedRead(lambda path: live_locator(allowed, path), live=True)
+                with self.assertRaisesRegex(ValueError, error):
+                    retention.frozen_build(reader, selected, {})
 
     def test_frozen_recheck_requires_versioned_build_ledgers(self):
         source = self.original/'checkout'
@@ -415,19 +463,68 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Frozen verification ledger check-inputs formatVersion differs'):
             retention.verify_frozen_recheck(retention.RetainedRead(self.locate, live=False), source, run, receipt)
 
+    def test_frozen_recheck_reads_only_the_mapped_ledgers_and_logs(self):
+        source = self.original/'checkout'
+        build_run = 'build/phase-1e4/run'
+        run = self.original/'external artifacts/phase-1e4/run'
+        ledgers = {}
+        for name in retention.CHECKS:
+            evidence = Path('evidence')/(name+'-1')
+            step = {'name': 'verify', 'exitCode': 0, 'processTree': {'exited': True, 'childReaped': True}}
+            for key, filename in (('log', 'verify.log'), ('stderrLog', 'verify.stderr.log')):
+                log = evidence/'logs'/filename
+                step[key] = (Path(build_run)/log).as_posix()
+                step[key+'Sha256'] = self.write(run/log, b'check output')
+            path = evidence/'build-receipt.json'
+            ledgers[name] = {'path': (Path(build_run)/path).as_posix(), 'sha256': self.write(
+                run/path, encoded({'status': 'PASS', 'formatVersion': 1, 'steps': [step]}))}
+        receipt = {'buildRun': build_run, 'frozenVerification': {
+            'result': {'status': 'PASS', 'buildStatus': 'PASS', 'materialsStatus': 'PASS', 'run': build_run},
+            'ledgers': ledgers,
+        }}
+        reader = retention.RetainedRead(self.locate, live=False)
+        self.lookups.clear()
+        retention.verify_frozen_recheck(reader, source, run, receipt)
+        self.assertEqual(len(reader.roots()), len(retention.CHECKS)*3)
+        self.assertTrue(all(path.is_relative_to(run) for path in self.lookups))
+        reference = ledgers['check-inputs']
+        original_pin = reference['sha256']
+        for pin, error in ((None, 'Expected a lowercase SHA-256 digest'), ('0'*64, 'SHA-256.*differs')):
+            with self.subTest(pin=pin), self.assertRaisesRegex(ValueError, error):
+                reference['sha256'] = pin
+                retention.verify_frozen_recheck(reader, source, run, receipt)
+        reference['sha256'] = original_pin
+        self.write(run/'evidence/check-inputs-1/logs/verify.log', b'changed output')
+        with self.assertRaisesRegex(ValueError, 'SHA-256'):
+            retention.verify_frozen_recheck(reader, source, run, receipt)
+
     def test_historical_vm_command_binds_the_app_manifest_and_evidence(self):
         checkout = self.original/'checkout'
         python = '/unavailable toolchain/bin/python3'
         candidate = self.original/'relocated product'
-        evidence = checkout/'build/phase-1e7/check/evidence/vm-app'
         config = '/previous temporary/private-vm.json'
         pin = 'f'*64
-        step = {'cwd': str(checkout), 'argv': [python, '-B', str(checkout/'tool/package_release_vm.py'),
-                '--config', config, '--app', str(candidate/'Meshchan.app'), '--signed-info',
-                str(candidate/'signed-product-info.json'), '--expected-signed-info-sha256', pin,
-                '--evidence', str(evidence)]}
+
+        def vm_step(evidence):
+            return {'cwd': str(checkout), 'argv': [python, '-B', str(checkout/'tool/package_release_vm.py'),
+                    '--config', config, '--app', str(candidate/'Meshchan.app'), '--signed-info',
+                    str(candidate/'signed-product-info.json'), '--expected-signed-info-sha256', pin,
+                    '--evidence', str(evidence)]}
+
+        producer = {'producerCheckout': str(checkout)}
+        for phase in ('phase-1e6', 'phase-1e7'):
+            for build_root, receipt in ((checkout/'build', {}), (checkout/'build', producer),
+                                        (self.original/'external/build', producer),
+                                        (self.original/'external/build artifacts', producer)):
+                with self.subTest(phase=phase, build_root=build_root, producer=receipt):
+                    output = build_root/phase/'check'
+                    evidence = output/'evidence/vm-app'
+                    resolved = retention.historical_checkout(output, phase, receipt)
+                    self.assertEqual(retention.verify_vm_invocation(vm_step(evidence), resolved, python,
+                                                                   candidate, pin, evidence), Path(config))
+        evidence = checkout/'build/phase-1e7/check/evidence/vm-app'
+        step = vm_step(evidence)
         args = checkout, python, candidate, pin, evidence
-        self.assertEqual(retention.verify_vm_invocation(step, *args), Path(config))
         for index, value in ((0, '/different toolchain/bin/python3'), (2, '/other checkout/tool/package_release_vm.py'),
                              (6, '/different candidate/Meshchan.app'), (10, 'e'*64), (12, '/other run/evidence')):
             with self.subTest(index=index):
@@ -437,6 +534,20 @@ class EvidenceTests(unittest.TestCase):
                     retention.verify_vm_invocation(step | {'argv': argv}, *args)
         with self.assertRaisesRegex(ValueError, 'Historical VM invocation cwd differs'):
             retention.verify_vm_invocation(step | {'cwd': '/other checkout'}, *args)
+
+    def test_historical_checkout_rejects_malformed_or_overlapping_locations(self):
+        checkout = self.original/'checkout'
+        output = self.original/'external/build artifacts/phase-1e7/check'
+        for run, receipt, message in (
+            (output, {}, 'output location'),
+            (output, {'producerCheckout': 'relative/checkout'}, 'Invalid historical path'),
+            (output, {'producerCheckout': None}, 'Expected a historical path'),
+            (output.parent.parent/'phase-1e6/check', {'producerCheckout': str(checkout)}, 'output location'),
+            (checkout/'nested/build/phase-1e7/check', {'producerCheckout': str(checkout)}, 'overlaps'),
+            (output, {'producerCheckout': str(output.parent.parent/'nested/checkout')}, 'overlaps'),
+        ):
+            with self.subTest(run=run, receipt=receipt), self.assertRaisesRegex(ValueError, message):
+                retention.historical_checkout(run, 'phase-1e7', receipt)
 
     def test_historical_replacement_command_uses_the_same_config_and_valid_timeout(self):
         checkout = self.original/'checkout'
@@ -448,7 +559,9 @@ class EvidenceTests(unittest.TestCase):
         step = {'cwd': str(checkout), 'argv': [python, '-B', str(checkout/'tool/release_signed_replacement.py'),
                 '--signed-root', str(candidate), '--signed-info-sha256', pin, '--output', str(workspace),
                 '--vm-config', str(config), '--timeout', '900']}
-        args = checkout, python, candidate, pin, workspace, config
+        output = self.original/'external/build artifacts/phase-1e6/sign'
+        resolved = retention.historical_checkout(output, 'phase-1e6', {'producerCheckout': str(checkout)})
+        args = resolved, python, candidate, pin, workspace, config
         retention.verify_replacement_invocation(step, *args)
         argv = step['argv'].copy()
         argv[10] = '/different temporary/private-vm.json'

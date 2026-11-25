@@ -44,8 +44,8 @@ reported PASS at 17:07:18 UTC on November 21, 2026, using the artifact set
 for CI run `44926458093`. The recorded temporary seal and restored image
 are absent. The historical receipts and CI snapshot remain available.
 
-The download used the published engineering copy at
-`~/Documents/my_projects/Meshchan Engineering Archive/RC1 Build 8 - engineering assets/`.
+The engineering copy used for the download is now stored at
+`/Volumes/WD_BLACK_4T_1/BuildArtifacts/Meshchan Engineering Archive/RC1 Build 8 - engineering assets/`.
 The selected durable seal `RC1 Build 8 - 1E.8` has receipt pin
 `76221dc94d40c7f32aaa5933c849fd17b4eadf3aceda907f9475f971dc38fc8c`.
 The original isolated verification and asset transfer pins are

@@ -60,21 +60,38 @@ CI snapshots. It lists allowed original roots for receipt-bound lookup. Use a
 separate pin for the selection JSON. The accepted chain and fixed assertions
 determine the inventory. Historical source and tool identities stay distinct.
 
-Run from a checkout of the exact retention-tool commit named in the
-[validation record](../validation/phase-1e8-ci-retention.md). That record also
-gives the selection pin. A separate checkout of the tool commit can use the
-original selection file and its recorded absolute input paths. The archive
-parent must exist and belong to the current user. Select fresh work and output
-names when repeating the operation.
+For a new handoff with a linked frozen build root, the accepted signed
+manifest records the physical run in `upstream.buildRunPath` alongside the
+repository-relative `upstream.buildRun` identifier. Include the canonical
+source checkout and the physical run in `inputRoots`. Use canonical physical
+paths in the selection for candidate evidence on the external volume.
+Keep the selection file, work directory, and seal at canonical paths.
+Archive verification uses the pinned run path to find retained evidence
+without following the original checkout's link.
+
+Signing and DMG acceptance receipts record the producer checkout separately
+from the physical output location. Replay uses that checkout to verify the
+recorded VM and replacement commands.
+
+For the historical example below, use a checkout of the exact retention-tool
+commit named in the [validation record](../validation/phase-1e8-ci-retention.md),
+which also gives the selection pin. A separate checkout of the tool commit
+can use the original selection file when all pinned inputs are available at
+their original canonical absolute paths. The verifier rejects symlink aliases
+in both the selection path and its recorded input roots. Replaying the Build 8
+selection below requires a real `build` directory at the historical checkout
+path. With `build` redirected to the external volume, use the existing seal to
+[check or restore the retained inputs](#check-and-restore-from-the-sealed-object).
+The archive parent must exist and belong to the current user. Select fresh
+work and output names when repeating the operation.
 
 ```sh
-MESHCHAN_ARCHIVE="$HOME/Documents/my_projects/Meshchan Engineering Archive"
+MESHCHAN_ARCHIVE="/Volumes/WD_BLACK_4T_1/BuildArtifacts/Meshchan Engineering Archive"
 MESHCHAN_SELECTION="$HOME/Documents/my_projects/meshchan/build/phase-1e8/rc1-build8-selection.json"
-mkdir -p "$PWD/build/phase-1e8"
 /opt/homebrew/bin/python3 -B tool/retain_release.py retain \
   --selection "$MESHCHAN_SELECTION" --selection-sha256 "$MESHCHAN_SELECTION_SHA256" \
-  --work "$PWD/build/phase-1e8/rc1-build8-seal" \
-  --destination "$MESHCHAN_ARCHIVE/RC1 Build 8 - 1E.8"
+  --work "$MESHCHAN_ARCHIVE/RC1 Build 8 - reseal evidence" \
+  --destination "$MESHCHAN_ARCHIVE/RC1 Build 8 - resealed"
 ```
 
 Keep the printed receipt pin outside the object. The sealed directory contains
@@ -121,7 +138,7 @@ same check or restore arguments. This uses the checkout's verification fixes
 for earlier seals while preserving their recorded verifier snapshots.
 
 ```sh
-MESHCHAN_ARCHIVE="$HOME/Documents/my_projects/Meshchan Engineering Archive"
+MESHCHAN_ARCHIVE="/Volumes/WD_BLACK_4T_1/BuildArtifacts/Meshchan Engineering Archive"
 MESHCHAN_SEAL="$MESHCHAN_ARCHIVE/RC1 Build 8 - 1E.8"
 # Run from the trusted checkout or set this to the independently saved copy.
 MESHCHAN_BOOTSTRAP="$PWD/tool/verify_retention_bootstrap.py"

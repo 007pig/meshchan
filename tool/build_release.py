@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Traceable local macOS arm64 Release builds and strict candidate materials.
 
-Builds own new ignored checkout-local directories and share the 1D.10 lock.
+Builds own new ignored directories below the checkout's build root and share the 1D.10 lock.
 No GUI, hardware, version allocation, signing-policy change, or publication.
 """
 import argparse
 from contextlib import ExitStack, contextmanager, nullcontext
 import ctypes
 import datetime
+import errno
 import fcntl
 import hashlib
 import io
@@ -36,7 +37,8 @@ from release_materials import (HOOK_CACHE, MATERIAL_ICONS_FONT, NATIVE_HOOK_SNAP
                                encoded, flutter_asset_files,
                                flutter_shader_includes, hosted_notice_identity,
                                hosted_notice_case_sensitive, input_parser_argv, native_source_hashes,
-                               product_inventory as full_inventory,
+                               product_inventory as full_inventory, release_build_root, release_reference,
+                               release_relative_path, release_run_path, release_tracked_pathspec,
                                repository_source_hashes, repository_source_metadata, require_material_file, require_product_disjoint,
                                require_regular_file, safe, sha, tree, unlisted_material_files,
                                verified_sdk_notices, verified_shader_includes,
@@ -179,6 +181,8 @@ def failure_message(error):
         if isinstance(stderr, bytes):
             stderr = stderr.decode(errors='replace')
         message += '\nCommand stderr:\n'+stderr.rstrip()
+    for note in getattr(error, '__notes__', ()):
+        message += '\n'+note
     return message
 
 
@@ -192,29 +196,32 @@ def capture(argv, cwd=ROOT, env=None):
 
 
 def output_path(root, value, new=False, *, timeout=3600):
-    raw = Path(value).expanduser().absolute()
-    # Reject aliases through symlinks, including dangling final links.
-    path = raw.resolve()
-    if raw != path or raw.is_symlink():
-        raise ValueError('Output must be a canonical path without symlink aliases')
-    base = root/'build/phase-1e4'
-    if path == base or not path.is_relative_to(base):
-        raise ValueError('Output must be an owned run below build/phase-1e4')
-    relative = path.relative_to(root).as_posix()
-    safe(relative)
-    # Neither ancestors nor descendants of another owned run are valid runs.
-    if any((p/'build-info.json').exists() for p in path.parents if p.is_relative_to(base)):
-        raise ValueError('Output overlaps an existing run')
-    if new and path.exists():
-        raise ValueError('Preserve existing output; choose a new run directory')
     # The requested run is untrusted until Git verifies ownership. Keep the
     # supervisor's temporary logs outside it and preserve CLI stdout for JSON.
     with tempfile.TemporaryDirectory(prefix='meshchan-output-preflight-') as temporary:
         scratch = Path(temporary)
         runner = Runner(scratch, scratch, {'steps': []}, controlled_environment(), timeout, show_progress=False)
         git = ['git', '-c', 'core.fsmonitor=false']
+        metadata = []
+        redirected = (root/'build').is_symlink()
+        if redirected:
+            for label, option in (('output-git-dir', '--git-dir'), ('output-git-common-dir', '--git-common-dir')):
+                path = runner.command(label, [*git, 'rev-parse', '--path-format=absolute', option],
+                                      cwd=root, return_bytes=True)
+                metadata.append(Path(os.fsdecode(path.removesuffix(b'\n'))))
+        physical_build = release_build_root(root, metadata)
+        path = release_run_path(root, physical_build, value, 'phase-1e4')
+        base = physical_build/'phase-1e4'
+        if any((parent/'build-info.json').exists() for parent in path.parents if parent.is_relative_to(base)):
+            raise ValueError('Output overlaps an existing run')
+        if new and path.exists():
+            raise ValueError('Preserve existing output; choose a new run directory')
+        # Git refuses pathspecs below a worktree symlink. In redirected mode
+        # require the root link to be ignored and its entire tree untracked.
+        relative = 'build' if redirected else release_relative_path(root, physical_build, path)
         tracked = runner.command('output-tracked-files',
-                                 [*git, '--literal-pathspecs', 'ls-files', '--cached', '-z', '--', relative], cwd=root)
+                                 [*git, 'ls-files', '--cached', '-z', '--', release_tracked_pathspec(root, relative)],
+                                 cwd=root)
         if tracked:
             raise ValueError('Output overlaps tracked source: '+tracked.split('\0', 1)[0])
         try:
@@ -256,22 +263,24 @@ def checkout_lock(root):
 
 
 class Runner:
-    def __init__(self, root, evidence, receipt, env, timeout=3600, interrupted=None, *, show_progress=True):
+    def __init__(self, root, evidence, receipt, env, timeout=3600, interrupted=None, *,
+                 show_progress=True, physical_build=None):
         self.root, self.evidence, self.receipt, self.env = root, evidence, receipt, env
         self.timeout = timeout
         self.interrupted = interrupted
         self.show_progress = show_progress
+        self.physical_build = physical_build
 
     def save(self):
         write(self.evidence/'build-receipt.json', self.receipt)
 
-    def command(self, name, argv, cwd=None, *, return_stderr=False):
+    def command(self, name, argv, cwd=None, *, return_stderr=False, return_bytes=False):
         log = self.evidence/'logs'/(name+'.log')
         stderr_log = log.with_suffix('.stderr.log')
         log.parent.mkdir(exist_ok=True)
         step = {'name': name, 'argv': [str(v) for v in argv], 'cwd': str(cwd or self.root),
-                'startedAt': now(), 'log': log.relative_to(self.root).as_posix(),
-                'stderrLog': stderr_log.relative_to(self.root).as_posix()}
+                'startedAt': now(), 'log': release_relative_path(self.root, self.physical_build, log),
+                'stderrLog': release_relative_path(self.root, self.physical_build, stderr_log)}
         self.receipt['steps'].append(step)
         self.save()
         child = owned = None
@@ -330,6 +339,8 @@ class Runner:
                     raise_if_interrupted(interrupted)
         if self.show_progress:
             print('PASS '+name, flush=True)
+        if return_bytes:
+            return captured[returned_log]
         # Match Path.read_text's default encoding and universal newlines.
         with io.TextIOWrapper(io.BytesIO(captured[returned_log])) as result:
             return result.read()
@@ -612,21 +623,51 @@ def fresh_native_hook_cache(root, out):
     """Give both compilers a fresh cache and preserve the developer's cache."""
     validate_flutter_tree(root, HOOK_CACHE, 'native hook cache')
     cache = root/HOOK_CACHE
-    previous = out/'.previous-native-hooks'
     snapshot = out/NATIVE_HOOK_SNAPSHOT
+    staging = Path(tempfile.mkdtemp(prefix='.meshchan-native-hooks-', dir=cache.parent))
+    previous = staging/'previous'
+    fresh = staging/'fresh'
     had_cache = cache.exists()
+
+    def finish_cache():
+        try:
+            try:
+                if os.path.lexists(cache):
+                    cache.rename(fresh)
+            finally:
+                if had_cache:
+                    previous.rename(cache)
+            validate_flutter_tree(staging, 'fresh', 'native hook cache snapshot')
+            if fresh.exists():
+                try:
+                    fresh.rename(snapshot)
+                except OSError as error:
+                    if error.errno != errno.EXDEV:
+                        raise
+                    # Native provenance compares dependency size and mtime.
+                    shutil.copytree(fresh, snapshot, copy_function=shutil.copy2)
+        finally:
+            # Leave the original developer cache recoverable if restoration failed.
+            if not os.path.lexists(previous):
+                shutil.rmtree(staging)
+
     if had_cache:
-        cache.rename(previous)
+        try:
+            cache.rename(previous)
+        except OSError:
+            staging.rmdir()
+            raise
     try:
         cache.mkdir()
         yield snapshot
-    finally:
+    except BaseException as error:
         try:
-            if os.path.lexists(cache):
-                cache.rename(snapshot)
-        finally:
-            if had_cache:
-                previous.rename(cache)
+            finish_cache()
+        except Exception as cleanup_error:
+            error.add_note('Native hook cache cleanup failed: '+str(cleanup_error))
+        raise
+    else:
+        finish_cache()
 
 
 def read_flutter_settings(cwd, env):
@@ -1199,12 +1240,13 @@ def verify_app_aot(app, loaders, env):
     return {'binary': name, 'architecture': 'arm64', 'exports': list(APP_AOT_EXPORTS)}
 
 
-def audit_macho_paths(bundle, binary_names, root):
-    checkout = os.fsencode(root)+b'/'
+def audit_macho_paths(bundle, binary_names, *roots):
+    paths = [os.fsencode(root) for root in roots]
+    paths.extend(root.as_uri().encode() for root in roots)
     names = sorted(binary_names)
     for name in names:
         data = (bundle/name).read_bytes()
-        if checkout in data or contains_macho_local_path(data):
+        if contains_macho_local_path(data) or any(path+b'/' in data or path+b'\0' in data for path in paths):
             raise ValueError('Local build path remains in '+name)
     return names
 
@@ -1229,8 +1271,9 @@ def products(root, app, cli, ident, env, *, hook_cache=None, path_audit=False):
     loaders = {'cli': cli_loaders, 'app': app_loaders}
     audit = {}
     if path_audit:
-        audit = {'pathAudit': {'app': audit_macho_paths(app, app_loaders, root),
-                               'cli': audit_macho_paths(cli, cli_loaders, root)}}
+        audit_roots = (root, release_build_root(root))
+        audit = {'pathAudit': {'app': audit_macho_paths(app, app_loaders, *audit_roots),
+                               'cli': audit_macho_paths(cli, cli_loaders, *audit_roots)}}
     signatures = {}
     signed_products = {'app': app, 'cli': executable,
                        **{'cli/'+name: cli/name for name in CLI_LIBRARIES}}
@@ -1323,13 +1366,19 @@ def run_product_checks(root, out, command):
 
 
 def ref(root, path):
-    return {'path': safe(path.relative_to(root).as_posix()), 'sha256': digest(owned_file(path, root))}
+    if path.is_relative_to(root):
+        return {'path': safe(path.relative_to(root).as_posix()), 'sha256': digest(owned_file(path, root))}
+    physical_build = release_build_root(root)
+    return {'path': release_relative_path(root, physical_build, path),
+            'sha256': digest(owned_file(path, physical_build))}
 
 
 def build(args):
     root = ROOT.resolve()
     with checkout_lock(root), DeferredInterrupts() as interrupted, ExitStack() as hooks:
         out = output_path(root, args.output, new=True, timeout=args.timeout)
+        physical_build = release_build_root(root)
+        run_identity = release_relative_path(root, physical_build, out)
         env, flutter = controlled_environment(), args.flutter.expanduser().resolve()
         raise_if_interrupted(interrupted)
         out.mkdir(parents=True)
@@ -1337,8 +1386,8 @@ def build(args):
         shutil.copyfile(root/'tool/build_release.py', evidence/'run_build.py')
         receipt = {'formatVersion': 1, 'recipeVersion': RECIPE_VERSION, 'status': 'RUNNING', 'startedAt': now(),
                    'engineeringDirtyMode': args.allow_dirty, 'runnerSha256': digest(evidence/'run_build.py'), 'steps': []}
-        runner = Runner(root, evidence, receipt, env, args.timeout, interrupted)
-        info = {'formatVersion': 1, 'runIdentity': out.relative_to(root).as_posix(),
+        runner = Runner(root, evidence, receipt, env, args.timeout, interrupted, physical_build=physical_build)
+        info = {'formatVersion': 1, 'runIdentity': run_identity,
                 'buildStatus': 'RUNNING', 'productChecksStatus': 'NOT_RUN', 'materials': {'status': 'NOT_RUN'},
                 'laterReleaseValidation': 'NOT_RUN: staging, formal signing, notarization, DMG, installation, upgrade, hardware, remote CI, publication'}
         try:
@@ -1493,7 +1542,7 @@ def build(args):
                 'sdk-notices-after-build', argv, cwd)), 'external package sources')
             write(evidence/'product-checks.json', checks)
             write(evidence/'candidate-inventories.json', verified_inventories)
-            lines = [item['sha256']+'  '+(bundle/name).relative_to(root).as_posix()
+            lines = [item['sha256']+'  '+release_relative_path(root, physical_build, bundle/name)
                      for label, bundle in (('app', app), ('cli', cli))
                      for name, item in verified_inventories[label].items() if item['type'] == 'file']
             (evidence/'candidate-checksums.txt').write_text('\n'.join(sorted(lines))+'\n')
@@ -1511,7 +1560,9 @@ def build(args):
             final_commit = runner.command('checkout-commit-after-build', ['git', 'rev-parse', 'HEAD']).strip()
             require_equal(receipt['sourceCommit'], final_commit, 'checkout commit')
             raise_if_interrupted(interrupted)
-            receipt.update(status='PASS', finishedAt=now(), app=app.relative_to(root).as_posix(), cli=cli.relative_to(root).as_posix(),
+            receipt.update(status='PASS', finishedAt=now(),
+                           app=release_relative_path(root, physical_build, app),
+                           cli=release_relative_path(root, physical_build, cli),
                            inputsUnchangedAcrossBuilds=True, inputCount=len(before),
                            compilationInputsSha256=digest(evidence/'compilation-input-hashes.json'),
                            candidateChecksumsSha256=digest(evidence/'candidate-checksums.txt'),
@@ -1536,6 +1587,8 @@ def build(args):
             while not interrupted.seal_if_unchanged(0):
                 raise_if_interrupted(interrupted)
         except BaseException as error:
+            # Record any cache cleanup error as a note on the build failure.
+            hooks.__exit__(*sys.exc_info())
             failure = failure_message(error)
             receipt.update(status='FAIL', finishedAt=now(), error=failure)
             info.update(buildStatus='FAIL', error=failure)
@@ -1562,11 +1615,13 @@ def require_checkout_commit(expected, command, name):
 
 
 def verify_evidence(root, out, info):
-    require_equal(out.relative_to(root).as_posix(), info.get('runIdentity'), 'selected run')
+    physical_build = release_build_root(root)
+    require_equal(release_relative_path(root, physical_build, out), info.get('runIdentity'), 'selected run')
     if info.get('buildStatus') != 'PASS' or info.get('productChecksStatus') != 'PASS':
         raise ValueError('Build is incomplete or failed')
     app, cli = (owned_path(path, out) for path in product_paths(out))
-    require_equal((app, cli), tuple(root/safe(info[k]) for k in ('app', 'cli')), 'selected run products')
+    require_equal((app, cli), tuple(release_reference(root, physical_build, info[k]) for k in ('app', 'cli')),
+                  'selected run products')
     evidence = owned_path(out/'evidence', out)
     required = {'build-receipt.json', 'compilation-input-hashes.json', 'inputs-after-cli.json',
                 'inputs-after-app.json', 'run_build.py', 'candidate-checksums.txt',
@@ -1577,7 +1632,7 @@ def verify_evidence(root, out, info):
     if not required <= info['evidence'].keys():
         raise ValueError('Selected run lacks required build evidence')
     for name, value in info['evidence'].items():
-        path = owned_path(root/safe(value['path']), evidence)
+        path = owned_path(release_reference(root, physical_build, value['path']), evidence)
         if path.parent != evidence or path.name != name or not path.is_file() or digest(path) != value['sha256']:
             raise ValueError('Evidence file changed: '+value['path'])
     receipt_path = evidence/'build-receipt.json'
@@ -1593,9 +1648,9 @@ def verify_evidence(root, out, info):
     require_equal((info['app'], info['cli']), (receipt['app'], receipt['cli']), 'build receipt products')
     steps = receipt['steps']
     for step in steps:
-        owned_path(root/safe(step['log']), evidence)
+        owned_path(release_reference(root, physical_build, step['log']), evidence)
         if 'stderrLog' in step:
-            owned_path(root/safe(step['stderrLog']), evidence)
+            owned_path(release_reference(root, physical_build, step['stderrLog']), evidence)
     verify_build_receipt(root, receipt_path, evidence/'compilation-input-hashes.json',
                          evidence/'candidate-checksums.txt', app, cli)
     before = read(evidence/'compilation-input-hashes.json')
@@ -1617,11 +1672,11 @@ def verify_evidence(root, out, info):
     report = read(evidence/'product-checks.json')
     require_equal('PASS', report.get('status'), 'product check outcome')
     validator = steps[names.index('validate-products')]
-    require_equal(report, read(root/safe(validator['log'])), 'product validator output')
+    require_equal(report, read(release_reference(root, physical_build, validator['log'])), 'product validator output')
     require_equal(report['signatures'], info['signatures'], 'indexed product signatures')
     for line in (evidence/'candidate-checksums.txt').read_text().splitlines():
         expected, name = line.split('  ', 1)
-        path = root/safe(name)
+        path = release_reference(root, physical_build, name)
         if not path.is_relative_to(app) and not path.is_relative_to(cli):
             raise ValueError('Checksum path is outside the selected products: '+name)
         if digest(owned_file(path, app if path.is_relative_to(app) else cli)) != expected:
@@ -1629,10 +1684,20 @@ def verify_evidence(root, out, info):
     return evidence
 
 
-def verify_material_binding(root, out, materials):
-    output = owned_path(Path(materials['arguments']['output']), out)
+def bound_material_output(root, out, value):
+    """Find the physical material directory named by a checkout-local receipt."""
+    output = Path(value)
+    logical_run = root/release_relative_path(root, release_build_root(root), out)
+    if output.parent == logical_run:
+        output = out/output.name
     if output.parent != out:
         raise ValueError('Materials directory does not belong to the selected run')
+    return owned_path(output, out)
+
+
+def verify_material_binding(root, out, materials):
+    physical_build = release_build_root(root)
+    output = bound_material_output(root, out, materials['arguments']['output'])
     references = materials['references']
     expected = {'materials-manifest.json': output,
                 **{name: out/'evidence' for name in ('collect.log', 'collect.stderr.log', 'check.log', 'check.stderr.log')}}
@@ -1640,7 +1705,7 @@ def verify_material_binding(root, out, materials):
         raise ValueError('Missing material binding for selected run')
     for name, parent in expected.items():
         value = references[name]
-        path = owned_file(root/safe(value['path']), parent)
+        path = owned_file(release_reference(root, physical_build, value['path']), parent)
         if (path.name != name or (parent == output and path.parent != output)
                 or digest(path) != value['sha256']):
             raise ValueError('Material binding changed: '+value['path'])
@@ -1732,7 +1797,8 @@ def material_argv(root, out, info, options, command):
     app, cli = product_paths(out);evidence = out/'evidence'
     return [sys.executable, root/'tool/release_materials.py', command, '--repo', root,
             '--flutter', info['toolchain']['flutterPath'], '--app', app, '--cli', cli,
-            '--output', options['output'], '--downloads', options['downloads'], '--probe', options['probe'],
+            '--output', bound_material_output(root, out, options['output']),
+            '--downloads', options['downloads'], '--probe', options['probe'],
             '--sdk-source-workspace', options['sdkSourceWorkspace'],
             '--build-inputs', evidence/'compilation-input-hashes.json',
             '--candidate-hashes', evidence/'candidate-checksums.txt', '--build-receipt', evidence/'build-receipt.json']
@@ -1752,7 +1818,7 @@ def verification_runner(root, out, label, env, timeout=3600, *, interrupted=None
         phase = out/'evidence'/(label+'-'+datetime.datetime.now().strftime('%Y%m%dT%H%M%S%f'))
         phase.mkdir()
         ledger = {'formatVersion': 1, 'status': 'RUNNING', 'steps': []}
-        runner = Runner(root, phase, ledger, env, timeout, pending)
+        runner = Runner(root, phase, ledger, env, timeout, pending, physical_build=release_build_root(root))
         try:
             runner.save()
             raise_if_interrupted(pending)
@@ -1774,7 +1840,7 @@ def verification_runner(root, out, label, env, timeout=3600, *, interrupted=None
 
 
 def strict_materials(root, out, info, options, command, label, timeout=3600, *, interrupted=None):
-    destination = owned_path(Path(options['output']), out)
+    destination = bound_material_output(root, out, options['output'])
     manifest_path = owned_path(destination/'materials-manifest.json', destination)
     require_material_caches(options, out)
     commit = info['sourceCommit']
@@ -1826,14 +1892,17 @@ def material_destination(out, name):
 
 
 def materials(args):
-    root = ROOT.resolve();out = output_path(root, args.output, timeout=getattr(args, 'timeout', 3600))
+    root = ROOT.resolve()
     with checkout_lock(root):
+        out = output_path(root, args.output, timeout=getattr(args, 'timeout', 3600))
+        physical_build = release_build_root(root)
         index = owned_file(out/'build-info.json', out)
         info = read(index)
         if info['materials']['status'] == 'PASS':
             raise ValueError('Materials already accepted for this run; use check to reverify them')
         destination = material_destination(out, args.materials_name)
-        options = {'output': str(destination), 'downloads': str(args.downloads.resolve()),
+        options = {'output': str(root/release_relative_path(root, physical_build, destination)),
+                   'downloads': str(args.downloads.resolve()),
                    'probe': str(args.probe.resolve()), 'sdkSourceWorkspace': str(args.sdk_source_workspace.resolve())}
         require_material_caches(options, out)
         check(args, locked=True)
@@ -1863,7 +1932,8 @@ def materials(args):
                 raise_if_interrupted(interrupted)
                 references = {p.name: ref(root, p) for p in (collect_log, collect_log.with_suffix('.stderr.log'),
                                                             check_log, check_log.with_suffix('.stderr.log'))}
-                references[manifest.name] = {'path': manifest.relative_to(root).as_posix(), 'sha256': checked}
+                references[manifest.name] = {'path': release_relative_path(root, physical_build, manifest),
+                                             'sha256': checked}
                 accepted = {'status': 'PASS', 'arguments': options, 'references': references}
                 verify_material_binding(root, out, accepted)
                 info['materials'] = accepted

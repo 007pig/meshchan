@@ -13,9 +13,8 @@ lock for snapshots, copying, and acceptance. It compares both sides of the
 lock handoff to the frozen checker and checks the protected inputs again after
 staging, archiving, and runtime acceptance.
 
-The commands below use example paths and an illustrative historical build
-pin. For a real package run, set the frozen checkout, build run, and pin
-from that candidate's accepted build handoff. See the
+Set the frozen checkout, build run, and pin from the candidate's accepted
+build handoff. See the
 [1E.11 handoff](phase-1e11-release-materials.md#build-10-replacement-candidate)
 for the exact Build 10 identity. Run from the development checkout with the
 existing stable Python and configured, logged-in macOS test VM. The VM follows the
@@ -25,8 +24,9 @@ of the external extraction directories.
 
 ```sh
 /opt/homebrew/bin/python3 --version
-MESHCHAN_FROZEN_CHECKOUT="$PWD/build/phase-1e4/frozen-recipe-55"
-MESHCHAN_BUILD_INFO_SHA=e9e2eb640af06cdf8e70696a82cf45ce124e1682784b364698d4a9d73c3c56ef
+MESHCHAN_FROZEN_CHECKOUT=/absolute/path/to/accepted/frozen-checkout
+MESHCHAN_BUILD_RUN=build/phase-1e4/run-001
+MESHCHAN_BUILD_INFO_SHA=accepted_build_info_sha256
 MESHCHAN_VM_CONFIG="$HOME/.config/meshchan-vm/config.json"
 MESHCHAN_EXTRACT_PARENT="$(mktemp -d /private/tmp/meshchan-1e5.XXXXXXXX)"
 MESHCHAN_PACKAGE_RUN="build/phase-1e5/$(basename "$MESHCHAN_EXTRACT_PARENT")"
@@ -34,7 +34,7 @@ MESHCHAN_PACKAGE_RUN="build/phase-1e5/$(basename "$MESHCHAN_EXTRACT_PARENT")"
   --config "$MESHCHAN_VM_CONFIG" check
 /opt/homebrew/bin/python3 tool/package_release.py package \
   --source-checkout "$MESHCHAN_FROZEN_CHECKOUT" \
-  --build-run build/phase-1e4/run-001 \
+  --build-run "$MESHCHAN_BUILD_RUN" \
   --expected-build-info-sha256 "$MESHCHAN_BUILD_INFO_SHA" \
   --output "$MESHCHAN_PACKAGE_RUN" \
   --extract-root "$MESHCHAN_EXTRACT_PARENT/package extraction" \
@@ -42,7 +42,7 @@ MESHCHAN_PACKAGE_RUN="build/phase-1e5/$(basename "$MESHCHAN_EXTRACT_PARENT")"
 
 /opt/homebrew/bin/python3 tool/package_release.py check \
   --source-checkout "$MESHCHAN_FROZEN_CHECKOUT" \
-  --build-run build/phase-1e4/run-001 \
+  --build-run "$MESHCHAN_BUILD_RUN" \
   --expected-build-info-sha256 "$MESHCHAN_BUILD_INFO_SHA" \
   --package-run "$MESHCHAN_PACKAGE_RUN" \
   --extract-root "$MESHCHAN_EXTRACT_PARENT/independent extraction" \
@@ -65,6 +65,15 @@ error instead of a JSON result. An independent check
 uses a separate `evidence/check-*/` ledger and can repeat acceptance against
 an existing archive with recorded artifact identities. It leaves the original
 package receipt intact.
+
+The development checkout can use an ignored root `build` symlink to an
+existing, canonical external directory. Keep the same `--output` and
+`--package-run` paths in the commands above. If the frozen checkout has its
+own linked `build`, its frozen checker must support that layout. Pass its
+canonical checkout directory and keep `--build-run` relative to that checkout.
+Use separate storage for external extraction and for VM runtime state. An
+older handoff whose accepted evidence binds absolute paths may still require
+its original checkout and artifact locations for the frozen recheck.
 
 ## Layout and integrity
 

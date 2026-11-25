@@ -57,6 +57,17 @@ class LayoutTests(unittest.TestCase):
                   'entries': self.tools, 'contents': self.contents, **changes}
         return dmg.mounted_layout(self.staging, **inputs)
 
+    def dmg_checkout(self, *, linked):
+        checkout = self.root/('linked checkout' if linked else 'local checkout')
+        checkout.mkdir()
+        subprocess.run([*package.GIT, '-C', checkout, 'init', '-q'], check=True, capture_output=True)
+        (checkout/'.gitignore').write_text('/build\n')
+        physical = self.root/'external build' if linked else checkout/'build'
+        physical.mkdir()
+        if linked:
+            (checkout/'build').symlink_to(physical)
+        return checkout, physical
+
     def test_complete_staging_preserves_modes_bytes_and_links(self):
         self.assertEqual(self.expected(), self.layout)
         self.assertEqual(product_inventory(self.top), self.inventory)
@@ -351,7 +362,10 @@ class LayoutTests(unittest.TestCase):
         config.write_text('{"runtime_dir":"/private/tmp/vm-runtime-for-fixture"}')
         output = self.root/'run'
         receipt = self.root/'acceptance.json'
-        upstream = SimpleNamespace(protected=())
+        builds = (self.root/'external output build', self.root/'external source build')
+        for path in builds:
+            path.mkdir()
+        upstream = SimpleNamespace(protected=(), build_roots=builds)
         checkout = self.root/'checkout'
         checkout.mkdir()
         candidate = checkout/'signing/signed/product'
@@ -362,12 +376,16 @@ class LayoutTests(unittest.TestCase):
         accepted_workspace.mkdir()
         with patch.object(dmg, 'ROOT', checkout):
             for workspace, message in ((alias, 'canonical'), (checkout, 'overlaps'),
-                                       (accepted_workspace, 'overlaps')):
+                                       (accepted_workspace, 'overlaps'), *((path, 'overlaps') for path in builds)):
                 args = SimpleNamespace(command='check', vm_config=config, workspace_parent=workspace)
                 with self.subTest(workspace=workspace), self.assertRaisesRegex(ValueError, message):
                     dmg.protect_inputs(output, args, upstream, candidate, receipt, accepted_workspace, None)
             args.workspace_parent = self.root
             owned, _ = dmg.protect_inputs(output, args, upstream, candidate, receipt, accepted_workspace, None)
+            for path in builds:
+                config.write_text(json.dumps({'runtime_dir': str(path/'vm runtime')}))
+                with self.subTest(runtime=path), self.assertRaisesRegex(ValueError, 'VM runtime_dir overlaps'):
+                    dmg.protect_inputs(output, args, upstream, candidate, receipt, accepted_workspace, None)
         self.assertIn('Meshchan DMG check ', owned.name)
         self.assertFalse(owned.exists())
 
@@ -384,10 +402,75 @@ class LayoutTests(unittest.TestCase):
         with (patch.object(dmg, 'ROOT', checkout),
               chdir(self.root),
               patch.object(dmg, 'checked_vm_configuration') as checked):
-            _, _ = dmg.protect_inputs(self.root/'out', args, SimpleNamespace(protected=()), candidate,
+            _, _ = dmg.protect_inputs(self.root/'out', args, SimpleNamespace(protected=(), build_roots=()), candidate,
                                      self.root/'receipt', self.root/'local workspace', None)
         self.assertEqual(checked.call_args.args[0], config)
         self.assertIn(config, checked.call_args.args[1])
+
+    def test_create_and_check_use_physical_build_paths_for_outputs_and_inputs(self):
+        config = self.root/'vm.json'
+        config.write_text(json.dumps({'runtime_dir': str(self.root/'vm runtime')}))
+        local_workspace = self.root/'accepted workspace'
+        local_workspace.mkdir()
+        candidate = Path('phase-1e6/signed-run/signed/product')
+        receipt = Path('phase-1e6/signed-run/evidence/check-001/signing-receipt.json')
+        image = Path('phase-1e7/previous-run/meshchan.dmg')
+        for linked in (False, True):
+            checkout, physical = self.dmg_checkout(linked=linked)
+            (physical/candidate).mkdir(parents=True)
+            for path in (physical/receipt, physical/image):
+                path.parent.mkdir(parents=True)
+                path.write_bytes(b'fixture')
+            upstream = SimpleNamespace(protected=(), build_roots=(physical,))
+            for command, name in (('create', 'image-record.json'), ('check', 'dmg-acceptance.json')):
+                run = Path('phase-1e7')/command
+                args = SimpleNamespace(**vars(self.args), command=command, timeout=10, output=Path('build')/run,
+                                       candidate=Path('build')/candidate, acceptance_receipt=Path('build')/receipt,
+                                       image=Path('build')/image, image_sha256=sha(b'fixture'),
+                                       workspace_parent=self.root, vm_config=config)
+                with (self.subTest(linked=linked, command=command), chdir(checkout),
+                      patch.object(dmg, 'ROOT', checkout),
+                      patch.object(dmg.platform, 'system', return_value='Darwin'),
+                      patch.object(dmg.platform, 'machine', return_value='arm64'),
+                      patch.object(dmg.sign_release, 'accepted_upstream', return_value=upstream),
+                      patch.object(dmg.sign_release, 'manifest_inventory'),
+                      patch.object(dmg.sign_release, 'read_local_acceptance', return_value=(
+                          self.info, b'manifest', {'workspace': str(local_workspace)})) as read_acceptance,
+                      patch.object(dmg, 'environment', side_effect=ValueError('End of path fixture'))):
+                    self.assertEqual(dmg.output_path(physical/run), physical/run)
+                    with self.assertRaisesRegex(ValueError, 'End of path fixture'):
+                        dmg.run(args)
+                    read_acceptance.assert_called_once_with(physical/candidate, args.candidate_sha256,
+                                                            physical/receipt, args.acceptance_sha256)
+                    record = json.loads((physical/run/name).read_bytes())
+                    self.assertEqual(record['producerCheckout'], str(checkout))
+                    self.assertEqual(record['candidate']['root'], str(physical/candidate))
+                    self.assertEqual(record['candidate']['localAcceptanceReceipt'], str(physical/receipt))
+                    if command == 'check':
+                        self.assertEqual(record['selectedImage'], {'path': str(physical/image),
+                                                                   'sha256': args.image_sha256})
+
+    def test_linked_dmg_rejects_existing_runs_nested_links_and_tracked_build(self):
+        checkout, physical = self.dmg_checkout(linked=True)
+        local = checkout/'build/phase-1e7'
+        output = physical/'phase-1e7/existing'
+        output.mkdir(parents=True)
+        (output.parent/'alias').symlink_to(output)
+        with patch.object(dmg, 'ROOT', checkout):
+            with self.assertRaisesRegex(ValueError, 'fresh output'):
+                dmg.output_path(local/'existing')
+            with self.assertRaisesRegex(ValueError, 'without symlink aliases'):
+                dmg.output_path(local/'alias')
+            with self.assertRaisesRegex(ValueError, 'symlink alias'):
+                dmg.input_path(local/'alias/meshchan.dmg', physical)
+            subprocess.run([*package.GIT, '-C', checkout, 'add', '-f', '--', 'build'],
+                           check=True, capture_output=True)
+            with self.assertRaisesRegex(ValueError, 'tracked source'):
+                dmg.output_path(local/'new')
+            (checkout/'build').unlink()
+            (checkout/'build').symlink_to(self.root/'missing build')
+            with self.assertRaisesRegex(ValueError, 'target is unavailable'):
+                dmg.output_path(local/'new')
 
     def test_workspace_creation_failure_is_recorded_without_overwriting_existing_files(self):
         existing = self.root/'unavailable workspace'
@@ -396,7 +479,8 @@ class LayoutTests(unittest.TestCase):
         output = self.root/'fresh receipt run'
         args = SimpleNamespace(**vars(self.args), command='create', timeout=10, output=output,
                                candidate=self.candidate, acceptance_receipt=self.root/'acceptance.json')
-        with (patch.object(dmg.platform, 'system', return_value='Darwin'),
+        with (patch.object(dmg, 'ROOT', self.root),
+              patch.object(dmg.platform, 'system', return_value='Darwin'),
               patch.object(dmg.platform, 'machine', return_value='arm64'),
               patch.object(dmg, 'output_path', return_value=output),
               patch.object(dmg, 'protect_inputs', return_value=(existing, None)),
@@ -424,7 +508,8 @@ class LayoutTests(unittest.TestCase):
             self.assertTrue(workspace.is_dir())
             raise ValueError('End of temporary-path fixture')
 
-        with (patch.dict(os.environ, {'TMPDIR': str(self.candidate)}),
+        with (patch.object(dmg, 'ROOT', self.root),
+              patch.dict(os.environ, {'TMPDIR': str(self.candidate)}),
               patch.object(dmg.platform, 'system', return_value='Darwin'),
               patch.object(dmg.platform, 'machine', return_value='arm64'),
               patch.object(dmg, 'output_path', return_value=output),

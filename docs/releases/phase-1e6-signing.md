@@ -85,6 +85,16 @@ extracted product. Signing rechecks the package, retained extraction,
 process logs, and runtime databases from that exact run. The receipts record
 the product source, archived packager inputs, and signing inputs separately.
 
+An ignored checkout-root `build` may link to a canonical external directory.
+The package run, its check receipt, and the signing output accept paths through
+that link or paths on the external volume. Pass the canonical frozen checkout
+and keep `--build-run` relative to it. Use a check workspace outside both
+checkouts and their build roots. For a new handoff, use the paths and pins from
+its own build, package, and fresh package check.
+For a linked frozen build, the signed manifest records the canonical run path
+for [retention](phase-1e8-ci-retention.md#seal-the-selected-image-and-evidence)
+alongside its checkout-relative run identifier.
+
 ```sh
 meshchan_sign_release() {
   meshchan_sign_action="$1"

@@ -17,6 +17,7 @@ from urllib.parse import unquote, urljoin, urlparse
 
 import build_release as build
 from release_materials import (controlled_environment, digest, encoded, product_inventory,
+                               release_build_root, release_relative_path, release_run_path, release_tracked_pathspec,
                                require_material_file, require_product_disjoint, safe, sha,
                                unlisted_material_files)
 from release_package_archive import (archive_stamp, check_payload, compare, create_archive,
@@ -99,19 +100,32 @@ def real_directory(path):
     return path
 
 
-def git(cwd, *args):
+def git(cwd, *args, text=True):
     return subprocess.check_output([*GIT, *args], cwd=cwd, env=controlled_environment(),
-                                   timeout=20, text=True)
+                                   timeout=20, text=text)
 
 
-def output_path(value, new):
-    path = canonical(value)
-    if path.parent != ROOT/'build/phase-1e5':
-        raise ValueError('Use a direct child of the development checkout build/phase-1e5 directory')
-    tracked = git(ROOT, '--literal-pathspecs', 'ls-files', '--cached', '-z', '--',
-                  path.relative_to(ROOT).as_posix())
-    if tracked or not git(ROOT, 'check-ignore', '--', path.relative_to(ROOT).as_posix()):
-        raise ValueError('Package output must be ignored and disjoint from tracked source')
+def build_directory(root):
+    metadata = git_metadata(root) if (root/'build').is_symlink() else ()
+    return release_build_root(root, metadata)
+
+
+def require_ignored_run(root, name):
+    if git(root, 'ls-files', '--cached', '-z', '--', release_tracked_pathspec(root, name)):
+        raise ValueError('Release run must be disjoint from tracked source')
+    try:
+        git(root, 'check-ignore', '-q', '--', name)
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        raise ValueError('Release run must be ignored by Git') from error
+
+
+def output_path(value, new, *, physical_build=None):
+    physical_build = build_directory(ROOT) if physical_build is None else physical_build
+    path = release_run_path(ROOT, physical_build, value, 'phase-1e5', direct=True)
+    name = 'build' if physical_build != ROOT/'build' else release_relative_path(ROOT, physical_build, path)
+    require_ignored_run(ROOT, name)
     if new and os.path.lexists(path):
         raise ValueError('Preserve the existing package run; choose a fresh directory')
     if not new:
@@ -119,12 +133,15 @@ def output_path(value, new):
     return path
 
 
-def selected_info(source, relative, pin):
+def selected_info(source, relative, pin, *, physical_build=None):
     path = Path(relative)
     if (path.is_absolute() or path.parts[:2] != ('build', 'phase-1e4') or len(path.parts) < 3
             or path.as_posix() != relative or '..' in path.parts):
         raise ValueError('Use the selected run path relative to the frozen checkout')
-    run = real_directory(canonical(source/path))
+    physical_build = build_directory(source) if physical_build is None else physical_build
+    run = real_directory(release_run_path(source, physical_build, source/path, 'phase-1e4'))
+    if physical_build != source/'build':
+        require_ignored_run(source, 'build')
     data = require_material_file(run, INDEXES[0]).read_bytes()
     equal(pin, sha(data), 'Accepted build-info SHA-256')
     info = json.loads(data)
@@ -151,7 +168,9 @@ def protected_caches(source, info, *, package_config_sha256=None):
 
 
 def git_metadata(root):
-    return [Path(git(root, 'rev-parse', '--path-format=absolute', option).strip())
+    # Each invocation reports one pathname followed by a single LF.
+    return [Path(os.fsdecode(git(root, 'rev-parse', '--path-format=absolute', option,
+                                 text=False).removesuffix(b'\n')))
             for option in ('--git-dir', '--git-common-dir')]
 
 
@@ -208,11 +227,15 @@ def snapshot(source, run, info, pin):
     bound = {INDEXES[0]: pin}
     bound.update({ref['path']: ref['sha256'] for ref in info['evidence'].values()})
     bound.update({ref['path']: ref['sha256'] for ref in info['materials']['references'].values()})
+    logical_run = Path(safe(info['runIdentity']))
+
     def read_bound(name, expected):
-        path = run/INDEXES[0] if name == INDEXES[0] else source/safe(name)
-        if not path.is_relative_to(run):
-            raise ValueError('Evidence lies outside the selected build: '+name)
-        relative = path.relative_to(run).as_posix()
+        relative = INDEXES[0]
+        if name != INDEXES[0]:
+            path = Path(safe(name))
+            if path == logical_run or not path.is_relative_to(logical_run):
+                raise ValueError('Evidence lies outside the selected build: '+name)
+            relative = path.relative_to(logical_run).as_posix()
         entry = file_entry(require_material_file(run, relative))
         equal(expected, entry['sha256'], 'Bound file '+name)
         return relative, entry
@@ -225,11 +248,10 @@ def snapshot(source, run, info, pin):
                   for name in ('log', 'stderrLog') if name in step)
     products = read_bound_index(run, INDEXES[2], inputs[INDEXES[2]])
     app, cli = build.product_paths(run)
-    material_path = Path(info['materials']['arguments']['output'])
-    if material_path.parent != run:
-        raise ValueError('Accepted materials are outside the selected build')
+    material_path = build.bound_material_output(source, run, info['materials']['arguments']['output'])
     reference = info['materials']['references']['materials-manifest.json']
-    equal(material_path/'materials-manifest.json', source/safe(reference['path']), 'Material location')
+    equal(logical_run/material_path.name/'materials-manifest.json', Path(safe(reference['path'])),
+          'Material location')
     trees = {'Meshchan.app': (app, products['app']), 'meshctl': (cli, products['cli']),
              'materials': (material_path, material_inventory(material_path, reference['sha256'],
                                                              inputs[INDEXES[1]]['sha256'], info['sourceCommit']))}
@@ -250,14 +272,14 @@ def tool_identity():
                                '--', *SOURCES).splitlines(), 'inputs': files}
 
 
-def original_package(output, pin, source, run, info):
+def original_package(output, pin, source, info):
     path = require_material_file(output, 'evidence/package-receipt.json')
     data = path.read_bytes()
     if pin is not None:
         equal(pin, sha(data), 'Original package receipt SHA-256')
     result = json.loads(data)
     verify_report_fields(result, {'formatVersion': 1, 'command': 'package'}, 'Original package receipt')
-    equal((str(source), run.relative_to(source).as_posix(), info['sourceCommit'], info['identity']),
+    equal((str(source), info['runIdentity'], info['sourceCommit'], info['identity']),
           (result['sourceCheckout'], result['buildRun'], result['sourceCommit'], result['identity']),
           'Original package source')
     return result
@@ -383,32 +405,35 @@ def validate_cli(bundle, cwd, runner, version):
             'databaseSha256': digest(db), 'storedDrafts': drafts}
 
 
-def upstream_ledgers(source, run, before):
+def upstream_ledgers(run, run_identity, before):
     phases = ('check-inputs-', 'check-products-', 'materials-recheck-', 'check-commit-')
     result = {}
     for prefix in phases:
         matches = [path for path in (run/'evidence').glob(prefix+'*') if path not in before]
         if len(matches) != 1:
             raise ValueError('Expected one new frozen verification ledger for '+prefix)
-        name = (matches[0]/'build-receipt.json').relative_to(source).as_posix()
-        data = require_material_file(source, name).read_bytes()
+        relative = (matches[0]/'build-receipt.json').relative_to(run)
+        data = require_material_file(run, relative.as_posix()).read_bytes()
         equal('PASS', json.loads(data)['status'], 'Frozen verification '+prefix)
-        result[prefix.rstrip('-')] = {'path': name, 'sha256': sha(data)}
+        result[prefix.rstrip('-')] = {'path': (Path(run_identity)/relative).as_posix(), 'sha256': sha(data)}
     return result
 
 
 def run_package(args):
     new = args.command == 'package'
     root = real_directory(canonical(args.source_checkout))
-    output = output_path(args.output if new else args.package_run, new)
+    output_build = build_directory(ROOT)
+    output = output_path(args.output if new else args.package_run, new, physical_build=output_build)
     extract = canonical(args.extract_root)
     real_directory(extract.parent)
     if os.path.lexists(extract):
         raise ValueError('Use a fresh external extraction directory')
-    run, info = selected_info(root, args.build_run, args.expected_build_info_sha256)
+    source_build = output_build if root == ROOT else build_directory(root)
+    run, info = selected_info(root, args.build_run, args.expected_build_info_sha256, physical_build=source_build)
     caches = [*protected_caches(root, info), *git_metadata(ROOT), *git_metadata(root)]
-    disjoint(output, [root, run, *caches] if root != ROOT else [run, *caches])
-    disjoint(extract, [ROOT, root, *caches])
+    disjoint(output, [root, source_build, run, *caches] if root != ROOT else [run, *caches])
+    protected = [output_build, source_build, *caches]
+    disjoint(extract, [ROOT, root, *protected])
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         raise ValueError('Real engineering verification requires macOS arm64')
     if new:
@@ -464,11 +489,12 @@ def run_package(args):
                 verify_frozen_helpers(root, info)
                 equal({'status': 'PASS', 'buildStatus': 'PASS', 'materialsStatus': 'PASS',
                        'run': args.build_run}, upstream, 'Frozen verification outcome')
-                record['frozenVerification'] = {'result': upstream, 'ledgers': upstream_ledgers(root, run, previous)}
+                record['frozenVerification'] = {'result': upstream,
+                                                'ledgers': upstream_ledgers(run, args.build_run, previous)}
                 equal(initial, snapshot(root, run, info, pin), 'Original candidate after frozen check')
                 record['frozenStatus'] = 'PASS'
                 verify_package(args, output, extract, evidence, runner, record, initial, tools, root, run, info,
-                               protected_paths=caches)
+                               protected_paths=protected)
                 verify_frozen_helpers(root, info)
                 equal(initial, snapshot(root, run, info, pin), 'Original candidate after runtime acceptance')
                 equal(tools, tool_identity(), 'Packaging inputs during acceptance')
@@ -502,7 +528,7 @@ def verify_package(args, output, extract, evidence, runner, record, initial, too
     original = None
     if not new:
         pin = args.expected_package_receipt_sha256
-        original = original_package(output, pin, root, run, info)
+        original = original_package(output, pin, root, info)
         if pin is not None:
             tools = original['packagingTool']
             record['originalPackageReceiptSha256'] = pin

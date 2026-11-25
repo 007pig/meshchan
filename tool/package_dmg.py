@@ -17,7 +17,8 @@ import build_release as build
 import package_dmg_image as disk
 import package_release as package
 from package_release_vm import checked_vm_configuration
-from release_materials import controlled_environment, digest, encoded, product_inventory, require_material_file, safe, sha
+from release_materials import (controlled_environment, digest, encoded, product_inventory, release_reference,
+                               release_relative_path, release_run_path, require_material_file, safe, sha)
 from release_package_archive import check_payload, metadata_observations, new_extraction_root, open_archive, prefixed
 import release_signed_runtime as runtime
 import release_signing as signing
@@ -125,17 +126,21 @@ class PublicCandidate:
         return sign_release.manifest_inventory(self.info, self.manifest)
 
 
-def output_path(path):
-    path = package.canonical(path)
-    if path.parent != ROOT/'build/phase-1e7':
-        raise ValueError('Use a new direct child of this checkout build/phase-1e7')
-    name = path.relative_to(ROOT).as_posix()
-    if (package.git(ROOT, '--literal-pathspecs', 'ls-files', '-z', '--', name)
-            or not package.git(ROOT, 'check-ignore', '--', name)):
-        raise ValueError('DMG output must be ignored and disjoint from tracked source')
+def output_path(path, *, physical_build=None):
+    physical_build = package.build_directory(ROOT) if physical_build is None else physical_build
+    path = release_run_path(ROOT, physical_build, path, 'phase-1e7', direct=True)
+    name = 'build' if physical_build != ROOT/'build' else release_relative_path(ROOT, physical_build, path)
+    package.require_ignored_run(ROOT, name)
     if os.path.lexists(path):
         raise ValueError('Preserve the existing DMG run and use a fresh output')
     return path
+
+
+def input_path(value, physical_build):
+    path = Path(value).expanduser().absolute()
+    if path.is_relative_to(ROOT/'build'):
+        return release_reference(ROOT, physical_build, path.relative_to(ROOT).as_posix())
+    return package.canonical(path)
 
 
 def volume_names(info):
@@ -358,8 +363,9 @@ def protect_inputs(output, args, upstream, candidate, receipt, local_workspace, 
     workspace_name = f'Meshchan DMG {args.command} {uuid.uuid4().hex}'
     workspace = package.canonical(args.workspace_parent/workspace_name)
     package.real_directory(workspace.parent)
-    package.disjoint(workspace, (ROOT, *protected, output))
-    vm = checked_vm_configuration(config, (ROOT, *protected, workspace, output), cwd=ROOT)
+    runtime_protected = (ROOT, *upstream.build_roots, *protected, output)
+    package.disjoint(workspace, runtime_protected)
+    vm = checked_vm_configuration(config, (*runtime_protected, workspace), cwd=ROOT)
     return workspace, vm
 
 
@@ -463,10 +469,11 @@ def run(args):
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         raise ValueError('Use a macOS arm64 engineering packaging host')
     create = args.command == 'create'
-    output = output_path(args.output)
-    root = package.real_directory(package.canonical(args.candidate))
-    receipt = package.canonical(args.acceptance_receipt)
-    image = None if create else package.canonical(args.image)
+    physical_build = package.build_directory(ROOT)
+    output = output_path(args.output, physical_build=physical_build)
+    root = package.real_directory(input_path(args.candidate, physical_build))
+    receipt = input_path(args.acceptance_receipt, physical_build)
+    image = None if create else input_path(args.image, physical_build)
     info, manifest, local_report = sign_release.read_local_acceptance(
         root, args.candidate_sha256, receipt, args.acceptance_sha256)
     original = sign_release.accepted_upstream(info)
@@ -487,6 +494,7 @@ def run(args):
     receipt_path = output/('image-record.json' if create else 'dmg-acceptance.json')
     record = {
         'formatVersion': 1, 'command': args.command, 'status': 'RUNNING', 'startedAt': build.now(),
+        'producerCheckout': str(ROOT),
         **SIGNATURE_POLICY, 'identity': info['identity'], 'upstream': info['upstream'],
         'candidate': {'root': str(root), 'manifestSha256': args.candidate_sha256,
                       'localAcceptanceReceipt': str(receipt), 'localAcceptanceSha256': args.acceptance_sha256},

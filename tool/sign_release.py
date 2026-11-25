@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import build_release as build
 import package_release as package
 from release_materials import (controlled_environment, digest, encoded, product_inventory,
+                               release_reference, release_relative_path, release_run_path,
                                repository_source_hashes, require_material_file, sha)
 from release_package_archive import check_payload, metadata_observations, new_extraction_root, prefixed
 import release_signing
@@ -93,6 +94,7 @@ class Upstream:
     info: dict
     inventory: dict
     protected: tuple
+    build_roots: tuple[Path, ...]
     provenance: dict
     historical_files: dict
     static_report: dict
@@ -144,9 +146,10 @@ def publish_json(root, path, value):
     return require_ref(root, path, expected_sha)
 
 
-def verify_process_logs(root, ledger, *, evidence):
+def verify_process_logs(root, ledger, *, evidence, physical_build=None):
     from release_signed_runtime import process_log
 
+    scope = physical_build if physical_build is not None and evidence.is_relative_to(physical_build) else root
     for step in ledger['steps']:
         name = step['name']
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name):
@@ -155,9 +158,9 @@ def verify_process_logs(root, ledger, *, evidence):
         package.verify_report_fields(step['processTree'], {'exited': True, 'childReaped': True},
                                      'Owned process tree '+name)
         for field, suffix in (('log', '.log'), ('stderrLog', '.stderr.log')):
-            package.equal(evidence/'logs'/(name+suffix), package.canonical(root/step[field]),
-                          'Owned process log path for '+name)
-            process_log(root, step, field)
+            path = release_reference(root, physical_build, step[field])
+            package.equal(evidence/'logs'/(name+suffix), path, 'Owned process log path for '+name)
+            process_log(scope, {**step, field: path.relative_to(scope).as_posix()}, field)
 
 
 def process_step(ledger, name):
@@ -248,13 +251,28 @@ def verify_upstream_reports(output, evidence, current, extracted, identity, pack
     return reports['staticReport']
 
 
-def read_upstream(args):
+def verify_frozen_ledgers(source, source_build, run, ledgers):
+    for name in ('check-inputs', 'check-products', 'materials-recheck', 'check-commit'):
+        reference = ledgers[name]
+        ledger = release_reference(source, source_build, reference['path'])
+        if (ledger.name != 'build-receipt.json' or ledger.parent.parent != run/'evidence'
+                or not ledger.parent.name.startswith(name+'-')):
+            raise ValueError('Frozen ledger is outside the selected build verification run: '+name)
+        result, _ = bound_json(run, ledger.relative_to(run).as_posix(), reference['sha256'])
+        package.verify_report_fields(result, {'formatVersion': 1, 'status': 'PASS'}, 'Frozen ledger '+name)
+        verify_process_logs(source, result, evidence=ledger.parent, physical_build=source_build)
+
+
+def read_upstream(args, *, output_build=None):
     from package_release_vm import DEFAULT_DATA_SUBDIR
 
     source = package.real_directory(package.canonical(args.source_checkout))
-    run, info = package.selected_info(source, args.build_run, args.expected_build_info_sha256)
-    output = package.output_path(args.package_run, new=False)
-    receipt = package.canonical(args.upstream_check_receipt)
+    output_build = package.build_directory(ROOT) if output_build is None else output_build
+    source_build = output_build if source == ROOT else package.build_directory(source)
+    run, info = package.selected_info(source, args.build_run, args.expected_build_info_sha256,
+                                      physical_build=source_build)
+    output = package.output_path(args.package_run, new=False, physical_build=output_build)
+    receipt = release_run_path(ROOT, output_build, args.upstream_check_receipt, 'phase-1e5')
     if (receipt.name != 'package-receipt.json' or receipt.parent.parent != output/'evidence'
             or not receipt.parent.name.startswith('check-')):
         raise ValueError('Use the independent check receipt in the selected package run')
@@ -295,22 +313,15 @@ def read_upstream(args):
         verification = current['frozenVerification']
         package.equal({'status': 'PASS', 'buildStatus': 'PASS', 'materialsStatus': 'PASS', 'run': args.build_run},
                       verification['result'], 'Frozen check')
-        for name in ('check-inputs', 'check-products', 'materials-recheck', 'check-commit'):
-            reference = verification['ledgers'][name]
-            ledger = package.canonical(source/reference['path'])
-            if (ledger.name != 'build-receipt.json' or ledger.parent.parent != run/'evidence'
-                    or not ledger.parent.name.startswith(name+'-')):
-                raise ValueError('Frozen ledger is outside the selected build verification run: '+name)
-            result = evidence_json(source, reference)
-            package.verify_report_fields(result, {'formatVersion': 1, 'status': 'PASS'}, 'Frozen ledger '+name)
-            verify_process_logs(source, result, evidence=ledger.parent)
-        external_source = (source,) if source != ROOT else ()
+        verify_frozen_ledgers(source, source_build, run, verification['ledgers'])
+        external_source = (source, source_build) if source != ROOT else ()
+        build_roots = (output_build, source_build) if source != ROOT else (output_build,)
         protected = (*external_source, run, output, *caches, *package.git_metadata(source),
                      *package.git_metadata(ROOT), Path.home()/DEFAULT_DATA_SUBDIR)
         extracted = package.real_directory(package.canonical(current['extracted']))
         package.equal(top, extracted.name, 'Upstream extracted product name')
         package.verify_report_fields(current, {'extractRoot': str(extracted.parent)}, 'Upstream extraction')
-        package.disjoint(extracted.parent, (ROOT, *protected))
+        package.disjoint(extracted.parent, (ROOT, *build_roots, *protected))
         check_payload(extracted, inventory)
         metadata_observations(extracted, inventory)
         static_report = verify_upstream_reports(output, receipt.parent, current, extracted, identity,
@@ -327,9 +338,11 @@ def read_upstream(args):
         'materialsManifestSha256': trees['materials'][1]['materials-manifest.json']['sha256'],
         'originalPackagingTool': original['packagingTool'], 'upstreamVerifier': current['packagingTool'],
     }
+    if source_build != source/'build':
+        provenance['buildRunPath'] = str(run)
     historical = {'package-info.json': package_info, 'package-receipt.json': original_bytes,
                   'package-check-receipt.json': current_bytes, 'engineering-README.md': package.README}
-    return Upstream(source, run, output, stage, top, info, inventory, protected, provenance,
+    return Upstream(source, run, output, stage, top, info, inventory, protected, build_roots, provenance,
                     historical, static_report)
 
 
@@ -348,14 +361,11 @@ def accepted_upstream(info):
     return upstream
 
 
-def output_path(value, new):
-    path = package.canonical(value)
-    if path.parent != ROOT/'build/phase-1e6':
-        raise ValueError('Use a direct child of the signing checkout build/phase-1e6 directory')
-    name = path.relative_to(ROOT).as_posix()
-    if (package.git(ROOT, '--literal-pathspecs', 'ls-files', '-z', '--', name)
-            or not package.git(ROOT, 'check-ignore', '--', name)):
-        raise ValueError('Signing output must be ignored and disjoint from tracked source')
+def output_path(value, new, *, physical_build=None):
+    physical_build = package.build_directory(ROOT) if physical_build is None else physical_build
+    path = release_run_path(ROOT, physical_build, value, 'phase-1e6', direct=True)
+    name = 'build' if physical_build != ROOT/'build' else release_relative_path(ROOT, physical_build, path)
+    package.require_ignored_run(ROOT, name)
     if new and os.path.lexists(path):
         raise ValueError('Preserve the existing signing run and use a fresh output')
     if not new:
@@ -525,9 +535,10 @@ def read_local_acceptance(candidate_root, manifest_pin, receipt_path, receipt_pi
     from package_release_vm import DEFAULT_DATA_SUBDIR
     from release_signed_runtime import parse_signed_info, process_log, verify_cli_runtime_evidence
 
-    root = package.real_directory(package.canonical(candidate_root))
-    receipt = package.canonical(receipt_path)
-    output = output_path(root.parent.parent, new=False)
+    physical_build = package.build_directory(ROOT)
+    root = package.real_directory(release_run_path(ROOT, physical_build, candidate_root, 'phase-1e6'))
+    receipt = release_run_path(ROOT, physical_build, receipt_path, 'phase-1e6')
+    output = output_path(root.parent.parent, new=False, physical_build=physical_build)
     if (root.parent != output/'signed' or receipt.name != 'signing-receipt.json'
             or receipt.parent.parent != output/'evidence' or not receipt.parent.name.startswith('check-')):
         raise ValueError('Use the independent check receipt from the selected local signing run')
@@ -545,12 +556,14 @@ def read_local_acceptance(candidate_root, manifest_pin, receipt_path, receipt_pi
         'upstream': info['upstream'], 'identity': info['identity'], 'signingIdentity': info['signature']['identity'],
         'relocatedInventorySha256': sha(encoded(full)),
     }, 'Independent local acceptance')
+    if 'producerCheckout' in report:
+        package.verify_report_fields(report, {'producerCheckout': str(ROOT)}, 'Independent local acceptance')
     package.equal(info['signingTool']['inputs'], report['signingTool']['inputs'], 'Accepted signing tool inputs')
     package.equal(info['signingTool']['inputs'], tool_identity()['inputs'], 'Current signing tool inputs')
     check_payload(root, full)
     metadata_observations(root, full)
     workspace = package.real_directory(package.canonical(Path(report['workspace'])))
-    package.disjoint(workspace, [ROOT, root, Path.home()/DEFAULT_DATA_SUBDIR])
+    package.disjoint(workspace, [ROOT, physical_build, root, Path.home()/DEFAULT_DATA_SUBDIR])
     relocated = workspace/'relocated products'
     check_payload(relocated, full)
     metadata_observations(relocated, full)
@@ -705,7 +718,7 @@ def repeat_check(args, upstream, output, evidence, runner, record, tools, signin
 
     parent = package.real_directory(package.canonical(args.workspace_parent))
     workspace = package.canonical(parent/'Meshchan signing runtime')
-    protected = [ROOT, *upstream.protected, Path.home()/DEFAULT_DATA_SUBDIR]
+    protected = [ROOT, *upstream.build_roots, *upstream.protected, Path.home()/DEFAULT_DATA_SUBDIR]
     package.disjoint(workspace, protected)
     vm = checked_vm_configuration(args.vm_config, [*protected, workspace], cwd=ROOT)
     with new_extraction_root(workspace) as fd:
@@ -889,10 +902,11 @@ def run(args):
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         raise ValueError('Use a macOS arm64 signing host')
     new = args.command != 'check'
-    output = output_path(args.output, new)
+    output_build = package.build_directory(ROOT)
+    output = output_path(args.output, new, physical_build=output_build)
     if not new:
         output_stamp = output.lstat()
-    upstream = read_upstream(args)
+    upstream = read_upstream(args, output_build=output_build)
     package.disjoint(output, upstream.protected)
     if new:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -907,6 +921,7 @@ def run(args):
     receipt_path = evidence/'signing-receipt.json'
     record = {
         **LOCAL_SCHEMA, 'command': args.command, 'startedAt': build.now(), 'status': 'RUNNING',
+        'producerCheckout': str(ROOT),
         'upstreamStatus': 'PASS', 'upstream': upstream.provenance, 'identity': upstream.info['identity'],
         **dict.fromkeys(ACCEPTANCE_GATES, 'NOT_RUN'),
     }

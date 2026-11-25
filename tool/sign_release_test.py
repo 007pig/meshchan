@@ -20,6 +20,16 @@ class SigningBoundaryTest(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name).resolve()
 
+    def linked_checkout(self, name='checkout'):
+        checkout = self.root/name
+        physical = self.root/(name+' external artifacts')
+        checkout.mkdir()
+        physical.mkdir()
+        subprocess.run([*package.GIT, '-C', checkout, 'init', '-q'], check=True, capture_output=True)
+        (checkout/'.gitignore').write_text('/build\n')
+        (checkout/'build').symlink_to(physical)
+        return checkout, physical
+
     def test_parse_the_exact_pinned_bytes(self):
         raw = b'{"status": "PASS"}\n'
         (self.root/'receipt.json').write_bytes(raw)
@@ -71,6 +81,30 @@ class SigningBoundaryTest(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 signing.matching_package_receipts(original, {**current, key: value}, source, 'original-pin')
 
+    def test_upstream_check_receipt_resolves_only_within_the_linked_package_run(self):
+        checkout, physical = self.linked_checkout()
+        source, source_build = self.linked_checkout('frozen checkout')
+        build_run = 'build/phase-1e4/run'
+        info = source_build/'phase-1e4/run'/package.INDEXES[0]
+        info.parent.mkdir(parents=True)
+        info.write_bytes(encoded({'runIdentity': build_run, 'engineeringDirtyMode': False,
+                                  'workingTree': [], 'materials': {'status': 'PASS'}}))
+        package_run = checkout/'build/phase-1e5/run'
+        evidence = physical/'phase-1e5/run/evidence'
+        check = evidence/'check-owned/package-receipt.json'
+        check.parent.mkdir(parents=True)
+        (evidence/'package-receipt.json').write_bytes(b'{}')
+        check.write_bytes(b'{}')
+        args = Mock(source_checkout=source, build_run=build_run, expected_build_info_sha256=sha(info.read_bytes()),
+                    package_run=package_run, upstream_check_receipt=package_run/'evidence/check-owned/package-receipt.json',
+                    expected_package_receipt_sha256=sha(b'{}'), expected_upstream_check_sha256=sha(b'changed'))
+        with patch.object(signing, 'ROOT', checkout), patch.object(package, 'ROOT', checkout):
+            with self.assertRaisesRegex(ValueError, 'Bound JSON SHA-256 for evidence/check-owned/package-receipt.json'):
+                signing.read_upstream(args)
+            args.upstream_check_receipt = checkout/'build/phase-1e5/other/evidence/check-owned/package-receipt.json'
+            with self.assertRaisesRegex(ValueError, 'independent check receipt in the selected package run'):
+                signing.read_upstream(args)
+
     def test_evidence_cannot_point_outside_selected_root(self):
         outside = self.root/'receipt.json'
         outside.write_bytes(b'{}')
@@ -111,6 +145,31 @@ class SigningBoundaryTest(unittest.TestCase):
         log.write_bytes(b'updated after the receipt')
         with self.assertRaisesRegex(ValueError, 'Owned process log'):
             signing.verify_process_logs(self.root, {'steps': [step]}, evidence=evidence)
+
+    def test_frozen_ledgers_replay_logical_references_from_the_linked_build(self):
+        checkout, physical = self.linked_checkout()
+        run = physical/'phase-1e4/frozen run'
+        ledgers = {}
+        for name in ('check-inputs', 'check-products', 'materials-recheck', 'check-commit'):
+            evidence = run/'evidence'/(name+'-1')
+            step = {'name': 'probe', 'exitCode': 0, 'processTree': {'exited': True, 'childReaped': True}}
+            (evidence/'logs').mkdir(parents=True)
+            for key, filename in (('log', 'probe.log'), ('stderrLog', 'probe.stderr.log')):
+                log = evidence/'logs'/filename
+                log.write_bytes(b'recorded process output')
+                step[key] = (Path('build')/log.relative_to(physical)).as_posix()
+                step[key+'Sha256'] = sha(log.read_bytes())
+            ledger = evidence/'build-receipt.json'
+            ledger.write_bytes(encoded({'formatVersion': 1, 'status': 'PASS', 'steps': [step]}))
+            ledgers[name] = {'path': (Path('build')/ledger.relative_to(physical)).as_posix(),
+                             'sha256': sha(ledger.read_bytes())}
+        signing.verify_frozen_ledgers(checkout, physical, run, ledgers)
+        wrong_run = physical/'phase-1e4/other run'
+        with self.assertRaisesRegex(ValueError, 'outside the selected build verification run'):
+            signing.verify_frozen_ledgers(checkout, physical, wrong_run, ledgers)
+        (run/'evidence/check-commit-1/logs/probe.stderr.log').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'Owned process log'):
+            signing.verify_frozen_ledgers(checkout, physical, run, ledgers)
 
     def test_local_runtime_replay_rejects_contradictory_process_arguments(self):
         python = '/opt/example/bin/python3'
@@ -206,11 +265,14 @@ class SigningBoundaryTest(unittest.TestCase):
         identity_lookup.assert_not_called()
 
     def test_local_acceptance_rejects_foreign_pins_profiles_status_and_inputs(self):
-        output = self.root/'signing run'
+        checkout, physical = self.linked_checkout()
+        output = physical/'phase-1e6/signing run'
         root = output/'signed/release'
         root.mkdir(parents=True)
         receipt = output/'evidence/check-owned/signing-receipt.json'
         receipt.parent.mkdir(parents=True)
+        logical_root = checkout/'build'/root.relative_to(physical)
+        logical_receipt = checkout/'build'/receipt.relative_to(physical)
         info = {**local_manifest(), 'upstream': {'sourceCommit': 'accepted'},
                 'signingTool': {'inputs': {'source.py': {'sha256': 'a'*64}}}}
         manifest = root/'signed-product-info.json'
@@ -220,13 +282,14 @@ class SigningBoundaryTest(unittest.TestCase):
         accepted = {
             **signing.LOCAL_SCHEMA, 'command': 'check', 'status': 'PASS', 'upstreamStatus': 'PASS',
             **dict.fromkeys(signing.ACCEPTANCE_GATES, 'PASS'),
+            'producerCheckout': str(checkout),
             'signedRoot': str(root),
             'signedInfo': {'path': 'signed/release/signed-product-info.json', 'sha256': manifest_pin},
             'identity': info['identity'], 'upstream': info['upstream'], 'signingTool': info['signingTool'],
             'signingIdentity': info['signature']['identity'],
             'relocatedInventorySha256': sha(encoded(signing.manifest_inventory(info, raw))),
         }
-        with (patch.object(signing, 'output_path', return_value=output),
+        with (patch.object(signing, 'ROOT', checkout),
               patch.object(signing, 'check_payload') as verify,
               patch.object(signing, 'tool_identity', return_value={'inputs': {'source.py': {'sha256': 'b'*64}}})):
             for changed, label in (
@@ -234,13 +297,14 @@ class SigningBoundaryTest(unittest.TestCase):
                 ({'status': 'BLOCKED'}, 'status'), ({'formatVersion': 1}, 'formatVersion'),
                 ({'signingProfile': 'developer-id'}, 'signingProfile'),
                 ({'vmAppStatus': 'NOT_RUN'}, 'vmAppStatus'),
+                ({'producerCheckout': str(physical.parent)}, 'producerCheckout'),
                 ({'signedRoot': str(root.parent/'foreign')}, 'signedRoot'),
                 ({}, 'Current signing tool inputs'),
             ):
                 with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, label):
                     modified = encoded({**accepted, **changed})
                     receipt.write_bytes(modified)
-                    signing.read_local_acceptance(root, manifest_pin, receipt, sha(modified))
+                    signing.read_local_acceptance(logical_root, manifest_pin, logical_receipt, sha(modified))
             with self.assertRaisesRegex(ValueError, 'Selected local candidate manifest SHA-256'):
                 signing.read_local_acceptance(root, 'f'*64, receipt, sha(modified))
             with self.assertRaisesRegex(ValueError, 'Bound JSON SHA-256'):
@@ -467,11 +531,13 @@ class SigningBoundaryTest(unittest.TestCase):
                 signing.publish_json(self.root, path, value)
 
     def test_preparation_fails_on_drift_and_keeps_receipts_in_owned_evidence(self):
+        checkout, physical = self.linked_checkout()
         for change in ('prepared file', 'prepared evidence', 'evidence directory'):
             with self.subTest(change=change):
-                output = self.root/change
+                output = physical/'phase-1e6'/change
                 upstream = Mock(protected=(), provenance={}, info={'identity': {}})
-                args = Mock(command='prepare', output=output, signing_profile='local-adhoc')
+                args = Mock(command='prepare', output=checkout/'build/phase-1e6'/change,
+                            signing_profile='local-adhoc')
 
                 def create_copy(prepared, _upstream, _tools):
                     prepared.mkdir()
@@ -493,7 +559,7 @@ class SigningBoundaryTest(unittest.TestCase):
                     self.assertEqual(scratch.stat().st_mode & 0o777, 0o700)
                     return {}
 
-                with (patch.object(signing, 'output_path', return_value=output),
+                with (patch.object(signing, 'ROOT', checkout),
                       patch.object(signing.platform, 'system', return_value='Darwin'),
                       patch.object(signing.platform, 'machine', return_value='arm64'),
                       patch.object(signing, 'read_upstream', return_value=upstream),
@@ -509,6 +575,7 @@ class SigningBoundaryTest(unittest.TestCase):
                 if change != 'evidence directory':
                     receipt = json.loads((output/'evidence/signing-receipt.json').read_bytes())
                     self.assertEqual('FAIL', receipt['status'])
+                    self.assertEqual(str(checkout), receipt['producerCheckout'])
                 else:
                     self.assertEqual([], list((output/'evidence').iterdir()))
                     self.assertTrue((output/'owned evidence/signing-receipt.json').is_file())
@@ -518,14 +585,33 @@ class SigningBoundaryTest(unittest.TestCase):
         parent.mkdir(parents=True)
         (parent/'Run-One').mkdir()
         (parent/'shortcut').symlink_to(self.root, target_is_directory=True)
-        with patch.object(signing, 'ROOT', self.root), patch.object(package, 'git', side_effect=['', 'ignored', '', 'ignored']):
-            with self.assertRaisesRegex(ValueError, 'canonical path'):
+        with patch.object(signing, 'ROOT', self.root), patch.object(package, 'git', side_effect=['', '', '', '']):
+            with self.assertRaisesRegex(ValueError, 'without symlink aliases'):
                 signing.output_path(parent/'shortcut', new=True)
             with self.assertRaisesRegex(ValueError, 'fresh output'):
                 signing.output_path(parent/'Run-One', new=True)
             if (parent/'run-one').exists():
                 with self.assertRaisesRegex(ValueError, 'fresh output'):
                     signing.output_path(parent/'run-one', new=True)
+
+    def test_signing_linked_build_admits_only_owned_runs_below_ignored_root(self):
+        checkout, physical = self.linked_checkout()
+        logical = checkout/'build/phase-1e6/run'
+        output = physical/'phase-1e6/run'
+        with patch.object(signing, 'ROOT', checkout):
+            self.assertEqual(signing.output_path(logical, new=True), output)
+            output.mkdir(parents=True)
+            self.assertEqual(signing.output_path(logical, new=False), output)
+            self.assertEqual(signing.output_path(output, new=False), output)
+            with self.assertRaisesRegex(ValueError, 'fresh output'):
+                signing.output_path(logical, new=True)
+            (output.parent/'alias').symlink_to(output)
+            with self.assertRaisesRegex(ValueError, 'without symlink aliases'):
+                signing.output_path(logical.with_name('alias'), new=False)
+            subprocess.run([*package.GIT, '-C', checkout, 'add', '-f', '--', 'build'],
+                           check=True, capture_output=True)
+            with self.assertRaisesRegex(ValueError, 'tracked source'):
+                signing.output_path(logical.with_name('new'), new=True)
 
 
 if __name__ == '__main__':

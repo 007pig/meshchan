@@ -161,9 +161,8 @@ Use this value for `MESHCHAN_SELECTION_SHA256` in the
 
 ## Sealed local object
 
-The stable private parent is
-`~/Documents/my_projects/Meshchan Engineering Archive`. The new sealed
-object is `RC1 Build 8 - 1E.8` within that parent. It finished sealing
+The `RC1 Build 8 - 1E.8` seal now lives under
+`/Volumes/WD_BLACK_4T_1/BuildArtifacts/Meshchan Engineering Archive`. It finished sealing
 at 15:39:02 UTC on November 21, 2026, after archive-only verification
 and rechecking the original input identities and bytes. The tar inventory
 has 8,170 members across 1,130 mapped roots. The verifier has 73 separately
@@ -202,13 +201,14 @@ respectively. The restore used CPython 3.15.2, invoked via
 `/opt/homebrew/bin/python3`. It reported its resolved executable as
 `/opt/homebrew/opt/python@3.15/bin/python3.15`.
 
-These arguments record the historical restore from the locally created seal.
+The following command uses the historical restore arguments with the current
+archive location.
 For a new run, follow the
 [authenticated bootstrap procedure](../releases/phase-1e8-ci-retention.md#check-and-restore-from-the-sealed-object)
 and choose fresh output names.
 
 ```sh
-cd "$HOME/Documents/my_projects/Meshchan Engineering Archive"
+cd "/Volumes/WD_BLACK_4T_1/BuildArtifacts/Meshchan Engineering Archive"
 MESHCHAN_ARCHIVE="$PWD"
 MESHCHAN_SEAL="$MESHCHAN_ARCHIVE/RC1 Build 8 - 1E.8"
 MESHCHAN_RECEIPT_SHA256=76221dc94d40c7f32aaa5933c849fd17b4eadf3aceda907f9475f971dc38fc8c
@@ -239,7 +239,7 @@ App and CLI inside the image. The pinned independent DMG and signing
 receipts and their upstream evidence are available from the private seal.
 
 ```sh
-cd "$HOME/Documents/my_projects/Meshchan Engineering Archive/RC1 Build 8 - engineering assets"
+cd "/Volumes/WD_BLACK_4T_1/BuildArtifacts/Meshchan Engineering Archive/RC1 Build 8 - engineering assets"
 shasum -a 256 -c SHA256SUMS
 ```
 

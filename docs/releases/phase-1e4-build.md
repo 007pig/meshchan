@@ -55,9 +55,14 @@ For a clean build, the entry compares source bytes and executable modes with
 the recorded Git tree. Each first-party compilation input must match this
 verified source, including when Git status hides an index-marked change.
 
-Every run must use a **new** ignored directory below `build/phase-1e4/` in the
-actual checkout. Existing directories, symlink aliases, nested runs and tracked
-source overlaps are rejected. Paths containing spaces are passed as argv arrays.
+Every run must use a **new** ignored directory below `build/phase-1e4/`. The
+checkout's root `build` may be a real directory or an ignored symlink with an
+absolute path to a real directory outside the checkout and its Git metadata.
+Mount that volume before running the release commands. The usual `--output
+build/phase-1e4/...` argument still works, and receipt identifiers remain
+checkout-relative. Existing directories, symlinks below `build`, nested runs
+and tracked source overlaps are rejected. Paths containing spaces are passed
+as argv arrays.
 The shared `.dart_tool/meshchan-1d10.lock` coordinates the existing regression
 runner. The entry validates output ownership while holding that lock, before
 creating the run directory. It opens a real checkout-local `.dart_tool` directory without
@@ -94,10 +99,12 @@ checkout lock, the builder saves the existing developer cache and starts the
 CLI and App compilers with a fresh cache for the run. It restores the developer
 cache before validation or on failure. The run retains its own hook cache
 under `native-hooks/`. Product and strict material checks use that saved cache.
-If an uncatchable interruption leaves `.previous-native-hooks` in the run,
-it holds the original developer cache. Once the checkout has no active build,
-move the interrupted cache aside before restoring the original to
-`.dart_tool/hooks_runner`.
+The original cache is moved to a temporary sibling on the checkout volume. The
+run snapshot preserves native dependency times even when copied across volumes.
+If an uncatchable interruption leaves `.dart_tool/.meshchan-native-hooks-*/previous`,
+that directory holds the original developer cache. Once the checkout has no
+active build, move the interrupted cache aside before restoring the original
+to `.dart_tool/hooks_runner`.
 
 The controlled child environment selects Apple tools before Homebrew and retains
 only OS user-location variables. It excludes inherited Git, compiler, dyld,

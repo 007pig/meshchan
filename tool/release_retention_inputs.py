@@ -107,8 +107,9 @@ class RetainedRead:
         verify_report_fields(package.file_entry(path), expected, 'File entry '+str(original))
         return path
 
-    def reference(self, base, reference, expected, *, scope=None):
-        equal(expected, relative_reference(base, reference['path'], scope=scope), 'Evidence location')
+    def reference(self, base, reference, expected, *, scope=None, recorded=None):
+        equal(expected if recorded is None else recorded, relative_reference(base, reference['path'], scope=scope),
+              'Evidence location')
         verify_pin(reference['sha256'])
         return self.bytes(expected, reference['sha256'])
 
@@ -130,11 +131,12 @@ def read_ledger(reader, base, reference, evidence, *, status='PASS', unsigned_im
     return ledger, verify_steps(reader, ledger, base, evidence, status, unsigned_image=unsigned_image)
 
 
-def verify_steps(reader, ledger, base, evidence, status, *, unsigned_image=False):
+def verify_steps(reader, ledger, base, evidence, status, *, unsigned_image=False, recorded_evidence=None):
     verify_report_fields(ledger, {'status': status}, 'Owned process ledger')
     steps = ledger.get('steps')
     if type(steps) is not list or not steps:
         raise ValueError('Expected a nonempty owned process ledger')
+    recorded_evidence = evidence if recorded_evidence is None else recorded_evidence
     logs = {}
     for step in steps:
         name = step['name']
@@ -148,8 +150,9 @@ def verify_steps(reader, ledger, base, evidence, status, *, unsigned_image=False
             verify_report_fields(step['processTree'], {'exited': True, 'childReaped': True}, 'Owned process tree '+name)
         logs[name] = {}
         for key, suffix in (('log', '.log'), ('stderrLog', '.stderr.log')):
+            log = Path('logs')/(name+suffix)
             logs[name][key] = reader.reference(
-                base, {'path': step[key], 'sha256': step[key+'Sha256']}, evidence/'logs'/(name+suffix))
+                base, {'path': step[key], 'sha256': step[key+'Sha256']}, evidence/log, recorded=recorded_evidence/log)
     return logs
 
 
@@ -210,10 +213,19 @@ def verify_cli(reader, cli, bundle, workspace, identity, ledger, logs):
     equal(encoded(stored), encoded(cli['storedDrafts']), 'Retained CLI SQLite fixture rows')
 
 
-def historical_checkout(output, phase):
-    if output.parent.name != phase or output.parent.parent.name != 'build':
+def historical_checkout(output, phase, record):
+    build_root = output.parent.parent
+    if output.parent.name != phase:
         raise ValueError('Invalid historical '+phase+' output location')
-    return output.parents[2]
+    if 'producerCheckout' not in record:
+        if build_root.name != 'build':
+            raise ValueError('Invalid historical '+phase+' output location')
+        return build_root.parent
+    checkout = original_path(record['producerCheckout'])
+    if build_root != checkout/'build' and (
+            build_root.is_relative_to(checkout) or checkout.is_relative_to(build_root)):
+        raise ValueError('Historical '+phase+' build root overlaps the producer checkout')
+    return checkout
 
 
 def runtime_argv(step):
@@ -352,6 +364,7 @@ def accepted_local(reader, manifest_ref, acceptance_ref):
         **bound, 'command': 'check', 'status': 'PASS', **dict.fromkeys(signing.ACCEPTANCE_GATES, 'PASS'),
         'relocatedInventorySha256': sha(encoded(full)),
     }, 'Independent local acceptance')
+    checkout = historical_checkout(output, 'phase-1e6', receipt)
     equal(info['signingTool']['inputs'], receipt['signingTool']['inputs'], 'Accepted local signing tools')
     reader.tree(root, full)
     verify_tool_snapshot(reader, root/'signing-source', info['signingTool'], signing.SIGNING_SOURCES)
@@ -376,7 +389,6 @@ def accepted_local(reader, manifest_ref, acceptance_ref):
     verify_report_fields(cli, {'signingProfile': dmg.PROFILE, 'signedInfoSha256': manifest_pin,
                                'relocatedRoot': str(relocated)}, 'Accepted local CLI')
     verify_cli(reader, cli, relocated/'meshctl', cli_workspace, info['identity'], ledger, logs)
-    checkout = historical_checkout(output, 'phase-1e6')
     python = receipt['environment']['python']['path']
     config = verify_vm_invocation(signing.process_step(ledger, 'signed-vm-app-runtime'), checkout, python,
                                   relocated, manifest_pin, evidence/'vm-app')
@@ -458,10 +470,24 @@ def verify_package_runtime(reader, root, receipt, evidence, extracted, app_inven
     return static
 
 
+def logical_build_run(source, name):
+    run = relative_reference(source, name, scope=source/'build/phase-1e4')
+    equal(name, run.relative_to(source).as_posix(), 'Frozen build run name')
+    return run
+
+
 def frozen_build(reader, upstream, identity):
     source = original_path(upstream['sourceCheckout'])
-    run = relative_reference(source, upstream['buildRun'], scope=source/'build/phase-1e4')
-    equal(upstream['buildRun'], run.relative_to(source).as_posix(), 'Frozen build run name')
+    logical = logical_build_run(source, upstream['buildRun'])
+    run = logical
+    if 'buildRunPath' in upstream:
+        run = original_path(upstream['buildRunPath'])
+        suffix = logical.relative_to(source/'build').parts
+        if len(run.parts) <= len(suffix) or run.parts[-len(suffix):] != suffix:
+            raise ValueError('Physical build path differs from its selected run name')
+        build_root = run.parents[len(suffix)-1]
+        if build_root.is_relative_to(source) or source.is_relative_to(build_root):
+            raise ValueError('Physical build root overlaps the frozen checkout')
     info = json_object(reader.bytes(run/'build-info.json', upstream['buildInfoSha256']))
     fields = {
         'formatVersion': 1, 'sourceCommit': upstream['sourceCommit'], 'recipeVersion': upstream['buildRecipeVersion'],
@@ -471,11 +497,11 @@ def frozen_build(reader, upstream, identity):
     verify_report_fields(info, fields, 'Frozen build information')
     if type(info['recipeVersion']) is not int or info['recipeVersion'] < 55:
         raise ValueError('Retention requires the complete recipe 55 or newer source and runtime contract')
-    proof = {name: reader.reference(source, ref, run/'evidence'/name, scope=run/'evidence')
+    evidence, recorded = run/'evidence', logical/'evidence'
+    proof = {name: reader.reference(source, ref, evidence/name, scope=recorded, recorded=recorded/name)
              for name, ref in info['evidence'].items()}
     receipt = json_object(proof['build-receipt.json'])
-    evidence = run/'evidence'
-    verify_steps(reader, receipt, source, evidence, 'PASS')
+    verify_steps(reader, receipt, source, evidence, 'PASS', recorded_evidence=recorded)
     verify_report_fields(receipt, {
         'formatVersion': 1, 'sourceCommit': info['sourceCommit'], 'recipeVersion': info['recipeVersion'],
         'inputsUnchangedAcrossBuilds': True, 'app': info['app'], 'cli': info['cli'],
@@ -522,19 +548,23 @@ def frozen_build(reader, upstream, identity):
         equal(pin, actual, 'Frozen configuration '+name)
 
     app, cli = build.product_paths(run)
-    equal((app, cli), tuple(relative_reference(source, info[name], scope=run) for name in ('app', 'cli')),
+    equal(build.product_paths(logical), tuple(relative_reference(source, info[name], scope=logical)
+                                              for name in ('app', 'cli')),
           'Frozen product locations')
     inventories = json_object(proof['candidate-inventories.json'])
     reader.tree(app, inventories['app'])
     reader.tree(cli, inventories['cli'])
     verify_report_fields(info['materials'], {'status': 'PASS'}, 'Frozen materials phase')
     materials = original_path(info['materials']['arguments']['output'])
+    if materials.parent == logical:
+        materials = run/materials.name
     if materials.parent != run:
         raise ValueError('Frozen materials output must be a direct child of the selected build')
     refs = info['materials']['references']
     equal(upstream['materialsManifestSha256'], refs['materials-manifest.json']['sha256'], 'Bound material manifest')
     for name, ref in refs.items():
-        path = relative_reference(source, ref['path'], scope=run)
+        recorded_path = relative_reference(source, ref['path'], scope=logical)
+        path = run/recorded_path.relative_to(logical)
         equal(name, path.name, 'Frozen material evidence name')
         if name == 'materials-manifest.json':
             equal(materials/name, path, 'Frozen material manifest location')
@@ -551,13 +581,16 @@ def verify_frozen_recheck(reader, source, run, receipt):
         'result': {'status': 'PASS', 'buildStatus': 'PASS', 'materialsStatus': 'PASS', 'run': receipt['buildRun']},
     }, 'Frozen product verification')
     equal(set(CHECKS), set(verification['ledgers']), 'Complete frozen verification gates')
+    recorded = logical_build_run(source, receipt['buildRun'])/'evidence'
     for name, reference in verification['ledgers'].items():
-        path = relative_reference(source, reference['path'], scope=run/'evidence')
-        if path.name != 'build-receipt.json' or path.parent.parent != run/'evidence' or not path.parent.name.startswith(name+'-'):
+        logical = relative_reference(source, reference['path'], scope=recorded)
+        if (logical.name != 'build-receipt.json' or logical.parent.parent != recorded
+                or not logical.parent.name.startswith(name+'-')):
             raise ValueError('Frozen verification has an invalid process ledger path')
-        ledger = reader.report(source, reference, path)
+        path = run/'evidence'/logical.relative_to(recorded)
+        ledger = json_object(reader.reference(source, reference, path, scope=recorded, recorded=logical))
         verify_report_fields(ledger, {'formatVersion': 1}, 'Frozen verification ledger '+name)
-        verify_steps(reader, ledger, source, path.parent, 'PASS')
+        verify_steps(reader, ledger, source, path.parent, 'PASS', recorded_evidence=logical.parent)
 
 
 def accepted_upstream(reader, signed_root, info, tool_snapshot):
@@ -834,9 +867,10 @@ def verify_image_record(reader, record, output, info, layout, expected, policy, 
                    'signedInfoSha256': layout.manifest['signedInfoSha256']}
         verify_report_fields(cli, context, 'DMG CLI runtime binding')
         verify_cli(reader, cli, candidate/'meshctl', workspace/'cli workspace', info['identity'], ledger, logs)
-        verify_vm_invocation(signing.process_step(ledger, 'dmg-vm-app-runtime'), historical_checkout(output, 'phase-1e7'),
-                             record['environment']['pythonPath'], candidate, layout.manifest['signedInfoSha256'],
-                             evidence/'vm-app')
+        checkout = historical_checkout(output, 'phase-1e7', record)
+        verify_vm_invocation(signing.process_step(ledger, 'dmg-vm-app-runtime'), checkout,
+                             record['environment']['pythonPath'], candidate,
+                             layout.manifest['signedInfoSha256'], evidence/'vm-app')
         vm = verify_vm(reader, record['vmAppReport'], output, evidence/'vm-app',
                        build.material_result(logs['dmg-vm-app-runtime']['log'].decode()),
                        candidate, info, layout.manifest['signedInfoSha256'])

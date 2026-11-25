@@ -37,12 +37,14 @@ local CLI evidence also uses the retained SQLite library's device and inode.
 The [validation record](../validation/phase-1e7-dmg.md) supplies the selected
 paths, pins, and tested environments when the handoff is complete.
 
-Both commands require fresh output runs below `build/phase-1e7/`. Use a
-dedicated workspace parent on a local filesystem outside the checkout,
-separate from candidate paths, caches, user data, and VM runtime paths. The
-commands create their owned working paths below that parent. The example uses
-a private temporary parent. Retain the workspaces referenced by acceptance
-receipts with their evidence.
+Both commands require fresh output runs below `build/phase-1e7/`. When the
+ignored checkout-root `build` points to a real external directory, the output,
+candidate, acceptance receipt, and selected image may use the checkout path
+or the physical path. Use the pins from the accepted signing handoff. Keep
+the workspace parent and VM runtime separate from both checkouts and their
+build roots, candidate paths, caches, and user data. The example uses a
+private temporary workspace parent. Retain the workspaces referenced by
+acceptance receipts with their evidence.
 
 For a distributable image, use `--public-payload` in both commands as shown
 below. The accepted private signed root remains the

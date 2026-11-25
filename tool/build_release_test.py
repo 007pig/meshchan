@@ -1,6 +1,7 @@
 """Release entry risks with owned fixtures and real isolated child processes."""
 import argparse
-from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
+from contextlib import ExitStack, contextmanager, nullcontext, redirect_stderr, redirect_stdout
+import errno
 import fcntl
 import io
 import json
@@ -72,13 +73,23 @@ class ReleaseTests(unittest.TestCase):
         subprocess.run(['git', 'init', '-q', self.root], check=True)
         subprocess.run(['git', '-C', self.root, 'config', 'user.email', 'fixture@example.invalid'], check=True)
         subprocess.run(['git', '-C', self.root, 'config', 'user.name', 'Fixture'], check=True)
-        (self.root/'.gitignore').write_text('build/\n.dart_tool/\n')
+        (self.root/'.gitignore').write_text('build/\n/build\n.dart_tool/\n')
         (self.root/'tool').mkdir()
         (self.root/'tool/build_release.py').write_bytes(Path(b.__file__).read_bytes())
         (self.root/'source.dart').write_text('source')
         subprocess.run(['git', '-C', self.root, 'add', '.'], check=True)
         subprocess.run(['git', '-C', self.root, 'commit', '-qm', 'Fixture'], check=True)
         self.out = self.root/'build/phase-1e4/run 1'
+
+    def link_build_directory(self):
+        external = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='external build path '))).resolve()/'build'
+        local = self.root/'build'
+        if local.exists():
+            local.rename(external)
+        else:
+            external.mkdir()
+        local.symlink_to(external, target_is_directory=True)
+        return external
 
     def test_output_is_new_ignored_owned_and_never_source_or_alias(self):
         self.assertEqual(b.output_path(self.root, self.out, True), self.out)
@@ -118,6 +129,60 @@ class ReleaseTests(unittest.TestCase):
               self.assertRaisesRegex(ValueError, 'Output overlaps an existing run')):
             b.build(args)
         self.assertFalse(child.exists())
+
+    def test_linked_build_admits_only_ignored_untracked_runs_without_nested_aliases(self):
+        physical = self.link_build_directory()
+        out = physical/'phase-1e4'/self.out.name
+        self.assertEqual(b.output_path(self.root, self.out, True), out)
+        self.assertEqual(b.output_path(self.root, out, True), out)
+        broken = out.with_name('broken')
+        broken.parent.mkdir()
+        broken.symlink_to(out)
+        with self.assertRaisesRegex(ValueError, 'symlink aliases'):
+            b.output_path(self.root, self.out.with_name(broken.name), True)
+        with self.assertRaisesRegex(ValueError, 'symlink aliases'):
+            b.output_path(self.root, self.out.with_name(broken.name)/'nested', True)
+        (self.root/'.gitignore').write_text('build/\n!/build\n')
+        with self.assertRaisesRegex(ValueError, 'ignored by Git'):
+            b.output_path(self.root, self.out, True)
+        subprocess.run(['git', '-C', self.root, 'add', '-f', 'build'], check=True)
+        with self.assertRaisesRegex(ValueError, 'tracked source'):
+            b.output_path(self.root, self.out, True)
+        (self.root/'build').unlink()
+        (self.root/'build').symlink_to(physical/'unavailable', target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'target is unavailable'):
+            b.output_path(self.root, self.out, True)
+        self.assertFalse((physical/'unavailable').exists())
+
+    def test_linked_build_rejects_git_metadata_path_ending_in_crlf(self):
+        checkout = self.root/'linked checkout'
+        metadata = self.root/'external metadata\r\n'
+        subprocess.run(['git', 'init', '-q', checkout],
+                       env=b.controlled_environment(), check=True, capture_output=True)
+        (checkout/'.git').rename(metadata)
+        (checkout/'.git').symlink_to(metadata, target_is_directory=True)
+        (checkout/'.gitignore').write_text('/build\n')
+        target = metadata/'release build'
+        target.mkdir()
+        (checkout/'build').symlink_to(target, target_is_directory=True)
+
+        with self.assertRaisesRegex(ValueError, 'overlaps.*Git metadata'):
+            b.output_path(checkout, checkout/'build/phase-1e4/run', True)
+
+    def test_linked_build_admission_accounts_for_checkout_case_aliases(self):
+        physical = self.link_build_directory()
+        local, tracked = self.root/'build', self.root/'Build'
+        local.unlink()
+        tracked.symlink_to(physical, target_is_directory=True)
+        subprocess.run(['git', '-C', self.root, 'add', '-f', '--', 'Build'],
+                       check=True, capture_output=True)
+        if local.is_symlink():
+            with self.assertRaisesRegex(ValueError, 'tracked source: Build'):
+                b.output_path(self.root, self.out, new=True)
+        else:
+            local.symlink_to(physical, target_is_directory=True)
+            self.assertEqual(b.output_path(self.root, self.out, new=True),
+                             physical/self.out.relative_to(local))
 
     def test_release_commands_require_a_finite_positive_timeout(self):
         material_options = ('--downloads', 'downloads', '--probe', 'probe.json', '--sdk-source-workspace', 'sdk')
@@ -508,8 +573,11 @@ exec /usr/bin/git "$@"
                 raise ValueError('Input parser requires resolved packages')
             return {name: digest(self.root/name) for name in ('source.dart', 'pubspec.lock', *inventoried_inputs)
                     if (self.root/name).is_file()}
-        def command(runner, name, argv, cwd=None):
-            if name in ('output-tracked-files', 'output-git-ignore', 'checkout-status', 'checkout-commit', 'checkout-commit-after-build',
+        def command(runner, name, argv, cwd=None, *, return_bytes=False):
+            if return_bytes:
+                return subprocess.check_output(argv, cwd=cwd, env=b.controlled_environment())
+            if name in ('output-tracked-files', 'output-git-ignore',
+                        'checkout-status', 'checkout-commit', 'checkout-commit-after-build',
                         'checkout-tree', 'checkout-tree-after-build'):
                 return b.capture(argv, self.root)
             if name.startswith('source-') and 'ls-files' in argv:
@@ -545,13 +613,14 @@ exec /usr/bin/git "$@"
                 else:
                     self.assertIn('MESHCHAN_BUILD_PYTHON='+sys.executable, argv)
                 observed.append(name)
+                if name == 'cli-build':
+                    (self.root/b.HOOK_CACHE/'hook-output').write_text('current hook bytes')
                 if fail == name:
                     raise subprocess.CalledProcessError(9, argv)
                 app, cli = b.product_paths(self.out)
                 compiler_deps = (self.root/'source.dart', *compiler_sources)
                 if name == 'cli-build':
                     emit_depfile(argv[-1], [cli/'bin/meshctl'], compiler_deps)
-                    (self.root/b.HOOK_CACHE/'hook-output').write_text('current hook bytes')
                 else:
                     depfile = self.root/b.APP_FLUTTER_CACHE/self.out.name/b.APP_KERNEL_DEPFILE
                     emit_depfile(depfile, [depfile.with_name('app.dill')], compiler_deps)
@@ -1087,6 +1156,76 @@ exec /usr/bin/git "$@"
         with self.assertRaisesRegex(ValueError, 'Saved native hook cache differs'):
             b.verify_native_hook_cache(receipt_path, receipt)
 
+    def test_linked_release_build_records_checkout_relative_products(self):
+        physical = self.link_build_directory()
+        logical = self.out.relative_to(self.root).as_posix()
+        self.out = physical/'phase-1e4'/self.out.name
+        (self.root/'pubspec.lock').write_text('locked fixture')
+        info, _ = self.build_fixture()
+        self.assertEqual(info['runIdentity'], logical)
+        app, cli = b.product_paths(self.out)
+        for key, product in (('app', app), ('cli', cli)):
+            self.assertEqual(info[key], (Path(logical)/product.relative_to(self.out)).as_posix())
+        self.assertTrue(all(value['path'].startswith(logical+'/evidence/') for value in info['evidence'].values()))
+        self.assertTrue(all(line.split('  ', 1)[1].startswith(logical+'/')
+                            for line in (self.out/'evidence/candidate-checksums.txt').read_text().splitlines()))
+        with b.verification_runner(self.root, self.out, 'external-log-check', b.controlled_environment()) as runner:
+            runner.command('external-log', ['/usr/bin/true'])
+            self.assertEqual(runner.receipt['steps'][0]['log'],
+                             logical+'/evidence/'+runner.evidence.name+'/logs/external-log.log')
+
+    def test_native_hook_snapshot_cross_device_preserves_cache_and_dependency_times(self):
+        cache = self.root/b.HOOK_CACHE
+        cache.mkdir(parents=True)
+        original = cache/'developer-cache'
+        original.write_text('original')
+        rename = Path.rename
+        copytree = b.shutil.copytree
+
+        def cross_device(source, target):
+            if target.name == b.NATIVE_HOOK_SNAPSHOT:
+                raise OSError(errno.EXDEV, 'cross-device rename fixture')
+            return rename(source, target)
+
+        def copy_snapshot(source, target, **options):
+            self.assertEqual(original.read_text(), 'original')
+            if target.parent.name in ('copy-failure', 'compiler-and-copy-failure'):
+                raise OSError('snapshot copy fixture failure')
+            return copytree(source, target, **options)
+
+        with patch.object(Path, 'rename', cross_device), patch.object(b.shutil, 'copytree', copy_snapshot):
+            for folder in ('success', 'copy-failure', 'compiler-failure', 'compiler-and-copy-failure'):
+                out = self.out/folder
+                out.mkdir(parents=True)
+                compiler_error = None
+                if folder.startswith('compiler-'):
+                    compiler_error = subprocess.CalledProcessError(9, ['compiler'])
+                    expected = self.assertRaises(subprocess.CalledProcessError)
+                elif folder == 'copy-failure':
+                    expected = self.assertRaisesRegex(OSError, 'snapshot copy fixture failure')
+                else:
+                    expected = nullcontext()
+                with self.subTest(folder=folder), expected, b.fresh_native_hook_cache(self.root, out):
+                    self.assertFalse(original.exists())
+                    generated = cache/'dependency'
+                    generated.write_text('new')
+                    generated.chmod(0o750)
+                    mtime = 1_234_567_890_123_456_789
+                    os.utime(generated, ns=(mtime, mtime))
+                    if compiler_error is not None:
+                        raise compiler_error
+                if compiler_error is not None:
+                    self.assertIs(expected.exception, compiler_error)
+                    if folder == 'compiler-and-copy-failure':
+                        self.assertIn('Native hook cache cleanup failed: snapshot copy fixture failure',
+                                      b.failure_message(compiler_error))
+        for folder in ('success', 'compiler-failure'):
+            generated = self.out/folder/b.NATIVE_HOOK_SNAPSHOT/'dependency'
+            self.assertEqual(generated.stat().st_mtime_ns, mtime)
+            self.assertEqual(generated.stat().st_mode & 0o777, 0o750)
+        self.assertEqual(original.read_text(), 'original')
+        self.assertEqual(list(cache.parent.glob('.meshchan-native-hooks-*')), [])
+
     def test_swiftpm_cache_aliases_stop_configuration(self):
         outside = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='shared SwiftPM state '))).resolve()
         sentinel = outside/'workspace-state.json'
@@ -1242,6 +1381,10 @@ exec /usr/bin/git "$@"
                     self.assertFalse(b.product_paths(self.out)[0].exists())
 
     def test_each_compile_failure_and_missing_product_leave_failure(self):
+        cache = self.root/b.HOOK_CACHE
+        cache.mkdir(parents=True)
+        original = cache/'developer-cache'
+        original.write_text('original')
         for fail, missing in (('cli-build', False), ('app-build', False), (None, True)):
             self.out = self.root/('build/phase-1e4/fail-'+str(fail))
             (self.root/'.dart_tool/package_config.json').unlink(missing_ok=True)
@@ -1249,6 +1392,9 @@ exec /usr/bin/git "$@"
                 self.build_fixture(fail=fail, missing=missing)
             self.assertEqual(b.read(self.out/'build-info.json')['buildStatus'], 'FAIL')
             self.assertEqual(b.read(self.out/'evidence/build-receipt.json')['status'], 'FAIL')
+            self.assertEqual((self.out/b.NATIVE_HOOK_SNAPSHOT/'hook-output').read_text(), 'current hook bytes')
+            self.assertEqual(list(cache.iterdir()), [original])
+            self.assertEqual(original.read_text(), 'original')
 
     def test_sdk_platform_python_and_source_expectations_fail_closed(self):
         with patch.object(b.platform, 'system', return_value='Linux'), self.assertRaisesRegex(ValueError, 'macOS arm64'):
@@ -2379,6 +2525,26 @@ except b.GateInterrupted:
         with patch.object(b, 'check_app'), self.assertRaisesRegex(ValueError, 'Incomplete product'):
             b.products(self.root, app, cli, {'productVersion': '0.1.0-rc.1', 'appBuild': '7'}, {})
 
+    def test_products_audit_the_external_build_root_before_running_candidates(self):
+        app, cli = self.product_fixture()
+        external = Path('/opt/meshchan artifacts')
+        ident = {'productVersion': '0.1.0-rc.1', 'appBuild': '7'}
+        with (patch.object(b, 'release_build_root', return_value=external),
+              patch.object(b, 'check_app'), patch.object(b, 'verify_app_aot'),
+              patch.object(b, 'loader_check', return_value={'bin/meshctl': {}}),
+              patch.object(b, 'inspect_loaders', return_value=({b.APP_AOT_BINARY: {}}, {})),
+              patch.object(b.subprocess, 'run') as run):
+            for binary, path in ((cli/'bin/meshctl', os.fsencode(external/'snapshot.aot')),
+                                 (app/b.APP_AOT_BINARY, (external/'native.c').as_uri().encode())):
+                with self.subTest(binary=binary):
+                    original = binary.read_bytes()
+                    binary.write_bytes(original+b'\0'+path+b'\0')
+                    with self.assertRaisesRegex(ValueError, 'Local build path remains in') as error:
+                        b.products(self.root, app, cli, ident, {}, path_audit=True)
+                    self.assertIn(binary.name, str(error.exception))
+                    binary.write_bytes(original)
+            run.assert_not_called()
+
     def test_products_require_arm64_aot_exports_before_signature_and_runtime_checks(self):
         app, cli = self.product_fixture()
         ident = {'productVersion': '0.1.0-rc.1', 'appBuild': '7'}
@@ -2816,6 +2982,18 @@ with (patch.object(b, 'check_app'),
         (cli/'payload').chmod(0o755)
         with self.assertRaisesRegex(ValueError, 'inventory'):
             b.verify_evidence(self.root, self.out, info)
+
+    def test_existing_build_evidence_and_material_output_resolve_after_linking(self):
+        info = self.evidence_fixture()
+        logical = self.out
+        physical = self.link_build_directory()/'phase-1e4'/logical.name
+        self.assertEqual(b.verify_evidence(self.root, physical, info), physical/'evidence')
+        materials = logical/'materials'
+        self.assertEqual(b.bound_material_output(self.root, physical, str(materials)), physical/'materials')
+        manifest_alias = physical/'materials'
+        manifest_alias.symlink_to(self.root/'source.dart')
+        with self.assertRaisesRegex(ValueError, 'Path is not owned'):
+            b.bound_material_output(self.root, physical, str(materials))
 
     def test_product_signatures_agree_with_validator_and_receipt(self):
         info = self.evidence_fixture()

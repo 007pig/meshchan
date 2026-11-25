@@ -125,6 +125,78 @@ def require_product_disjoint(paths, products, *, protected='a candidate product'
             raise ValueError(f'{label} overlaps {protected}: {path}')
 
 
+def release_build_root(root, git_metadata=()):
+    """Resolve the one supported alias, an ignored checkout-root build link."""
+    local = root/'build'
+    try:
+        mode = local.lstat().st_mode
+    except FileNotFoundError:
+        return local
+    if stat.S_ISDIR(mode):
+        return local
+    if not stat.S_ISLNK(mode):
+        raise ValueError('Release build root must be a directory: '+str(local))
+
+    target = local.readlink()
+    if not target.is_absolute() or '..' in target.parts:
+        raise ValueError('Release build symlink requires an absolute canonical target: '+str(local))
+    try:
+        resolved = target.resolve(strict=True)
+        mode = target.lstat().st_mode
+    except (FileNotFoundError, NotADirectoryError, RuntimeError) as error:
+        raise ValueError('Release build symlink target is unavailable: '+str(target)) from error
+    if target != resolved or not stat.S_ISDIR(mode):
+        raise ValueError('Release build symlink must target a real canonical directory: '+str(target))
+    require_product_disjoint({'Linked build directory': target}, (root, *git_metadata),
+                             protected='the checkout or its Git metadata')
+    return target
+
+
+def release_tracked_pathspec(root, name):
+    if name == 'build':
+        # Git pathspecs are case-sensitive even when the checkout aliases these names.
+        try:
+            alternate = (root/'BUILD').lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if os.path.samestat(alternate, (root/name).lstat()):
+                return ':(literal,icase)'+name
+    return ':(literal)'+name
+
+
+def release_run_path(root, physical_build, value, phase, *, direct=False):
+    """Admit a release run through its checkout path or its exact physical path."""
+    path = Path(value).expanduser().absolute()
+    local = root/'build'
+    if path.is_relative_to(local):
+        path = physical_build/path.relative_to(local)
+    if '..' in path.parts or path.resolve() != path or path.is_symlink():
+        raise ValueError('Release output must be canonical below the build root without symlink aliases: '+str(path))
+    base = physical_build/phase
+    if path == base or not path.is_relative_to(base) or (direct and path.parent != base):
+        raise ValueError(f'Release output must be an owned run below build/{phase}: {path}')
+    return path
+
+
+def release_relative_path(root, physical_build, path):
+    """Keep physical build paths out of the repository-relative evidence fields."""
+    if physical_build is not None and path.is_relative_to(physical_build):
+        return (Path('build')/path.relative_to(physical_build)).as_posix()
+    return path.relative_to(root).as_posix()
+
+
+def release_reference(root, physical_build, name):
+    """Map a logical evidence reference without admitting other aliases."""
+    relative = Path(safe(name))
+    path = root/relative
+    if physical_build is not None and relative.is_relative_to('build'):
+        path = physical_build/relative.relative_to('build')
+    if path.resolve() != path or path.is_symlink():
+        raise ValueError('Release reference contains a symlink alias: '+name)
+    return path
+
+
 def repository_source_path(root, name):
     path = root/safe(name)
     if path.parent.resolve() != path.parent:

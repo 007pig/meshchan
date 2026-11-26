@@ -61,10 +61,11 @@ retain their own evidence under the existing exit precedence.
 
 ### macOS App
 
-`RuntimeController` sends requests to a long-lived worker isolate. Both device
-requests carry `String port`, and both worker transport factories are
-`CompanionTransport Function(String)`. The worker uses one `DeviceGate` for
-Refresh, Check, and recorded diagnostics.
+`RuntimeController` sends `ConnectionTarget` values in Start requests to a
+long-lived worker isolate. The App constructs a `UsbSerialTarget` from the
+current explicit selection for each Start. The worker uses one `DeviceGate`
+for Refresh, Check, and recorded diagnostics, with separate
+`CompanionTransportFactory` injection points for Check and diagnostics.
 [Controller](../../apps/meshchan_app/lib/runtime/controller.dart) ·
 [Request types](../../apps/meshchan_app/lib/runtime/protocol.dart) ·
 [Worker](../../apps/meshchan_app/lib/runtime/worker.dart)
@@ -73,8 +74,8 @@ Refresh, Check, and recorded diagnostics.
 | --- | --- |
 | Offline startup | The worker opens one `CoreStorage` handle and serves offline Drafts, Profiles, Settings, and History. Enumeration and port open occur on explicit device actions. [Worker](../../apps/meshchan_app/lib/runtime/worker.dart) · [App startup and shutdown](../../apps/meshchan_app/README.md#runtime-startup-and-shutdown-1d3) |
 | Device Refresh and selection | `DeviceModel.refresh` → `refreshDevicePorts` → `RefreshDevicePorts`. The worker briefly holds the gate while listing port metadata. `DeviceModel.select` accepts an observed exact path. Failed refresh makes the prior list stale, and successful refresh clears a selection when the port is absent. [Device model](../../apps/meshchan_app/lib/device/model.dart) |
-| Device Check | `DeviceModel.check` → `startDeviceCheck(port, options)` → `StartDeviceCheck` → worker lease → `FiniteDeviceCheck.run` → a fresh USB transport and `MeshCoreSession`. This initializes, publishes a timestamped device snapshot, and awaits session and observer cleanup. Check does no inbox reads, RF sends, or run recording. [Check runner](../../apps/meshchan_app/lib/runtime/device_check.dart) · [Check projections](../../apps/meshchan_app/lib/runtime/device_protocol.dart) |
-| Recorded Ping/Responder | `DiagnosticsModel.startDiagnostic` freezes the selected path and parameter request → `startRecordedDiagnostic` → `StartRecordedDiagnostic`. The worker claims the gate before parameter resolution, then uses `CoreStorage.record` with a lazy transport factory. After registration commits, core creates a fresh session and the selected task. `RecordingAdapter` observes task, save, and cleanup facts and settles App subscriptions. [Diagnostics model](../../apps/meshchan_app/lib/diagnostics/model.dart) · [Worker](../../apps/meshchan_app/lib/runtime/worker.dart) · [Recording adapter](../../apps/meshchan_app/lib/runtime/recording_adapter.dart) |
+| Device Check | `DeviceModel.check` → `startDeviceCheck(target, options)` → `StartDeviceCheck` → worker admission and lease → `FiniteDeviceCheck.run` → a fresh USB transport and `MeshCoreSession`. Check can publish timestamped device information while session and observer cleanup are pending. It does no inbox reads, RF sends, or run recording. [Check runner](../../apps/meshchan_app/lib/runtime/device_check.dart) · [Check projections](../../apps/meshchan_app/lib/runtime/device_protocol.dart) |
+| Recorded Ping/Responder | `DiagnosticsModel.startDiagnostic` freezes a USB target and parameter request → `startRecordedDiagnostic` → `StartRecordedDiagnostic`. The worker claims the gate before parameter resolution and gives `CoreStorage.record` a zero-argument closure that creates a transport for the captured target. Core invokes it after registration commits and cancellation is checked. `RecordingAdapter` observes task, save, and cleanup facts and settles App subscriptions. [Diagnostics model](../../apps/meshchan_app/lib/diagnostics/model.dart) · [Worker](../../apps/meshchan_app/lib/runtime/worker.dart) · [Recording adapter](../../apps/meshchan_app/lib/runtime/recording_adapter.dart) |
 | Cancel and normal Quit | Attempt-scoped Cancel acknowledges intent. The device gate waits for actual cleanup. Normal Quit also settles the draft decision, admitted storage work, recording saves, and maintenance. The controller requires affirmative release plus observed worker exit when a worker was started. Pending release keeps the gate occupied. Failed or unknown release is held in a faulted or quarantined state and can veto Quit. [Controller](../../apps/meshchan_app/lib/runtime/controller.dart) · [Worker](../../apps/meshchan_app/lib/runtime/worker.dart) · [Quit contract](flutter-host.md#normal-quit-and-desktop-behavior) |
 
 ### Shared transport and session
@@ -108,12 +109,12 @@ under the [task contract](../protocol/diagnostic-tasks.md).
 
 ### USB initialization policy
 
-The CLI configures its typed factory with `appCompletionQueries: false`. Both
-App worker USB factories use `createUsbCompanionTransport` directly, with the
-default `appCompletionQueries: true`. On the generic path the App retains
-an extra `DEVICE_QUERY` for each initialization command. The CLI omits those
-generic completion queries and passes initialization through on noncandidate
-USB interfaces.
+The CLI configures its typed factory with `appCompletionQueries: false`. The
+App configures both factories inside its worker with
+`createCompanionTransportFactory(appCompletionQueries: true)`. On the generic
+path the App retains an extra `DEVICE_QUERY` for each initialization command.
+The CLI omits those generic completion queries and passes initialization
+through on noncandidate USB interfaces.
 
 The USB wrapper checks selected-port metadata for candidate VID/PID
 `303a:1001` at open. The serial startup decoder can use bounded initial
@@ -301,14 +302,28 @@ creation after recording registration.
 
 ### Step 8 App handoff
 
-Carry the typed target in Check and Diagnostic requests and compose the
-factory with `appCompletionQueries: true` inside the worker. Preserve the
-existing device gate, attempt-scoped cancellation, lazy recorded creation,
-and affirmative release and Quit protocol. The App's Check and Diagnostic
-requests and worker factories still use the USB path string interfaces.
-[App call paths](#macos-app)
+Check and Diagnostic carry the frozen target through the request envelope to
+their independent worker-local factories. Both admission paths require a
+`UsbSerialTarget` before acquiring a lease. Envelope validation runs first.
+Check tests whether admission is stopped before validating the Start input.
+Diagnostic validates the Start input before `_beginRecording` checks whether
+admission is stopped. Refresh remains a port metadata operation.
+
+Check projects `portPath` into its existing local display fields. Diagnostics
+associates the original path with the local attempt ID, including when the
+Start acknowledgment is delayed or lost. The target is excluded from persisted
+parameters and safe Operation, History, and export projections. A Check's
+device information and actual cleanup are independently observable. The probe
+wraps its existing private token at the typed Check harness boundary and
+resolves it through an injected proxy factory.
+[App call paths](#macos-app) ·
+[Step 8 validation](../validation/phase-2a8-app-connection-targets.md)
 
 ### TCP and BLE adapter handoff
+
+For each new production target, extend App admission and its local display
+projection along with the adapter and factory configuration. The current App
+admits USB targets only.
 
 In 2B, the production TCP adapter takes the exact host and the explicit
 port. It defines its own framing, initialization, and error behavior.
@@ -398,6 +413,6 @@ release on the same target.
 | 5 | Completed | The [public model](#connection-targets) represents explicit USB serial, TCP, and BLE selections as plain values. [Validation record](../validation/phase-2a5-connection-targets.md) |
 | 6 | Completed | The [public factory](#step-6-factory-handoff) creates fresh USB transports and reports typed errors for TCP and BLE. [Validation record](../validation/phase-2a6-transport-factory.md) |
 | 7 | Completed | The [CLI session and datagram entry points](#step-7-cli-handoff) pass exact USB targets to the typed factory. [Validation record](../validation/phase-2a7-cli-connection-targets.md) |
-| 8 | Planned | Migrate [App Check and Diagnostic requests and worker factories](#step-8-app-handoff). |
-| 9 | Planned | Run targeted regressions and build verification. |
+| 8 | Completed | [App Check and Diagnostic requests and worker factories](#step-8-app-handoff) use typed targets. [Validation record](../validation/phase-2a8-app-connection-targets.md) |
+| 9 | Planned | Run integrated 2A regressions and build verification across the migrated entry points. |
 | 10 | Planned | Record 2A delivery and hand off later-phase work. |

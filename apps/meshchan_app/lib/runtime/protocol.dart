@@ -1,6 +1,7 @@
 import 'dart:isolate';
 
-import 'package:meshcore_link/meshcore_link.dart' show SerialPortDescription;
+import 'package:meshcore_link/meshcore_link.dart'
+    show ConnectionTarget, SerialPortDescription;
 
 import 'device_protocol.dart';
 export 'device_protocol.dart';
@@ -547,9 +548,9 @@ final class DevicePortsValue extends ReplyValue {
 }
 
 final class StartDeviceCheck extends RuntimeRequest {
-  const StartDeviceCheck(this.id, this.port, this.options);
+  StartDeviceCheck(this.id, this.target, this.options);
   final int id;
-  final String port;
+  final ConnectionTarget target;
   final DeviceCheckOptions options;
 }
 
@@ -562,9 +563,9 @@ final class CancelDeviceCheck extends RuntimeRequest {
 enum DiagnosticPreparation { resolving, recording, settled }
 
 final class StartRecordedDiagnostic extends RuntimeRequest {
-  const StartRecordedDiagnostic(this.id, this.port, this.parameters);
+  StartRecordedDiagnostic(this.id, this.target, this.parameters);
   final int id;
-  final String port;
+  final ConnectionTarget target;
   final EffectiveParameterRequest parameters;
 }
 

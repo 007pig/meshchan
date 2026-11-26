@@ -34,6 +34,8 @@ EffectiveParameterRequest diagnosticRequest({bool respond = false}) => respond
 
 enum DiagnosticControl { releaseResolve, releaseCleanup }
 
+const diagnosticFixtureCheckPath = ' metadata\tfixture ';
+
 final class DiagnosticReady {
   const DiagnosticReady(this.port);
   final SendPort port;
@@ -52,6 +54,7 @@ void Function(WorkerBootstrap) diagnosticFixtureEntry(
   bool failCleanup = false,
   bool cancelBeforePrepared = false,
   bool delayAck = false,
+  String expectedPortPath = ' explicit fixture ',
 }) => (b) {
   final commands = ReceivePort();
   final resolving = Completer<void>(), cleanup = Completer<void>();
@@ -75,18 +78,25 @@ void Function(WorkerBootstrap) diagnosticFixtureEntry(
       cancelBeforePrepared: cancelBeforePrepared,
       fact: fact,
     ),
-    createDiagnosticTransport: (path) {
-      if (path != ' explicit fixture ') {
+    createDiagnosticTransport: (target) {
+      if (target is! UsbSerialTarget || target.portPath != expectedPortPath) {
         throw StateError('Exact input was changed');
       }
       fact('factory');
+      observer.send(target);
       return DiagnosticFixtureTransport(
         closeBarrier: holdCleanup ? cleanup : null,
         failClose: failCleanup,
       );
     },
-    createCheckTransport: (_) => DeviceFixtureTransport(),
-    enumeratePorts: () => const [],
+    createCheckTransport: (target) {
+      observer.send(target);
+      return DeviceFixtureTransport();
+    },
+    enumeratePorts: () => [
+      SerialPortDescription(path: expectedPortPath),
+      const SerialPortDescription(path: diagnosticFixtureCheckPath),
+    ],
   );
   commands.listen((message) {
     if (message == DiagnosticControl.releaseResolve) {

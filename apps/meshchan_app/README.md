@@ -456,7 +456,8 @@ The session-local options default to request **5 seconds**, initialization
 **15 seconds**, startup **0 milliseconds**. Request/initialization accept decimal
 integers 1–86400; startup accepts 0–86399999 and must be strictly less than the
 initialization budget in milliseconds. Raw invalid input is retained. Check
-freezes the path/options; edits and selection changes affect only the next check.
+freezes a `UsbSerialTarget` with the exact selected path, together with the
+options. Edits and selection changes affect only the next check.
 These values are neither profile fields nor settings and require no final Save.
 
 Each Check constructs a fresh `MeshCoreSession` and opens its App-owned USB
@@ -512,9 +513,10 @@ and select an available exact path on Device in this application session, then
 choose the diagnostic operation, saved/default preset, presence-sensitive field
 overrides and (for PING only) invocation content. No successful device check is
 required. Preview resolves saved parameters without accessing hardware. Click
-**Start and record** to capture the request and selected path; the worker resolves
-again, freezes the effective parameters and calls public `CoreStorage.record()`.
-The core commits registration before invoking a fresh lazy transport factory.
+**Start and record** to capture the parameter request and a `UsbSerialTarget`
+with the exact selected path. The worker resolves again, freezes the effective
+parameters and calls public `CoreStorage.record()`. Core commits registration
+and checks cancellation before invoking the worker's factory for that target.
 The current source records `0.1.0-rc.1+10`, using the source identity checked
 against manifests and raw native build inputs, including direct Dart processes.
 Historical runs retain their original app/build version.

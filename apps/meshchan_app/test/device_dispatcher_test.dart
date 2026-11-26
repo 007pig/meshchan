@@ -18,19 +18,21 @@ void main() {
         );
         final port = ReceivePort();
         final events = <WorkerEvent>[];
-        var factories = 0, enumerationFails = true;
+        final factoryTargets = <ConnectionTarget>[];
+        var enumerations = 0, enumerationFails = true;
         final dispatcher = WorkerDispatcher(
           WorkerBootstrap(1, directory.path, port.sendPort),
           send: events.add,
           finish: () {},
           enumeratePorts: () {
+            enumerations++;
             if (enumerationFails) {
               throw const SerialPortFailure('private cause');
             }
             return const [];
           },
-          createCheckTransport: (_) {
-            factories++;
+          createCheckTransport: (target) {
+            factoryTargets.add(target);
             return DeviceFixtureTransport();
           },
         );
@@ -42,6 +44,8 @@ void main() {
         }
 
         await until(() => dispatcher.snapshot.phase == RuntimePhase.ready);
+        expect(enumerations, 0);
+        expect(factoryTargets, isEmpty);
         var id = 0;
         void send(RuntimeRequest request) =>
             dispatcher.receive(RequestEnvelope(1, ++id, request));
@@ -61,10 +65,25 @@ void main() {
               .ports,
           isEmpty,
         );
-        send(const StartDeviceCheck(1, '  ', DeviceCheckOptions()));
-        expect(factories, 0);
-        send(const StartDeviceCheck(1, ' A ', DeviceCheckOptions()));
-        send(const StartDeviceCheck(2, 'B', DeviceCheckOptions()));
+        expect(enumerations, 2);
+        expect(factoryTargets, isEmpty);
+        final target = UsbSerialTarget(portPath: ' A\tB ');
+        final gateGeneration = dispatcher.gate.generation;
+        send(
+          StartDeviceCheck(
+            1,
+            target,
+            const DeviceCheckOptions(requestSeconds: 0),
+          ),
+        );
+        expect(
+          events.whereType<RequestReply>().last.error!.host,
+          CoordinationFault.invalidState,
+        );
+        expect(dispatcher.gate.generation, gateGeneration);
+        expect(factoryTargets, isEmpty);
+        send(StartDeviceCheck(1, target, const DeviceCheckOptions()));
+        send(StartDeviceCheck(2, target, const DeviceCheckOptions()));
         expect(
           events.whereType<RequestReply>().last.error!.host,
           CoordinationFault.deviceBusy,
@@ -81,7 +100,8 @@ void main() {
               dispatcher.snapshot.deviceCheck?.settled == true &&
               dispatcher.gate.state == DeviceGateState.free,
         );
-        expect(factories, stopBeforeCreate ? 0 : 1);
+        expect(factoryTargets, stopBeforeCreate ? [] : [target]);
+        expect(enumerations, 2);
         if (stopBeforeCreate) {
           send(const ResumeAdmission());
           expect(events.whereType<RequestReply>().last.error, isNotNull);

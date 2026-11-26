@@ -28,7 +28,7 @@ class DeviceRuntime implements AppRuntime {
   List<SerialPortDescription> ports = const [];
   DeviceFailure? failure;
   Completer<void>? ack;
-  String? capturedPort;
+  ConnectionTarget? capturedTarget;
   DeviceCheckOptions? capturedOptions;
   @override
   Future<DevicePortsValue> refreshDevicePorts(int generation) async {
@@ -37,9 +37,12 @@ class DeviceRuntime implements AppRuntime {
   }
 
   @override
-  DeviceCheckHandle startDeviceCheck(String port, DeviceCheckOptions options) {
+  DeviceCheckHandle startDeviceCheck(
+    ConnectionTarget target,
+    DeviceCheckOptions options,
+  ) {
     starts++;
-    capturedPort = port;
+    capturedTarget = target;
     capturedOptions = options;
     return DeviceCheckHandle(starts, ack?.future ?? Future.value());
   }
@@ -119,11 +122,11 @@ void main() {
   });
   test('frozen A/options, B selection and cancel intent before ack', () async {
     runtime.ports = const [
-      SerialPortDescription(path: ' A '),
+      SerialPortDescription(path: ' A\t '),
       SerialPortDescription(path: 'B'),
     ];
     await model.refresh();
-    model.select(' A ');
+    model.select(' A\t ');
     runtime.ack = Completer<void>();
     final started = model.check();
     model.request.text = '9';
@@ -131,12 +134,33 @@ void main() {
     await model.cancel();
     expect(runtime.cancels, [1]);
     expect(model.cancelRequested, 1);
-    expect(runtime.capturedPort, ' A ');
+    expect(runtime.capturedTarget, UsbSerialTarget(portPath: ' A\t '));
     expect(runtime.capturedOptions!.requestSeconds, 5);
     await model.check();
     expect(runtime.starts, 1);
     runtime.ack!.complete();
     await started;
+  });
+  test('invalid selected target leaves Check startup reusable', () async {
+    runtime.ports = const [
+      SerialPortDescription(path: ' \t '),
+      SerialPortDescription(path: 'A\u0000B'),
+      SerialPortDescription(path: 'valid'),
+    ];
+    await model.refresh();
+    for (final port in runtime.ports.take(2)) {
+      model.select(port.path);
+      await model.check();
+      expect(model.actionFailure?.host, CoordinationFault.invalidState);
+      expect(model.starting, false);
+      expect(model.handle, isNull);
+      expect(runtime.starts, 0);
+    }
+    model.select('valid');
+    await model.check();
+    expect(model.actionFailure, isNull);
+    expect(model.starting, false);
+    expect(runtime.capturedTarget, UsbSerialTarget(portPath: 'valid'));
   });
   testWidgets(
     'real controls show metadata, invalid raw text and composition guards',

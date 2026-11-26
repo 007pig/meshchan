@@ -13,7 +13,8 @@ import 'package:meshchan_app/profiles/parameter_form.dart';
 import 'package:meshchan_app/profiles/preview.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
 import 'package:meshchan_core/meshchan_core.dart';
-import 'package:meshcore_link/meshcore_link.dart' show SerialPortDescription;
+import 'package:meshcore_link/meshcore_link.dart'
+    show ConnectionTarget, SerialPortDescription, UsbSerialTarget;
 
 import 'device_widget_test.dart' show DeviceRuntime;
 import 'support/draft_runtime.dart' show DraftRuntime;
@@ -24,11 +25,11 @@ class DiagnosticRuntime extends DeviceRuntime {
   int diagnosticStarts = 0;
   @override
   DiagnosticHandle startRecordedDiagnostic(
-    String port,
+    ConnectionTarget target,
     EffectiveParameterRequest parameters,
   ) {
     diagnosticStarts++;
-    capturedPort = port;
+    capturedTarget = target;
     request = parameters;
     return DiagnosticHandle(1, diagnosticStarts, accepted.future);
   }
@@ -112,7 +113,7 @@ void main() {
     final start = m.startDiagnostic();
     final duplicate = m.startDiagnostic();
     expect(r.diagnosticStarts, 1);
-    expect(r.capturedPort, ' exact ');
+    expect(r.capturedTarget, UsbSerialTarget(portPath: ' exact '));
     expect((r.request as PingParameterRequest).content, isEmpty);
     expect(m.locked, true);
     d.selected = 'later';
@@ -132,6 +133,41 @@ void main() {
     m.content.text = 'next';
     expect(m.canStart, false);
     expect((m.frozenRequest as PingParameterRequest).content, isEmpty);
+  });
+  test('invalid selected target leaves diagnostic startup reusable', () async {
+    r.ports = const [
+      SerialPortDescription(path: ' \t '),
+      SerialPortDescription(path: 'A\u0000B'),
+      SerialPortDescription(path: 'valid'),
+    ];
+    await d.refresh();
+    for (final port in r.ports.take(2)) {
+      d.select(port.path);
+      await m.startDiagnostic();
+      expect(m.actionFailure?.host, CoordinationFault.invalidState);
+      expect(m.starting, false);
+      expect(m.handle, isNull);
+      expect(m.frozenPort, isNull);
+      expect(r.diagnosticStarts, 0);
+    }
+    d.select('valid');
+    r.accepted.complete();
+    await m.startDiagnostic();
+    expect(m.actionFailure, isNull);
+    expect(m.starting, false);
+    expect(r.capturedTarget, UsbSerialTarget(portPath: 'valid'));
+    final previousHandle = m.handle;
+    r.snapshot = const RuntimeSnapshot(
+      generation: 1,
+      phase: RuntimePhase.ready,
+      operation: OperationSnapshot(generation: 1, attemptId: 1, done: true),
+    );
+    d.select('A\u0000B');
+    await m.startDiagnostic();
+    expect(r.diagnosticStarts, 1);
+    expect(m.handle, same(previousHandle));
+    expect(m.attempt?.attemptId, previousHandle!.id);
+    expect(m.attemptPort, 'valid');
   });
   test('edited preview cannot replace newer invocation; preview has no device effects', () async {
     m.mode = ContentMode.text;
@@ -172,8 +208,8 @@ void main() {
         r.accepted.complete();
         await first;
         final previousResult = m.attempt;
-        d.ports = const [SerialPortDescription(path: ' next explicit ')];
-        d.select(' next explicit ');
+        d.ports = const [SerialPortDescription(path: ' next\texplicit ')];
+        d.select(' next\texplicit ');
         m.content.text = 'second';
         r.accepted = Completer<void>();
         final next = m.startDiagnostic();
@@ -190,9 +226,10 @@ void main() {
         );
         await next;
         expect(m.handle!.id, 2);
-        expect(m.frozenPort, ' next explicit ');
+        expect(m.frozenPort, ' next\texplicit ');
+        expect(r.capturedTarget, UsbSerialTarget(portPath: ' next\texplicit '));
         expect(m.frozenRequest, isNot(same(previousRequest)));
-        expect(m.attemptPort, observed ? ' next explicit ' : ' exact ');
+        expect(m.attemptPort, observed ? ' next\texplicit ' : ' exact ');
         if (observed) {
           expect(m.attempt!.attemptId, 2);
         } else {

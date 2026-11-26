@@ -57,7 +57,11 @@ void main() {
       expect(runtime.snapshot.gate, DeviceGateState.occupied);
       await expectLater(
         runtime.request(
-          const StartDeviceCheck(99, 'unmapped', DeviceCheckOptions()),
+          StartDeviceCheck(
+            99,
+            UsbSerialTarget(portPath: 'unmapped'),
+            const DeviceCheckOptions(),
+          ),
         ),
         throwsA(isA<RuntimeFault>()),
       );
@@ -262,7 +266,7 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 40));
       final check = fixture.runtime.startDeviceCheck(
-        token,
+        UsbSerialTarget(portPath: token),
         const DeviceCheckOptions(),
       );
       await check.accepted;

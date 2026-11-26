@@ -10,16 +10,19 @@ import '../tool/device_fixture.dart';
 Future<void> turn() => Future<void>.delayed(Duration.zero);
 void main() {
   test('fresh real sessions publish info before actual close; only initialization pair', () async {
+    const portPath = ' exact\tpath ';
     for (var n = 1; n <= 2; n++) {
       final release = Completer<void>();
       final transport = DeviceFixtureTransport(closeBarrier: release);
       final seen = <DeviceCheckSnapshot>[];
       final check = FiniteDeviceCheck(
         n,
-        ' exact path ',
+        UsbSerialTarget(portPath: portPath),
         const DeviceCheckOptions(),
-        createTransport: (p) {
-          expect(p, ' exact path ');
+        createTransport: (target) {
+          expect(target, isA<UsbSerialTarget>());
+          expect(target.kind, CompanionTransportKind.usbSerial);
+          expect((target as UsbSerialTarget).portPath, portPath);
           return transport;
         },
         publish: seen.add,
@@ -28,7 +31,8 @@ void main() {
       await transport.closing.future;
       expect(check.snapshot.info, isNotNull);
       final info = check.snapshot.info!;
-      expect(info.port, ' exact path ');
+      expect(info.port, portPath);
+      expect(check.snapshot.port, portPath);
       expect(info.observedAt.isUtc, true);
       expect(info.protocolVersion, 14);
       expect(info.appTargetVersion, 3);
@@ -68,7 +72,7 @@ void main() {
       var constructed = 0;
       final check = FiniteDeviceCheck(
         1,
-        'A',
+        UsbSerialTarget(portPath: 'A'),
         DeviceCheckOptions(startupMilliseconds: stage == 'startup' ? 5000 : 0),
         createTransport: (_) {
           constructed++;
@@ -104,7 +108,7 @@ void main() {
       );
       final check = FiniteDeviceCheck(
         1,
-        'A',
+        UsbSerialTarget(portPath: 'A'),
         const DeviceCheckOptions(),
         createTransport: (_) => t,
         publish: (_) {},
@@ -125,7 +129,7 @@ void main() {
   test('successful information survives close failure', () async {
     final check = FiniteDeviceCheck(
       1,
-      'A',
+      UsbSerialTarget(portPath: 'A'),
       const DeviceCheckOptions(),
       createTransport: (_) => DeviceFixtureTransport(failClose: true),
       publish: (_) {},
@@ -137,17 +141,37 @@ void main() {
     expect(check.snapshot.sessionCleanup, DeviceCleanup.failed);
     expect(check.snapshot.released, false);
   });
-  test('session constructor failure safely closes transport not yet owned by session', () async {
-    final t = DeviceFixtureTransport();
+  test('factory failure leaves both cleanup scopes not required', () async {
     final check = FiniteDeviceCheck(
       1,
-      'A',
+      UsbSerialTarget(portPath: 'A'),
+      const DeviceCheckOptions(),
+      createTransport: (_) => throw StateError('private construction failure'),
+      publish: (_) {},
+    );
+    await check.run();
+    expect(check.snapshot.failure?.kind, 'observationFailed');
+    expect(check.snapshot.sessionCleanup, DeviceCleanup.notRequired);
+    expect(check.snapshot.observerCleanup, DeviceCleanup.notRequired);
+    expect(check.snapshot.released, true);
+  });
+  test('session constructor failure safely closes transport not yet owned by session', () async {
+    final release = Completer<void>();
+    final t = DeviceFixtureTransport(closeBarrier: release);
+    final check = FiniteDeviceCheck(
+      1,
+      UsbSerialTarget(portPath: 'A'),
       const DeviceCheckOptions(),
       createTransport: (_) => t,
       createSession: (_, _) => throw StateError('construct'),
       publish: (_) {},
     );
-    await check.run();
+    final work = check.run();
+    await t.closing.future;
+    expect(check.snapshot.sessionCleanup, DeviceCleanup.pending);
+    expect(check.snapshot.settled, false);
+    release.complete();
+    await work;
     expect(t.opens, 0);
     expect(t.closes, 1);
     expect(check.snapshot.released, true);
@@ -155,18 +179,27 @@ void main() {
   test(
     'native success and host observer cleanup failure remain separate',
     () async {
+      final observerEntered = Completer<void>(), release = Completer<void>();
       final check = FiniteDeviceCheck(
         1,
-        'A',
+        UsbSerialTarget(portPath: 'A'),
         const DeviceCheckOptions(),
         createTransport: (_) => DeviceFixtureTransport(),
         cancelObserver: (s) async {
           await s.cancel();
+          observerEntered.complete();
+          await release.future;
           throw StateError('observer');
         },
         publish: (_) {},
       );
-      await check.run();
+      final work = check.run();
+      await observerEntered.future;
+      expect(check.snapshot.sessionCleanup, DeviceCleanup.succeeded);
+      expect(check.snapshot.observerCleanup, DeviceCleanup.pending);
+      expect(check.snapshot.settled, false);
+      release.complete();
+      await work;
       expect(check.snapshot.sessionCleanup, DeviceCleanup.succeeded);
       expect(check.snapshot.observerCleanup, DeviceCleanup.failed);
       expect(check.snapshot.released, false);
@@ -179,7 +212,7 @@ void main() {
         final t = DeviceFixtureTransport(respondThrough: 0);
         final check = FiniteDeviceCheck(
           1,
-          'A',
+          UsbSerialTarget(portPath: 'A'),
           DeviceCheckOptions(
             requestSeconds: requestTimeout ? 1 : 5,
             initializationSeconds: requestTimeout ? 5 : 1,

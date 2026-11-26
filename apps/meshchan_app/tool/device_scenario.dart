@@ -5,6 +5,7 @@ import 'dart:isolate';
 import 'package:meshchan_app/runtime/controller.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 import 'device_fixture.dart';
 import 'profile_fixture.dart';
@@ -54,7 +55,7 @@ Future<void> runDeviceScenario(
     'ports',
   );
   final handle = runtime.startDeviceCheck(
-    ' fixture A ',
+    UsbSerialTarget(portPath: ' fixture A '),
     const DeviceCheckOptions(),
   );
   if (delayedAck) {
@@ -75,7 +76,13 @@ Future<void> runDeviceScenario(
   );
   require(runtime.snapshot.gate == DeviceGateState.occupied, 'occupied');
   await rejects(
-    runtime.request(const StartDeviceCheck(99, 'B', DeviceCheckOptions())),
+    runtime.request(
+      StartDeviceCheck(
+        99,
+        UsbSerialTarget(portPath: 'B'),
+        const DeviceCheckOptions(),
+      ),
+    ),
   );
   await rejects(runtime.refreshDevicePorts(4));
   await runtime.listDrafts();
@@ -134,7 +141,7 @@ Future<void> runDeviceScenario(
     await handle.accepted;
     require(runtime.snapshot.deviceCheck!.settled, 'late ack cannot regress');
     final next = runtime.startDeviceCheck(
-      'fixture B',
+      UsbSerialTarget(portPath: 'fixture B'),
       const DeviceCheckOptions(),
     );
     await next.accepted;
@@ -147,7 +154,12 @@ Future<void> runDeviceScenario(
   await runtime.stop();
   await rejects(runtime.resumeAdmission());
   await rejects(
-    runtime.startDeviceCheck('B', const DeviceCheckOptions()).accepted,
+    runtime
+        .startDeviceCheck(
+          UsbSerialTarget(portPath: 'B'),
+          const DeviceCheckOptions(),
+        )
+        .accepted,
   );
   var finished = false;
   final closing = runtime.shutdown().then((v) {

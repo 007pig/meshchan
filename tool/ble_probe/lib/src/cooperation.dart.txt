@@ -204,7 +204,10 @@ final class CooperationFixture {
         receiptOf: (bytes) => transport.receipts![bytes],
         provenanceConfirmed: () => !transport.notificationUnconfirmed,
       );
-      final handle = _handle = runtime.startDeviceCheck(token, options);
+      final handle = _handle = runtime.startDeviceCheck(
+        UsbSerialTarget(portPath: token),
+        options,
+      );
       _fact('checkRequested', {
         'checkId': handle.id,
         'generation': transport._generation,

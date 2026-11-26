@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 import '../device/model.dart';
 import '../profiles/preview.dart';
@@ -67,6 +68,14 @@ final class DiagnosticsModel extends ParameterPreview {
 
   Future<void> startDiagnostic() async {
     if (!canStart || deferChangeForComposition()) return;
+    final UsbSerialTarget target;
+    try {
+      target = UsbSerialTarget(portPath: device.selected!);
+    } on ArgumentError {
+      actionFailure = const RuntimeFault(host: CoordinationFault.invalidState);
+      notify();
+      return;
+    }
     final observedId = runtime.snapshot.operation?.attemptId;
     if (observedId != null && observedId == handle?.id) {
       _previousResultPort = (id: observedId, port: frozenPort);
@@ -76,12 +85,11 @@ final class DiagnosticsModel extends ParameterPreview {
         profileId: profileId,
         content: form.operation == DiagnosticOperation.ping ? bytes : null,
       );
-      final port = device.selected!;
       starting = true;
       actionFailure = null;
       cancelRequested = null;
-      final current = handle = runtime.startRecordedDiagnostic(port, request);
-      frozenPort = port;
+      final current = handle = runtime.startRecordedDiagnostic(target, request);
+      frozenPort = target.portPath;
       frozenRequest = request;
       notify();
       await current.accepted;

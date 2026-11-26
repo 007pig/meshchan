@@ -141,6 +141,12 @@ and **Close probe** share the release barrier. The final receipt distinguishes
 BLE, device check and observer, storage, runtime report and acknowledgement,
 worker exit, and bridge port cleanup.
 
+The cooperation harness wraps its private attempt token in a `UsbSerialTarget`
+to enter the App's typed Device Check path. The injected worker factory
+extracts the token for the existing bridge proxy, and the probe keeps physical
+BLE ownership on the root isolate. The token stays inside the probe harness,
+and the product App continues to admit only USB connections.
+
 ## Run one real scenario
 
 Before using the real backend, privately confirm the exact target identity,

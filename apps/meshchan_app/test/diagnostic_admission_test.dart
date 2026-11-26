@@ -94,7 +94,7 @@ final class _AdmissionDispatcher {
   }
 
   final _port = ReceivePort();
-  final _snapshots = StreamController<RuntimeSnapshot>.broadcast(sync: true);
+  final _snapshots = StreamController<RuntimeSnapshot>.broadcast();
   final _release = Completer<ReleaseReport>();
   late final WorkerDispatcher worker;
   RequestReply? _reply;
@@ -166,9 +166,13 @@ void main() {
         StartDeviceCheck(1, target, options),
         CoordinationFault.invalidState,
       );
-      rejects(
+      final rejected = dispatcher.send(
         StartRecordedDiagnostic(1, target, parameters),
-        CoordinationFault.invalidState,
+      );
+      expect(rejected.error?.host, CoordinationFault.invalidState);
+      expect(
+        dispatcher.send(diagnostic, id: rejected.id).error?.host,
+        CoordinationFault.staleRequest,
       );
       expect(gate.state, DeviceGateState.free);
       expect(gate.generation, 0);
@@ -263,6 +267,7 @@ void main() {
     await dispatcher.start();
     const path = ' exact\tfixture ';
     for (final respond in [false, true]) {
+      await inner.history.waitForMaintenance();
       final id = respond ? 2 : 1;
       final target = UsbSerialTarget(portPath: path);
       final request = StartRecordedDiagnostic(

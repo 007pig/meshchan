@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:meshchan_core/meshchan_core.dart';
-import 'package:meshcore_link/meshcore_link.dart' show CompanionTransport;
+import 'package:meshcore_link/meshcore_link.dart'
+    show CompanionTransportFactory;
 
 import 'business_projection.dart';
 import 'business_storage.dart';
@@ -18,7 +19,7 @@ Future<int> runRecordedDatagram(
   EffectiveParameters parameters,
   BusinessStorage storage,
   CliOutput io,
-  CompanionTransport Function(String) createTransport,
+  CompanionTransportFactory createTransport,
   DatagramSignals stopRequests,
 ) async {
   var code = 0;
@@ -175,7 +176,7 @@ Future<int> runRecordedDatagram(
     operation = storage.storage.record(
       parameters: parameters,
       appVersion: meshctlVersion,
-      createTransport: () => createTransport(input.port),
+      createTransport: () => createTransport(input.target),
       subscriptions: [
         if (signals != null)
           RecordingSubscription(

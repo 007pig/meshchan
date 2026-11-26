@@ -73,6 +73,7 @@ Future<void> main([List<String> arguments = const []]) async {
   }
 
   test('info and watch share initialization across split bodies and blocked output', () async {
+    const port = ' synthetic\t ';
     for (final command in ['info', 'watch']) {
       for (final stage in ['device', 'self']) {
         for (final bodyArrives in [true, false]) {
@@ -84,6 +85,7 @@ Future<void> main([List<String> arguments = const []]) async {
             late StringBuffer output;
             late ControlledSink sink;
             late Completer<void> flushing;
+            var creations = 0;
             clock.run((_) {
               connection = SyntheticConnection();
               error = StringBuffer();
@@ -95,16 +97,23 @@ Future<void> main([List<String> arguments = const []]) async {
                 runCli(
                   [
                     command,
-                    '--port=synthetic',
+                    '--port=$port',
                     '--json',
                     if (command == 'watch') ...['--duration', '1'],
                   ],
                   output: blockedOutput ? sink : output,
                   error: error,
-                  createTransport: (_) => serialTransportForTest(
-                    portPath: 'synthetic',
-                    createConnection: (_) => connection,
-                  ),
+                  createTransport: (target) {
+                    creations++;
+                    expect(target, UsbSerialTarget(portPath: port));
+                    return serialTransportForTest(
+                      portPath: (target as UsbSerialTarget).portPath,
+                      createConnection: (path) {
+                        expect(path, port);
+                        return connection;
+                      },
+                    );
+                  },
                 ),
               );
               clock.flushMicrotasks();
@@ -187,6 +196,7 @@ Future<void> main([List<String> arguments = const []]) async {
             // virtual-time zone. Settle it without a real request-budget sleep.
             await Future<void>.delayed(Duration.zero);
             clock.flushMicrotasks();
+            expect(creations, 1);
             expect(result.error, isNull);
             expect(
               result.value,
@@ -267,9 +277,9 @@ Future<void> _runTraceFixture() async {
     ['info', '--port=synthetic', '--json'],
     output: stdout,
     error: stderr,
-    createTransport: (_) => usbInitializationTransportForTest(
-      metadata: const SerialPortDescription(
-        path: 'synthetic',
+    createTransport: (target) => usbInitializationTransportForTest(
+      metadata: SerialPortDescription(
+        path: (target as UsbSerialTarget).portPath,
         usbVid: 0x303a,
         usbPid: 0x1001,
       ),

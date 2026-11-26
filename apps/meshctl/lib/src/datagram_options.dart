@@ -176,8 +176,8 @@ final class DatagramOptions {
   DatagramOptions(ArgResults args)
     : operation = args.name!,
       json = args.flag('json'),
-      verbose = args.flag('verbose') {
-    port = requiredPortOption(args);
+      verbose = args.flag('verbose'),
+      target = requiredUsbTarget(args) {
     requestTimeout = Duration(seconds: _integer(args, 'timeout', 1, 86400)!);
     initializationTimeout = Duration(
       seconds: _integer(args, 'init-timeout', 1, 86400)!,
@@ -276,8 +276,8 @@ final class DatagramOptions {
   DatagramOptions.effective(DatagramInput input, EffectiveParameters effective)
     : operation = input.operation,
       json = input.json,
-      verbose = input.verbose {
-    port = input.port;
+      verbose = input.verbose,
+      target = input.target {
     final p = effective.parameters;
     final b = p.budgets;
     requestTimeout = Duration(seconds: b.requestTimeoutSeconds);
@@ -326,7 +326,7 @@ final class DatagramOptions {
   final String operation;
   final bool json;
   final bool verbose;
-  late final String port;
+  final ConnectionTarget target;
   late final Duration requestTimeout,
       initializationTimeout,
       startupDelay,
@@ -616,8 +616,8 @@ final class DatagramInput {
     : operation = args.name!,
       json = args.flag('json'),
       verbose = args.flag('verbose'),
-      record = args.flag('record') {
-    port = requiredPortOption(args);
+      record = args.flag('record'),
+      target = requiredUsbTarget(args) {
     parameters = ParameterInput(args, operation);
     if (args.wasParsed('profile')) profileId = LocalId(args.option('profile')!);
     if (operation == 'send' || operation == 'ping') {
@@ -632,7 +632,7 @@ final class DatagramInput {
   }
   final String operation;
   final bool json, verbose, record;
-  late final String port;
+  final ConnectionTarget target;
   late final ParameterInput parameters;
   LocalId? profileId;
   List<int>? content;

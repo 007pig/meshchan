@@ -12,7 +12,7 @@ enum CliStopRequest { sigint, sigterm }
 final class SessionOptions {
   const SessionOptions({
     required this.command,
-    required this.port,
+    required this.target,
     required this.json,
     required this.verbose,
     required this.requestTimeout,
@@ -22,7 +22,7 @@ final class SessionOptions {
   });
 
   final String command;
-  final String port;
+  final UsbSerialTarget target;
   final bool json;
   final bool verbose;
   final Duration requestTimeout;
@@ -34,7 +34,7 @@ final class SessionOptions {
 Future<int> runSessionCommand(
   SessionOptions options,
   CliOutput io,
-  CompanionTransport Function(String) createTransport,
+  CompanionTransportFactory createTransport,
   Stream<CliStopRequest>? stopRequests,
 ) async {
   final watch = options.command == 'watch';
@@ -142,7 +142,7 @@ Future<int> runSessionCommand(
     );
     if (!stopped.isCompleted) {
       final active = session = MeshCoreSession(
-        transport: createTransport(options.port),
+        transport: createTransport(options.target),
         appName: 'Meshchan',
         requestTimeout: options.requestTimeout,
         initializationTimeout: options.initializationTimeout,
@@ -188,7 +188,11 @@ Future<int> runSessionCommand(
               stop('completed', 0);
               return;
             }
-            final fields = infoFields(options.port, info, closed: false);
+            final fields = infoFields(
+              options.target.portPath,
+              info,
+              closed: false,
+            );
             if (options.json) {
               emit('ready', fields);
             } else {
@@ -267,7 +271,7 @@ Future<int> runSessionCommand(
       'cleanup': cleanupFailed ? 'failed' : 'succeeded',
     });
   } else if (code == 0 && snapshot != null) {
-    final fields = infoFields(options.port, snapshot!, closed: true);
+    final fields = infoFields(options.target.portPath, snapshot!, closed: true);
     io.out(
       options.json
           ? jsonEncode({'schemaVersion': 1, 'command': 'info', ...fields})

@@ -5,16 +5,20 @@ import 'dart:typed_data';
 import 'package:meshchan_core/meshchan_core.dart';
 import 'package:meshcore_link/meshcore_link.dart'
     show
-        MeshchanDiagnosticMessage,
+        CompanionTransportFactory,
+        ConnectionTarget,
         DiagnosticKind,
+        MeshchanDiagnosticMessage,
+        UsbSerialTarget,
         decodeDiagnosticPayload,
         encodeDiagnosticPayload;
 import 'package:meshctl/meshctl.dart';
+import 'package:meshctl/src/datagram_options.dart';
 import 'package:test/test.dart';
 
 import '../../../packages/meshchan_core/test/history/support.dart' as f;
 import 'datagram_cli_test.dart'
-    show args, datagram, incomingPing, ImmediateSignal;
+    show args, datagram, incomingPing, ImmediateSignal, replace;
 import 'session_cli_test.dart' show ControlledSink;
 import 'support/audited_storage.dart';
 
@@ -29,6 +33,7 @@ void main() {
     List<String> arguments, {
     AuditedStorage? storage,
     f.FakeCompanionTransport? transport,
+    CompanionTransportFactory? createTransport,
     Stream<CliStopRequest>? stops,
     StringSink? output,
     StringSink? error,
@@ -39,8 +44,9 @@ void main() {
       output: output ?? out,
       error: error ?? err,
       openStorage: storage == null ? null : (_) async => storage,
-      createTransport: (_) =>
-          transport ?? (throw StateError('Unexpected device.')),
+      createTransport:
+          createTransport ??
+          (_) => transport ?? (throw StateError('Unexpected device.')),
       stopRequests: stops,
     );
     final lines = const LineSplitter().convert(out.toString());
@@ -98,18 +104,37 @@ void main() {
     await s.history.waitForMaintenance();
   }
 
-  for (final operation in ['send', 'listen', 'ping', 'respond']) {
+  for (final (operation, portPath) in [
+    ('send', 'tcp://radio.example:4000'),
+    ('listen', 'radio.example'),
+    ('ping', '2001:db8::7'),
+    ('respond', ' 1A:2B:3C:4D:5E:6F\t '),
+  ]) {
+    final expectedTarget = isA<UsbSerialTarget>().having(
+      (target) => target.portPath,
+      'portPath',
+      portPath,
+    );
+    final arguments = [
+      ...replace(args(operation), 'port', portPath),
+      if (operation == 'listen') '--max-entries=1',
+    ];
     test(
       '$operation without record uses resolver and retains legacy final output with zero history rows',
       () async {
         final s = await open();
         final t = auto(operation);
-        final arguments = [
-          ...args(operation),
-          if (operation == 'listen') '--max-entries=1',
-        ];
-        final r = await execute(arguments, storage: s, transport: t);
+        final targets = <ConnectionTarget>[];
+        final r = await execute(
+          arguments,
+          storage: s,
+          createTransport: (target) {
+            targets.add(target);
+            return t;
+          },
+        );
         expect(r.code, 0, reason: r.err);
+        expect(targets, [expectedTarget]);
         expect(s.events.first, 'resolve');
         expect(s.operation, null);
         expect(s.closes, 1);
@@ -121,6 +146,14 @@ void main() {
           expect(r.json['event'], 'end');
           expect(r.json['result']['matchingDatagrams'], 1);
         }
+        final parsed = datagramParser().parse(arguments.skip(1)).command!;
+        final input = DatagramInput(parsed);
+        expect(input.target, expectedTarget);
+        expect(DatagramOptions(parsed).target, expectedTarget);
+        expect(
+          DatagramOptions.effective(input, s.effective!).target,
+          same(input.target),
+        );
         final reopened = await fixture.open();
         expect(await fixture.count(reopened), 0);
       },
@@ -131,27 +164,26 @@ void main() {
         final control = f.HistoryControl();
         final s = AuditedStorage(await fixture.open(control: control));
         final t = auto(operation);
-        var preparedAtFactory = false;
-        s.onRecord = (op) {
+        final targets = <ConnectionTarget>[];
+        var registrationCommitted = false;
+        s.onRecord = (_) {
           control.afterCommit = () {
-            preparedAtFactory = true;
+            registrationCommitted = true;
           };
         };
-        final original = t.opening;
-        t.opening = () async {
-          expect(preparedAtFactory, true);
-          await original?.call();
-        };
         final r = await execute(
-          [
-            ...args(operation),
-            '--record',
-            if (operation == 'listen') '--max-entries=1',
-          ],
+          [...arguments, '--record'],
           storage: s,
-          transport: t,
+          createTransport: (target) {
+            expect(registrationCommitted, isTrue);
+            targets.add(target);
+            expect(t.openCount, 0);
+            return t;
+          },
         );
         expect(r.code, 0, reason: r.err);
+        expect(targets, [expectedTarget]);
+        expect(s.transportFactories, 1);
         expect(t.openCount, 1);
         expect(t.closeCount, 1);
         expect(s.closes, 1);
@@ -255,12 +287,17 @@ void main() {
       ),
     );
     final t = auto('send');
+    final targets = <ConnectionTarget>[];
     final r = await execute(
       ['datagram', 'send', '--port= exact path ', '--payload-hex=', '--json'],
       storage: s,
-      transport: t,
+      createTransport: (target) {
+        targets.add(target);
+        return t;
+      },
     );
     expect(r.code, 0, reason: r.err);
+    expect(targets, [UsbSerialTarget(portPath: ' exact path ')]);
     final p = s.effective!.parameters as SendProfileParameters;
     expect(p.budgets.requestTimeoutSeconds, 9);
     expect(p.budgets.initializationTimeoutSeconds, 18);
@@ -405,6 +442,7 @@ void main() {
       );
       await s.settings.save(AppSettings(defaultProfileId: profile.id));
       final t = auto('send');
+      final targets = <ConnectionTarget>[];
       final r = await execute(
         [
           'datagram',
@@ -417,12 +455,22 @@ void main() {
           if (mode == 'missing') '--profile=00000000000000000000000000000001',
         ],
         storage: s,
-        transport: t,
+        createTransport: (target) {
+          targets.add(target);
+          return t;
+        },
       );
       expect(r.code, 64, reason: mode);
+      expect(targets, isEmpty);
       expect(t.openCount, 0);
       expect(t.sent, isEmpty);
-      if (mode == 'port') await s.close();
+      if (mode == 'port') {
+        expect(s.events, isEmpty);
+        await s.close();
+      } else {
+        expect(s.events, contains('resolve'));
+        expect(s.state, StorageState.closed);
+      }
     }
   });
 
@@ -458,6 +506,8 @@ void main() {
     expect(device, 0);
     expect(s.planFactories, 0);
     expect(s.transportFactories, 0);
+    expect(s.closes, 1);
+    expect(s.state, StorageState.closed);
     expect(subscribed, 1);
     expect(canceled, 1);
     final result = await s.operation!.done;
@@ -707,22 +757,30 @@ void main() {
     };
     final source = StreamController<CliStopRequest>(sync: true);
     final t = auto('send');
+    var factories = 0;
     final pending = execute(
       [...args('send'), '--record'],
       storage: s,
-      transport: t,
+      createTransport: (_) {
+        factories++;
+        return t;
+      },
       stops: source.stream,
     );
     await entered.future;
     source.add(CliStopRequest.sigterm);
+    expect(factories, 0);
     expect(t.openCount, 0);
     release.complete();
     final r = await pending;
     expect(r.code, 143);
     expect(r.json['result']['reason'], 'canceled');
+    expect(r.json['recording']['registration']['state'], 'committed');
+    expect(factories, 0);
     expect(s.transportFactories, 0);
     expect(s.planFactories, 0);
     expect(s.closes, 1);
+    expect(s.state, StorageState.closed);
     await source.close();
   });
 
@@ -779,9 +837,10 @@ void main() {
 
   test('exact explicit port and invocation bytes are forwarded while diagnostics omit local secrets', () async {
     final s = await open();
+    await seedProfile(s, f.input(DiagnosticOperation.send).parameters);
     final t = auto('send');
     final out = StringBuffer(), err = StringBuffer();
-    final paths = <String>[];
+    final targets = <ConnectionTarget>[];
     final code = await runCli(
       [
         '--data-dir',
@@ -800,13 +859,13 @@ void main() {
       output: out,
       error: err,
       openStorage: (_) async => s,
-      createTransport: (path) {
-        paths.add(path);
+      createTransport: (target) {
+        targets.add(target);
         return t;
       },
     );
     expect(code, 0);
-    expect(paths, [' SECRET_PORT\t ']);
+    expect(targets, [UsbSerialTarget(portPath: ' SECRET_PORT\t ')]);
     expect(t.sent.last.sublist(5), utf8.encode('SECRET_CONTENT中文😀'));
     expect('$out$err', isNot(contains('SECRET_')));
     final exported = StringBuffer();
@@ -825,9 +884,21 @@ void main() {
     'unexpected factory bug closes the business owner before propagating',
     () async {
       final s = await open();
-      await expectLater(execute(args('send'), storage: s), throwsStateError);
+      final failure = StateError('SECRET_FACTORY');
+      final out = StringBuffer(), err = StringBuffer();
+      await expectLater(
+        execute(
+          args('send'),
+          storage: s,
+          createTransport: (_) => throw failure,
+          output: out,
+          error: err,
+        ),
+        throwsA(same(failure)),
+      );
       expect(s.closes, 1);
       expect(s.state, StorageState.closed);
+      expect('$out$err', isEmpty);
       expect((await fixture.open()).state, StorageState.open);
     },
   );

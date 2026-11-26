@@ -6,9 +6,9 @@ Phase 2 aims to unify access to Companion devices over USB, TCP, and BLE.
 Phase 2A establishes technical feasibility, the connection target model, and
 the adapter boundary, then migrates the existing USB entry points internally.
 Step 1 established the source review and documentation baseline. Step 5 added
-the pure Dart target model, and Step 6 provides a typed factory for the existing
-USB transport. Production TCP belongs to 2B, production BLE to 2C, and saved
-connections and database migration to 2D.
+the pure Dart target model, and Step 6 added a typed factory for the existing
+USB transport. Step 7 uses both in the CLI. Production TCP belongs to 2B,
+production BLE to 2C, and saved connections and database migration to 2D.
 
 The baseline is macOS arm64, an explicitly selected device per operation, and
 finite device checks and diagnostic tasks. CLI watch is a session observer
@@ -20,15 +20,16 @@ decision in the applicable later step.
 
 | Evidence | Baseline |
 | --- | --- |
-| Current implementation | On November 23, 2026, the reviewed checkout was clean `master` at `02f39e060194351bad02006418905272fdc9aa47`, matching the planning reference and local `origin/master`. The remote is `https://github.com/007pig/meshchan.git`. The [Dart workspace](../../pubspec.yaml) contains the Flutter App, Dart CLI, and two shared Dart packages. |
+| Step 1 source baseline | On November 23, 2026, the reviewed checkout was clean `master` at `02f39e060194351bad02006418905272fdc9aa47`, matching the planning reference and local `origin/master`. The remote is `https://github.com/007pig/meshchan.git`. The [Dart workspace](../../pubspec.yaml) contains the Flutter App, Dart CLI, and two shared Dart packages. |
 | Historical published package | macOS arm64 engineering Build 10 contains App `0.1.0-rc.1+10` and CLI `0.1.0-rc.1`, compiled from frozen source `c5cd5021da5e62c60127678b650d970721263296`. The Step 1 source baseline differs from that commit in 12 Markdown files. [Publication record](../releases/phase-1e12-publication.md) |
 | Historical acceptance | The selected USB and openHop runs belong to the inventoried Beta Build 5, the original RC1 Build 9, and the restored RC1 Build 10 image. Each record carries its own source and limits. [Step 1 evidence ledger](../validation/phase-2a-connections.md#historical-evidence) |
 | Step 1 changes | This architecture document and the [Step 1 validation record](../validation/phase-2a-connections.md) document the reviewed checkout. |
 | Step 2 changes | The [transport baseline](companion-transport-baseline.md) pins the USB, TCP, and BLE sources, records initial acceptance targets, and sets the macOS BLE verification order. The [Step 2 validation record](../validation/phase-2a2-protocol-backends.md) records the separate checkout and static checks. |
 | Step 3 changes | The [standalone macOS BLE probe](../../tool/ble_probe/README.md) carries the pinned backend, a private transport, and structural evidence for finite query/start. The [Step 3 validation record](../validation/phase-2a3-ble-host.md) tracks software and real-device evidence. |
 | Step 4 changes | The standalone probe adds a private root-to-worker bridge and drives the existing runtime with an owned SQLite fixture. [Step 4 validation record](../validation/phase-2a4-ble-worker.md) |
-| Step 5 changes | The public link API adds typed USB serial, TCP, and BLE target values. The CLI and App still enter through their existing USB string factories. [Step 5 validation record](../validation/phase-2a5-connection-targets.md) |
+| Step 5 changes | The public link API adds typed USB serial, TCP, and BLE target values. [Step 5 validation record](../validation/phase-2a5-connection-targets.md) |
 | Step 6 changes | The public link API adds synchronous transport creation from a typed target. The default factory supplies the existing USB wrapper and rejects TCP and BLE at creation. [Step 6 validation record](../validation/phase-2a6-transport-factory.md) |
+| Step 7 changes | Companion commands parse the invocation's explicit USB path into a typed target and pass it to the public factory after admission. [Step 7 validation record](../validation/phase-2a7-cli-connection-targets.md) |
 | Planned changes and open questions | The [proposed responsibilities](#responsibilities-and-future-seams), [compatibility inventory](#compatibility-inventory), and [handoffs](#phase-and-step-handoffs) identify the future work and the evidence it still needs. |
 
 ## Current call paths
@@ -36,17 +37,19 @@ decision in the applicable later step.
 ### CLI
 
 [`runCli`](../../apps/meshctl/lib/meshctl.dart) dispatches the product commands.
-The session and datagram entry points require an explicit `--port`. Their
-injected transport factory is `CompanionTransport Function(String)` and the
-production default is `_createUsbSessionTransport`. [CLI guide](../cli.md)
+The session and datagram parsers construct a `UsbSerialTarget` from the
+invocation's explicit `--port`, preserving the exact string. Their injectable
+`CompanionTransportFactory` defaults to the public factory configured with
+`appCompletionQueries: false`. Constructing the target and configuring the
+factory perform no device I/O. [CLI guide](../cli.md)
 
 | Command family | Current path and responsibilities |
 | --- | --- |
 | `ports` and `port-check` | `runCli` dispatches to `SerialPorts.listPorts` (sorted metadata) or `SerialPorts.checkPort` (open and close the selected path). These native diagnostics have no storage, `MeshCoreSession`, or protocol exchange. [Dispatch](../../apps/meshctl/lib/meshctl.dart) · [Serial port API](../../packages/meshcore_link/lib/src/serial_ports.dart) |
-| `info` and `watch` | `SessionOptions.port` → `runSessionCommand` → a fresh USB transport and `MeshCoreSession`. Info emits an initialized snapshot after confirmed close. Watch observes state and unassociated response summaries without reading the inbox. Its optional duration starts at ready, and JSON watch uses NDJSON. Both settle session and observer cleanup. [Session command](../../apps/meshctl/lib/src/session_command.dart) |
-| `datagram send/listen/ping/respond` admission | `DatagramInput.port` → `runStoredDatagram` → `BusinessStorage` and `CoreStorage.resolveParameters`. Both modes acquire storage and resolve effective settings or a selected preset before transport creation. `DatagramOptions.effective` carries the invocation's explicit port into the unrecorded runner. [Options](../../apps/meshctl/lib/src/datagram_options.dart) · [Storage dispatch](../../apps/meshctl/lib/src/stored_datagram_command.dart) |
-| Unrecorded datagrams | `runDatagramCommand` creates one session. Its raw runner does one send or one bounded reception, and its task runner delegates to `MeshchanPingTask` or `MeshchanResponderTask`. Unrecorded JSON listen streams datagram summaries and a final result. The command settles actual device, storage, and signal-source cleanup. [Datagram command](../../apps/meshctl/lib/src/datagram_command.dart) |
-| Recorded datagrams | `runRecordedDatagram` → `CoreStorage.record`. Core commits registration before invoking the lazy transport factory, then owns the session and either a raw send/listen operation or a Ping/Responder task. It observes logical and cleanup saves separately. The CLI finalizes storage and its signal source before the final envelope. Recorded listen reports its bounded end summary. [Recorded command](../../apps/meshctl/lib/src/recorded_datagram_command.dart) · [Recording](../../packages/meshchan_core/lib/src/recording/recording.dart) · [Raw operation](../../packages/meshchan_core/lib/src/recording/raw_operation.dart) |
+| `info` and `watch` | `runSessionCommand` passes `SessionOptions.target` to the factory for a fresh USB transport and creates one `MeshCoreSession`. Info emits an initialized snapshot after confirmed close. Watch observes state and unassociated response summaries without reading the inbox. Its optional duration starts at ready, and JSON watch uses NDJSON. Both settle session and observer cleanup. Info and watch ready continue to display the target's exact `portPath` as `port`. [Session command](../../apps/meshctl/lib/src/session_command.dart) |
+| `datagram send/listen/ping/respond` admission | `DatagramInput.target` carries the invocation's explicit selection. `runStoredDatagram` owns the signal source, opens `BusinessStorage`, and calls `CoreStorage.resolveParameters` before admitting either mode. Presets supply parameters, and `DatagramOptions.effective` carries the same target into the unrecorded runner. [Options](../../apps/meshctl/lib/src/datagram_options.dart) · [Storage dispatch](../../apps/meshctl/lib/src/stored_datagram_command.dart) |
+| Unrecorded datagrams | `runDatagramCommand` invokes the factory with `DatagramOptions.target` and creates one session. Its raw runner does one send or one bounded reception, and its task runner delegates to `MeshchanPingTask` or `MeshchanResponderTask`. Unrecorded JSON listen streams datagram summaries and a final result. The command settles actual device, storage, and signal-source cleanup. [Datagram command](../../apps/meshctl/lib/src/datagram_command.dart) |
+| Recorded datagrams | `runRecordedDatagram` gives `CoreStorage.record` a zero-argument closure over `DatagramInput.target`. Core commits registration and checks cancellation before invoking the closure, then owns the session and either a raw send/listen operation or a Ping/Responder task. It observes logical and cleanup saves separately. The CLI finalizes storage and its signal source before the final envelope. Recorded listen reports its bounded end summary. [Recorded command](../../apps/meshctl/lib/src/recorded_datagram_command.dart) · [Recording](../../packages/meshchan_core/lib/src/recording/recording.dart) · [Raw operation](../../packages/meshchan_core/lib/src/recording/raw_operation.dart) |
 
 CLI output preserves the versioned JSON/NDJSON and safe failure projections.
 The existing exit categories include `64` for usage, `69` for device or
@@ -105,7 +108,7 @@ under the [task contract](../protocol/diagnostic-tasks.md).
 
 ### USB initialization policy
 
-CLI `_createUsbSessionTransport` passes `appCompletionQueries: false`. Both
+The CLI configures its typed factory with `appCompletionQueries: false`. Both
 App worker USB factories use `createUsbCompanionTransport` directly, with the
 default `appCompletionQueries: true`. On the generic path the App retains
 an extra `DEVICE_QUERY` for each initialization command. The CLI omits those
@@ -129,7 +132,7 @@ handling confined to the USB adapter.
 
 | Concept | Responsibility | Status |
 | --- | --- | --- |
-| Connection target | Represent the explicit target of one operation. Construction performs no discovery or I/O. | Implemented in `meshcore_link`. The current CLI and App still pass the selected USB path. |
+| Connection target | Represent the explicit target of one operation. Construction performs no discovery or I/O. | The CLI passes a `UsbSerialTarget` from `meshcore_link`. App requests still carry the selected USB path as a string. |
 | Transport factory | Create a fresh unopened transport for an explicit target using the host's policy. | The default `meshcore_link` factory supports USB. [Factory contract](#step-6-factory-handoff) |
 | Transport | Own one local connection's lifecycle and exchange complete Companion frames. | Existing `CompanionTransport` boundary. |
 | Session | Own Companion initialization, command association, deadlines, and inbox access. | Existing `MeshCoreSession` boundary. |
@@ -232,8 +235,10 @@ continue to use their existing allowlists.
 `ConnectionProfile` remains an operation preset with an optional `portHint`.
 The resolver supplies parameters, and the invocation supplies the explicit
 selection. Saved selection configuration and its schema belong to 2D.
-The CLI and App still accept USB paths through their existing string entry
-points. Product TCP and BLE adapters belong to 2B and 2C, respectively.
+The product CLI accepts USB paths through `--port` and constructs the typed
+value during parsing. The App still carries USB path strings through its
+requests and worker. Product TCP and BLE adapters belong to 2B and 2C,
+respectively.
 
 ### Step 6 factory handoff
 
@@ -287,20 +292,20 @@ target values can travel between isolates that share code.
 
 ### Step 7 CLI handoff
 
-Construct a `UsbSerialTarget` from the exact path selected by `--port` and
-use the factory configured with `appCompletionQueries: false` for Companion
-session and datagram commands. Preserve the injection points, CLI output and
-exit precedence, and existing timing of device access, including lazy creation
-after registration in the recorded path. `ports` and `port-check` retain their
-`SerialPorts` diagnostic responsibilities. [CLI call paths](#cli)
+The Companion session and datagram commands now use the typed target and
+factory described in the [CLI call paths](#cli). `--port` still selects an
+exact USB serial path. `ports` and `port-check` keep their direct `SerialPorts`
+diagnostic paths. The [Step 7 validation record](../validation/phase-2a7-cli-connection-targets.md)
+covers the injection points, output and exit behavior, and deferred device
+creation after recording registration.
 
 ### Step 8 App handoff
 
 Carry the typed target in Check and Diagnostic requests and compose the
 factory with `appCompletionQueries: true` inside the worker. Preserve the
 existing device gate, attempt-scoped cancellation, lazy recorded creation,
-and affirmative release and Quit protocol. The CLI and App continue to use
-their USB string entry points until their respective migrations.
+and affirmative release and Quit protocol. The App's Check and Diagnostic
+requests and worker factories still use the USB path string interfaces.
 [App call paths](#macos-app)
 
 ### TCP and BLE adapter handoff
@@ -392,7 +397,7 @@ release on the same target.
 | 4 | Execution location adopted | The earlier signed probe passed [real Case A and normal Quit](../validation/phase-2a4-ble-worker.md#case-a-receipt-and-release). The final review-fix build carries [software and guest fake-backend evidence](../validation/phase-2a4-ble-worker.md#pre-pr-validation). |
 | 5 | Completed | The [public model](#connection-targets) represents explicit USB serial, TCP, and BLE selections as plain values. [Validation record](../validation/phase-2a5-connection-targets.md) |
 | 6 | Completed | The [public factory](#step-6-factory-handoff) creates fresh USB transports and reports typed errors for TCP and BLE. [Validation record](../validation/phase-2a6-transport-factory.md) |
-| 7 | Planned | Migrate internal [CLI session and datagram entry points](#step-7-cli-handoff). |
+| 7 | Completed | The [CLI session and datagram entry points](#step-7-cli-handoff) pass exact USB targets to the typed factory. [Validation record](../validation/phase-2a7-cli-connection-targets.md) |
 | 8 | Planned | Migrate [App Check and Diagnostic requests and worker factories](#step-8-app-handoff). |
 | 9 | Planned | Run targeted regressions and build verification. |
 | 10 | Planned | Record 2A delivery and hand off later-phase work. |

@@ -1,5 +1,6 @@
 import 'package:args/args.dart';
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 String requiredPortOption(ArgResults args) {
   final port = args.option('port');
@@ -11,6 +12,9 @@ String requiredPortOption(ArgResults args) {
   }
   return port;
 }
+
+UsbSerialTarget requiredUsbTarget(ArgResults args) =>
+    UsbSerialTarget(portPath: requiredPortOption(args));
 
 int decimalOption(
   ArgResults args,

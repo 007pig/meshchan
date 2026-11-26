@@ -5,9 +5,11 @@ import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:meshchan_core/meshchan_core.dart';
-import 'package:meshctl/meshctl.dart' as product;
+import 'package:meshcore_link/meshcore_link.dart'
+    show ConnectionTarget, UsbSerialTarget;
 import 'package:meshcore_link/src/transport/native_serial_connection.dart';
 import 'package:meshcore_link/src/transport/serial_transport.dart';
+import 'package:meshctl/meshctl.dart' as product;
 
 import 'isolated_cli.dart';
 
@@ -95,6 +97,14 @@ void _equal(Object? actual, Object? expected, String label) {
     jsonEncode(actual) == jsonEncode(expected),
     '$label: expected ${jsonEncode(expected)}, got ${jsonEncode(actual)}',
   );
+}
+
+String _serialPath(ConnectionTarget target) {
+  if (target is! UsbSerialTarget) {
+    throw StateError('Expected a USB serial CLI target.');
+  }
+  _equal(target.portPath, 'synthetic-1b8', 'CLI transport path');
+  return target.portPath;
 }
 
 List<String> _arguments(String id) {
@@ -337,10 +347,9 @@ final class _Harness {
         _arguments(id),
         output: out,
         error: err,
-        createTransport: (path) {
-          _equal(path, 'synthetic-1b8', 'CLI transport path');
+        createTransport: (target) {
           return serialTransportForTest(
-            portPath: path,
+            portPath: _serialPath(target),
             // Exercise the enabled platform policy without invoking native I/O,
             // including in Linux CI. This does not enable Linux native support.
             operatingSystem: 'macos',
@@ -797,8 +806,8 @@ Future<Map<String, Object?>> runRecordedAcceptance(
       ],
       output: out,
       error: err,
-      createTransport: (path) => serialTransportForTest(
-        portPath: path,
+      createTransport: (target) => serialTransportForTest(
+        portPath: _serialPath(target),
         operatingSystem: 'macos',
         createConnection: (_) => connection,
       ),

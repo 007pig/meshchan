@@ -17,6 +17,7 @@ void main() {
   test(
     'session syntax, semantic bounds, and short circuits precede all effects',
     () async {
+      const nulPort = 'NUL_PORT_SECRET\u0000';
       final cases = <(List<String>, int)>[
         for (final command in ['info', 'watch']) ...[
           ([command, '--help'], 0),
@@ -27,6 +28,7 @@ void main() {
           ([command, '--port'], 64),
           ([command, '--port='], 64),
           ([command, '--port', ' \t '], 64),
+          ([command, '--port', nulPort], 64),
           ([command, '--help', '--unknown'], 64),
           ([command, '--port=synthetic', 'extra'], 64),
           for (final option in [
@@ -71,6 +73,7 @@ void main() {
         final ports = FakeSerialPorts();
         var creations = 0;
         var listeners = 0;
+        var storageOpens = 0;
         final stops = StreamController<CliStopRequest>.broadcast(
           onListen: () => listeners++,
         );
@@ -87,16 +90,28 @@ void main() {
               throw StateError('Unexpected device access');
             },
             stopRequests: stops.stream,
+            openStorage: (_) {
+              storageOpens++;
+              throw StateError('Unexpected business storage access');
+            },
           ),
           expected,
           reason: '$args',
         );
         expect(creations, 0);
         expect(listeners, 0);
+        expect(storageOpens, 0);
         expect(ports.listCalls, 0);
         expect(ports.checkedPaths, isEmpty);
         if (expected == 64) expect(out.toString(), isEmpty);
         expect(err.toString(), isNot(contains('#0')));
+        if (args.last == nulPort) {
+          expect(
+            err.toString(),
+            contains('--port requires a nonblank path without NUL.'),
+          );
+          expect(err.toString(), isNot(contains('NUL_PORT_SECRET')));
+        }
         await stops.close();
       }
     },
@@ -110,17 +125,26 @@ void main() {
           const SerialPortDescription(path: 'z', warning: 'gone\nnow'),
           const SerialPortDescription(path: 'a', usbVid: 42, usbPid: 7),
         ];
-      var out = StringBuffer();
       final err = StringBuffer();
-      expect(
-        await runCli(
-          ['ports', '--json'],
-          output: out,
-          error: err,
-          serialPorts: ports,
-        ),
-        0,
+      var creations = 0;
+      var storageOpens = 0;
+      Future<int> runDiagnostic(List<String> args, StringBuffer out) => runCli(
+        args,
+        output: out,
+        error: err,
+        serialPorts: ports,
+        createTransport: (_) {
+          creations++;
+          throw StateError('Unexpected Companion transport creation');
+        },
+        openStorage: (_) {
+          storageOpens++;
+          throw StateError('Unexpected business storage access');
+        },
       );
+
+      var out = StringBuffer();
+      expect(await runDiagnostic(['ports', '--json'], out), 0);
       final data = jsonDecode(out.toString()) as Map;
       expect(data['schemaVersion'], 1);
       expect(data['command'], 'ports');
@@ -132,24 +156,16 @@ void main() {
       expect(err.toString(), contains(r'gone\nnow'));
       out = StringBuffer();
       ports.descriptions = [];
-      expect(
-        await runCli(
-          ['ports', '--json'],
-          output: out,
-          error: err,
-          serialPorts: ports,
-        ),
-        0,
-      );
+      expect(await runDiagnostic(['ports', '--json'], out), 0);
       expect(jsonDecode(out.toString())['ports'], isEmpty);
       out = StringBuffer();
       expect(
-        await runCli(
-          ['port-check', '--port', ' exact path ', '--json'],
-          output: out,
-          error: err,
-          serialPorts: ports,
-        ),
+        await runDiagnostic([
+          'port-check',
+          '--port',
+          ' exact path ',
+          '--json',
+        ], out),
         0,
       );
       expect(ports.checkedPaths, [' exact path ']);
@@ -164,12 +180,11 @@ void main() {
         ['port-check', '--port=synthetic', '--json'],
       ]) {
         out = StringBuffer();
-        expect(
-          await runCli(args, output: out, error: err, serialPorts: ports),
-          69,
-        );
+        expect(await runDiagnostic(args, out), 69);
         expect(out.toString(), isEmpty);
       }
+      expect(creations, 0);
+      expect(storageOpens, 0);
     },
   );
 
@@ -177,13 +192,14 @@ void main() {
     'info uses two real session sends and publishes only after close completes',
     () {
       fakeAsync((clock) {
-        final h = Harness(['info', '--port', ' exact synthetic path ']);
+        const port = ' exact synthetic\tpath ';
+        final h = Harness(['info', '--port', port]);
         final closing = Completer<void>();
         h.transport.closing = () => closing.future;
         clock.flushMicrotasks();
         expect(h.result.done, isFalse);
         expect(h.out.toString(), isEmpty);
-        expect(h.paths, [' exact synthetic path ']);
+        expect(h.targets, [UsbSerialTarget(portPath: port)]);
         expect(h.transport.sent, [
           [0x16, 3],
           encodeAppStart(),
@@ -193,6 +209,10 @@ void main() {
         closing.complete();
         clock.flushMicrotasks();
         expect(h.result.value, 0);
+        expect(
+          h.out.toString().split('\n').first,
+          r'port:  exact synthetic\tpath ',
+        );
         expect(h.out.toString(), contains('sessionClosed: true'));
         expect(h.out.toString(), contains('appTargetVersion: 3'));
         expect(h.out.toString(), contains('protocolVersion: 14'));
@@ -210,13 +230,15 @@ void main() {
     'info JSON is one complete whitelist projection with nulls and key prefix',
     () {
       fakeAsync((clock) {
-        final h = Harness(['info', '--port=synthetic', '--json', '--verbose']);
+        const port = ' exact synthetic\t ';
+        final h = Harness(['info', '--port=$port', '--json', '--verbose']);
         h.transport.protocol = 8;
         clock.flushMicrotasks();
         expect(h.result.value, 0);
         final data = jsonDecode(h.out.toString()) as Map;
         expect(data['schemaVersion'], 1);
         expect(data['command'], 'info');
+        expect(data['port'], port);
         expect(data['initializationCompleted'], true);
         expect(data['sessionClosed'], true);
         expect(data['appTargetVersion'], 3);
@@ -322,13 +344,10 @@ void main() {
 
   test('watch emits early states, one ready, and structural summaries without extra sends', () {
     fakeAsync((clock) {
-      final h = Harness([
-        'watch',
-        '--port=synthetic',
-        '--json',
-        '--duration=1',
-      ]);
+      const port = 'tcp://[::1]:5000';
+      final h = Harness(['watch', '--port=$port', '--json', '--duration=1']);
       clock.flushMicrotasks();
+      expect(h.targets, [UsbSerialTarget(portPath: port)]);
       h.transport.receive([0xfe, ...utf8.encode('PAYLOAD_SECRET')]);
       h.transport.receive([0x83]);
       h.transport.receive([0x00]);
@@ -360,10 +379,9 @@ void main() {
         'ready',
       ]);
       expect(lines.where((e) => e['event'] == 'ready'), hasLength(1));
-      expect(
-        lines.firstWhere((e) => e['event'] == 'ready')['sessionClosed'],
-        false,
-      );
+      final ready = lines.firstWhere((e) => e['event'] == 'ready');
+      expect(ready['port'], port);
+      expect(ready['sessionClosed'], false);
       expect(
         lines.where((e) => e['event'] == 'unassociated_response'),
         hasLength(8),
@@ -522,7 +540,7 @@ void main() {
       h.transport.finish();
       clock.flushMicrotasks();
       expect(h.result.value, 69);
-      expect(h.paths, hasLength(1));
+      expect(h.targets, hasLength(1));
       expect(h.transport.opens, 1);
       expect(h.transport.closes, 1);
       expect(h.lines.where((e) => e['event'] == 'failure'), hasLength(1));
@@ -593,7 +611,7 @@ void main() {
       fakeAsync((clock) {
         final h = Harness([
           'watch',
-          '--port=synthetic',
+          '--port= exact synthetic\tpath ',
           if (verbose) '--verbose',
         ]);
         h.transport.nodeName = 'node\n\r\x1b[31m\x07';
@@ -616,6 +634,10 @@ void main() {
         expect(text, isNot(contains('\x1b')));
         expect(text, isNot(contains('\x07')));
         expect(text, isNot(contains('\r')));
+        expect(
+          h.out.toString().split('\n'),
+          contains(r'port:  exact synthetic\tpath '),
+        );
         expect(h.out.toString(), contains(r'node\n\r\u001b[31m\u0007'));
         expect(h.err.toString(), isNot(contains('node')));
         expect(h.err.toString(), isNot(contains('model')));
@@ -654,6 +676,49 @@ void main() {
       });
     },
   );
+
+  test('the same target gets a fresh transport for each invocation', () {
+    fakeAsync((clock) {
+      const port = 'synthetic';
+      final targets = <ConnectionTarget>[];
+      final transports = <FakeCompanionTransport>[];
+      CompanionTransport createTransport(ConnectionTarget target) {
+        targets.add(target);
+        final transport = FakeCompanionTransport();
+        transports.add(transport);
+        return transport;
+      }
+
+      for (var invocation = 0; invocation < 2; invocation++) {
+        final result = Outcome(
+          runCli(
+            ['watch', '--port=$port', '--duration=1'],
+            output: StringBuffer(),
+            error: StringBuffer(),
+            createTransport: createTransport,
+          ),
+        );
+        clock.flushMicrotasks();
+        clock.elapse(second);
+        expect(result.error, isNull);
+        expect(result.value, 0);
+      }
+
+      final expected = UsbSerialTarget(portPath: port);
+      expect(targets, [expected, expected]);
+      expect(identical(transports.first, transports.last), isFalse);
+      for (final transport in transports) {
+        expect(transport.sent, [
+          [0x16, 3],
+          encodeAppStart(),
+        ]);
+        expect(transport.opens, 1);
+        expect(transport.closes, 1);
+        expect(transport.cancels, 1);
+      }
+      expect(clock.pendingTimers, isEmpty);
+    });
+  });
 
   test('signal adapter maps supported signals lazily and cancels every subscription', () {
     for (final windows in [false, true]) {
@@ -717,8 +782,8 @@ final class Harness {
           output: output ?? out,
           error: error ?? err,
           serialPorts: FakeSerialPorts(),
-          createTransport: (path) {
-            paths.add(path);
+          createTransport: (target) {
+            targets.add(target);
             return transport;
           },
           stopRequests: stops.stream,
@@ -729,7 +794,7 @@ final class Harness {
   final out = StringBuffer();
   final err = StringBuffer();
   final transport = FakeCompanionTransport();
-  final paths = <String>[];
+  final targets = <ConnectionTarget>[];
   late final StreamController<CliStopRequest> stops;
   late final Outcome<int> result;
   int stopCancels = 0;

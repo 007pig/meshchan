@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:meshcore_link/meshcore_link.dart';
 import 'package:meshctl/meshctl.dart';
 import 'package:meshctl/src/process_io.dart';
@@ -16,6 +18,8 @@ void main() {
       ['port-check', '--help'],
       ['port-check', '-h'],
       ['--help', 'port-check'],
+      ['datagram', '--help'],
+      ['datagram', 'send', '--help'],
     ]) {
       final output = StringBuffer();
       final error = StringBuffer();
@@ -26,12 +30,14 @@ void main() {
         output: output,
         error: error,
         serialPorts: ports,
+        createTransport: _unexpectedTransport,
+        openStorage: _unexpectedStorage,
       );
 
       expect(code, 0, reason: '$arguments');
       expect(output.toString(), contains('Usage: meshctl'));
       expect(output.toString(), contains('--help'));
-      if (arguments.isEmpty || !arguments.first.startsWith('port')) {
+      if (arguments.isEmpty || arguments.first.startsWith('-')) {
         expect(output.toString(), contains('--version'));
       }
       expect(error.toString(), isEmpty);
@@ -43,22 +49,28 @@ void main() {
   test(
     'version prints the tool name and application version and succeeds',
     () async {
-      final output = StringBuffer();
-      final error = StringBuffer();
-
-      final ports = FakeSerialPorts();
-      final code = await runCli(
+      for (final arguments in [
         ['--version'],
-        output: output,
-        error: error,
-        serialPorts: ports,
-      );
+        ['--version', 'datagram', 'listen', '--port=synthetic'],
+      ]) {
+        final output = StringBuffer();
+        final error = StringBuffer();
+        final ports = FakeSerialPorts();
+        final code = await runCli(
+          arguments,
+          output: output,
+          error: error,
+          serialPorts: ports,
+          createTransport: _unexpectedTransport,
+          openStorage: _unexpectedStorage,
+        );
 
-      expect(code, 0);
-      expect(output.toString().trim(), 'meshctl 0.1.0-rc.1');
-      expect(error.toString(), isEmpty);
-      expect(ports.listCalls, 0);
-      expect(ports.checkedPaths, isEmpty);
+        expect(code, 0, reason: '$arguments');
+        expect(output.toString().trim(), 'meshctl 0.1.0-rc.1');
+        expect(error.toString(), isEmpty);
+        expect(ports.listCalls, 0);
+        expect(ports.checkedPaths, isEmpty);
+      }
     },
   );
 
@@ -71,6 +83,7 @@ void main() {
         ['--help', '--unknown'],
         ['ports', '--unknown'],
         ['port-check', '--port', '/dev/example', '--unknown'],
+        ['datagram', 'send', '--help', '--unknown'],
       ]) {
         final output = StringBuffer();
         final error = StringBuffer();
@@ -81,6 +94,8 @@ void main() {
           output: output,
           error: error,
           serialPorts: ports,
+          createTransport: _unexpectedTransport,
+          openStorage: _unexpectedStorage,
         );
 
         expect(code, 64, reason: '$arguments');
@@ -127,47 +142,49 @@ void main() {
     },
   );
 
-  test(
-    'missing, blank and NUL-containing port values are rejected before I/O',
-    () async {
-      for (final arguments in <List<String>>[
+  test('missing, blank and NUL-containing port values are rejected before I/O', () async {
+    const invalidPort = '--port requires a nonblank path without NUL.';
+    const invalidSyntax =
+        'Invalid command syntax, unknown option or unexpected positional arguments.';
+    for (final (arguments, message) in <(List<String>, String)>[
+      for (final command in [
         ['port-check'],
-        ['port-check', '--port'],
-        ['port-check', '--port='],
-        ['port-check', '--port', '   '],
-        for (final command in [
-          ['port-check'],
-          ['info'],
-          ['watch'],
-          for (final operation in ['send', 'listen', 'ping', 'respond'])
-            ['datagram', operation],
-        ])
-          [...command, '--port=/dev/test\u0000suffix'],
-      ]) {
-        final output = StringBuffer();
-        final error = StringBuffer();
-        final ports = FakeSerialPorts();
-        final code = await runCli(
-          arguments,
-          output: output,
-          error: error,
-          serialPorts: ports,
-          createTransport: (_) => throw StateError('Must not create transport'),
-          openStorage: (_) => throw StateError('Must not open storage'),
-        );
-        expect(code, 64, reason: '$arguments');
-        expect(output.toString(), isEmpty);
-        expect(error.toString(), contains('Error:'));
-        if (arguments.last.contains('\u0000')) {
-          expect(error.toString(), contains('--port'));
-          expect(error.toString(), isNot(contains('/dev/test')));
-        }
-        expect(error.toString(), isNot(contains('#0')));
-        expect(ports.listCalls, 0);
-        expect(ports.checkedPaths, isEmpty);
-      }
-    },
-  );
+        for (final operation in ['send', 'listen', 'ping', 'respond'])
+          ['datagram', operation],
+      ]) ...[
+        (command, invalidPort),
+        ([...command, '--port'], invalidSyntax),
+        ([...command, '--port='], invalidPort),
+        ([...command, '--port', ' \t '], invalidPort),
+        ([...command, '--port=/dev/test\u0000suffix'], invalidPort),
+      ],
+      (['info', '--port=/dev/test\u0000suffix'], invalidPort),
+      (['watch', '--port=/dev/test\u0000suffix'], invalidPort),
+    ]) {
+      final output = StringBuffer();
+      final error = StringBuffer();
+      final ports = FakeSerialPorts();
+      final code = await runCli(
+        arguments,
+        output: output,
+        error: error,
+        serialPorts: ports,
+        createTransport: _unexpectedTransport,
+        openStorage: _unexpectedStorage,
+        selectDataDirectory: (_) =>
+            throw StateError('Must not select a data directory.'),
+      );
+      expect(code, 64, reason: '$arguments');
+      expect(output.toString(), isEmpty);
+      expect(
+        error.toString(),
+        'Error: $message\nRun "meshctl --help" for usage.\n',
+        reason: '$arguments',
+      );
+      expect(ports.listCalls, 0);
+      expect(ports.checkedPaths, isEmpty);
+    }
+  });
 
   test(
     'ports sorts paths, shows limited metadata, and retains warnings',
@@ -194,6 +211,8 @@ void main() {
         output: output,
         error: error,
         serialPorts: ports,
+        createTransport: _unexpectedTransport,
+        openStorage: _unexpectedStorage,
       );
       final text = output.toString();
       expect(code, 0);
@@ -255,6 +274,8 @@ void main() {
         output: output,
         error: error,
         serialPorts: ports,
+        createTransport: _unexpectedTransport,
+        openStorage: _unexpectedStorage,
       );
       expect(code, 0);
       expect(ports.listCalls, 0);
@@ -319,6 +340,12 @@ void main() {
     expect(error.toString(), isNot(contains('Bug')));
   });
 }
+
+Never _unexpectedTransport(ConnectionTarget _) =>
+    throw StateError('Must not create a Companion transport.');
+
+Never _unexpectedStorage(Directory _) =>
+    throw StateError('Must not open business storage.');
 
 class FakeSerialPorts implements SerialPorts {
   List<SerialPortDescription> descriptions = [];

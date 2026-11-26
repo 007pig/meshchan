@@ -5,9 +5,10 @@
 Phase 2 aims to unify access to Companion devices over USB, TCP, and BLE.
 Phase 2A establishes technical feasibility, the connection target model, and
 the adapter boundary, then migrates the existing USB entry points internally.
-Step 1 established the source review and documentation baseline. Step 5 adds
-the pure Dart target model. Production TCP belongs to 2B, production BLE to
-2C, and saved connections and database migration to 2D.
+Step 1 established the source review and documentation baseline. Step 5 added
+the pure Dart target model, and Step 6 provides a typed factory for the existing
+USB transport. Production TCP belongs to 2B, production BLE to 2C, and saved
+connections and database migration to 2D.
 
 The baseline is macOS arm64, an explicitly selected device per operation, and
 finite device checks and diagnostic tasks. CLI watch is a session observer
@@ -27,6 +28,7 @@ decision in the applicable later step.
 | Step 3 changes | The [standalone macOS BLE probe](../../tool/ble_probe/README.md) carries the pinned backend, a private transport, and structural evidence for finite query/start. The [Step 3 validation record](../validation/phase-2a3-ble-host.md) tracks software and real-device evidence. |
 | Step 4 changes | The standalone probe adds a private root-to-worker bridge and drives the existing runtime with an owned SQLite fixture. [Step 4 validation record](../validation/phase-2a4-ble-worker.md) |
 | Step 5 changes | The public link API adds typed USB serial, TCP, and BLE target values. The CLI and App still enter through their existing USB string factories. [Step 5 validation record](../validation/phase-2a5-connection-targets.md) |
+| Step 6 changes | The public link API adds synchronous transport creation from a typed target. The default factory supplies the existing USB wrapper and rejects TCP and BLE at creation. [Step 6 validation record](../validation/phase-2a6-transport-factory.md) |
 | Planned changes and open questions | The [proposed responsibilities](#responsibilities-and-future-seams), [compatibility inventory](#compatibility-inventory), and [handoffs](#phase-and-step-handoffs) identify the future work and the evidence it still needs. |
 
 ## Current call paths
@@ -128,7 +130,8 @@ handling confined to the USB adapter.
 | Concept | Responsibility | Status |
 | --- | --- | --- |
 | Connection target | Represent the explicit target of one operation. Construction performs no discovery or I/O. | Implemented in `meshcore_link`. The current CLI and App still pass the selected USB path. |
-| Transport | Own one local connection's lifecycle and exchange complete Companion frames. | Existing `CompanionTransport` boundary. A target-based factory is planned. |
+| Transport factory | Create a fresh unopened transport for an explicit target using the host's policy. | The default `meshcore_link` factory supports USB. [Factory contract](#step-6-factory-handoff) |
+| Transport | Own one local connection's lifecycle and exchange complete Companion frames. | Existing `CompanionTransport` boundary. |
 | Session | Own Companion initialization, command association, deadlines, and inbox access. | Existing `MeshCoreSession` boundary. |
 | Operation preset | Supply diagnostic parameters such as operation, channels, routes, endpoint test labels, and budgets. | Existing `ConnectionProfile` and resolver behavior. |
 | Saved connection configuration | Persist a selection aid for a future explicit choice. | Planned for 2D, including its schema and migration. |
@@ -234,22 +237,86 @@ points. Product TCP and BLE adapters belong to 2B and 2C, respectively.
 
 ### Step 6 factory handoff
 
-Dispatch on the concrete `ConnectionTarget` variant and create a fresh
-transport per explicit operation. Pass `UsbSerialTarget.portPath` verbatim
-to `createUsbCompanionTransport`. Keep 115200 baud, the two-second serial
-write timeout, and the zero default startup delay. The factory must
-preserve CLI `appCompletionQueries: false` and the App's default `true`.
+`package:meshcore_link/meshcore_link.dart` exports
+`CompanionTransportFactory`, a synchronous
+`CompanionTransport Function(ConnectionTarget)`, and
+`createCompanionTransportFactory`, which requires an explicit USB
+`appCompletionQueries` policy. Each configured factory captures its own
+policy. The target supplies selection data, and the host supplies the policy.
 
-A future TCP adapter takes the exact host and explicit port. A future BLE
-factory asks the root host to validate and map the opaque selection to a
-host-owned connection, then supplies a fresh transport proxy to the worker.
-Backend selection and resource acquisition stay with the factory or host.
-The Step 4 bridge protocol remains private to the probe.
+```dart
+import 'package:meshcore_link/meshcore_link.dart';
 
-The transport, session, and host retain their lifecycle contracts. The
-owner subscribes before open, exchanges complete inner frames, and
-receives actual local write results. Logical completion and affirmative
-physical release remain separate, and release still controls lease reuse.
+final cliFactory = createCompanionTransportFactory(appCompletionQueries: false);
+final appFactory = createCompanionTransportFactory(appCompletionQueries: true);
+final transport = cliFactory(UsbSerialTarget(portPath: selectedPortPath));
+```
+
+The default factory dispatches on the concrete target variant. For a
+`UsbSerialTarget`, it passes the original `portPath`, including any surrounding
+spaces, and the configured policy to `createUsbCompanionTransport`. It returns
+the wrapper directly. The factory retains its configuration between calls
+and creates a fresh unopened wrapper on demand even for the same target
+or equal targets. Each wrapper has its own frame stream and lifecycle state.
+The USB implementation owns the existing metadata handling, startup
+synchronization, 115200 baud, and two-second serial write timeout. It still
+reads `MESHCHAN_USB_INITIALIZATION_TRACE` at construction and configures the
+existing nonblocking stderr sink when tracing is enabled. The zero default
+startup delay and existing budgets remain caller and session policy.
+[USB initialization policy](#usb-initialization-policy)
+
+For `TcpTarget` and `BleTarget`, the synchronous call throws
+`UnsupportedCompanionTransportException`. The exception carries only
+`CompanionTransportKind kind` and formats a fixed English explanation with
+that kind. It reports that the default factory lacks the adapter. The branch
+ends at that error. Only the USB branch invokes a builder, and any builder
+exception propagates unchanged from the single creation attempt.
+
+The factory's work ends at construction. Discovery, device admission, session
+creation, storage, and any future reconnect policy stay with their respective
+owners. USB metadata lookup and native acquisition stay in `open()`. The
+caller arranges a single frame subscription before `open()`, uses the
+transport for one attempt, and settles close and subscription cleanup.
+The transport and session retain complete inner frames, actual local write
+completion, and the distinction between logical completion and affirmative
+physical release. The App's `DeviceGate` controls lease reuse based on release.
+Successful creation conveys no readiness, device availability, identity, or
+lease. Compose factories and builders in the isolate that uses them. Typed
+target values can travel between isolates that share code.
+[Factory implementation](../../packages/meshcore_link/lib/src/transport/companion_transport_factory.dart)
+
+### Step 7 CLI handoff
+
+Construct a `UsbSerialTarget` from the exact path selected by `--port` and
+use the factory configured with `appCompletionQueries: false` for Companion
+session and datagram commands. Preserve the injection points, CLI output and
+exit precedence, and existing timing of device access, including lazy creation
+after registration in the recorded path. `ports` and `port-check` retain their
+`SerialPorts` diagnostic responsibilities. [CLI call paths](#cli)
+
+### Step 8 App handoff
+
+Carry the typed target in Check and Diagnostic requests and compose the
+factory with `appCompletionQueries: true` inside the worker. Preserve the
+existing device gate, attempt-scoped cancellation, lazy recorded creation,
+and affirmative release and Quit protocol. The CLI and App continue to use
+their USB string entry points until their respective migrations.
+[App call paths](#macos-app)
+
+### TCP and BLE adapter handoff
+
+In 2B, the production TCP adapter takes the exact host and the explicit
+port. It defines its own framing, initialization, and error behavior.
+USB-specific initialization stays in the USB adapter.
+
+In 2C, the factory can construct a fresh worker-local BLE proxy
+synchronously. Its asynchronous `open()` can ask the Flutter root isolate to
+validate the opaque selection, map it to a peripheral, and acquire the
+native connection. The root owns the plugin, native callbacks, and physical
+release. The worker owns the proxy, session, gate, storage, and recording.
+The production bridge and message contract remain 2C design work. The Step 4
+tokens and bridge protocol are private to the probe.
+[BLE execution location decision](../validation/phase-2a4-ble-worker.md#execution-location-decision)
 
 ## Behavior to preserve
 
@@ -324,8 +391,8 @@ release on the same target.
 | 3 | Host and software checks complete, paired main scenario passed | The [real scenario ledger](../validation/phase-2a3-ble-host.md#real-ble-scenario-ledger) retains both attempts, actual release, and remaining coverage. |
 | 4 | Execution location adopted | The earlier signed probe passed [real Case A and normal Quit](../validation/phase-2a4-ble-worker.md#case-a-receipt-and-release). The final review-fix build carries [software and guest fake-backend evidence](../validation/phase-2a4-ble-worker.md#pre-pr-validation). |
 | 5 | Completed | The [public model](#connection-targets) represents explicit USB serial, TCP, and BLE selections as plain values. [Validation record](../validation/phase-2a5-connection-targets.md) |
-| 6 | Planned | Create a fresh transport per target with the existing ownership and lifecycle guarantees. [Factory handoff](#step-6-factory-handoff) |
-| 7 | Planned | Migrate internal CLI entry points. |
-| 8 | Planned | Migrate App requests and worker entry points. |
+| 6 | Completed | The [public factory](#step-6-factory-handoff) creates fresh USB transports and reports typed errors for TCP and BLE. [Validation record](../validation/phase-2a6-transport-factory.md) |
+| 7 | Planned | Migrate internal [CLI session and datagram entry points](#step-7-cli-handoff). |
+| 8 | Planned | Migrate [App Check and Diagnostic requests and worker factories](#step-8-app-handoff). |
 | 9 | Planned | Run targeted regressions and build verification. |
 | 10 | Planned | Record 2A delivery and hand off later-phase work. |

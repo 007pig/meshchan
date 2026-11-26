@@ -90,6 +90,11 @@ export 'src/session/meshcore_session.dart'
         MeshCoreSessionUnassociatedResponse,
         MeshCoreSessionFailed;
 export 'src/transport/companion_transport.dart' show CompanionTransport;
+export 'src/transport/companion_transport_factory.dart'
+    show
+        CompanionTransportFactory,
+        UnsupportedCompanionTransportException,
+        createCompanionTransportFactory;
 export 'src/transport/serial_transport.dart'
     show
         SerialTransport,

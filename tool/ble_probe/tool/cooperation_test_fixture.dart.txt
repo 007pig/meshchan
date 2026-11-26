@@ -167,7 +167,10 @@ final class WorkerFixture {
       initializationBudget: initializationBudget,
       requestBudget: requestBudget,
     );
-    return runtime.startDeviceCheck(token, const DeviceCheckOptions());
+    return runtime.startDeviceCheck(
+      UsbSerialTarget(portPath: token),
+      const DeviceCheckOptions(),
+    );
   }
 
   Future<ShutdownOutcome> close() => _closing ??= _close();

@@ -104,11 +104,13 @@ final class _WorkerPeer {
     _dispatcher.start();
   }
 
-  CompanionTransport _createProxy(String token) {
-    if (protocolFaulted || _active?.released == false) {
+  CompanionTransport _createProxy(ConnectionTarget target) {
+    if (target is! UsbSerialTarget ||
+        protocolFaulted ||
+        _active?.released == false) {
       throw const _SafeBridgeError(WorkerBridgeFailure.protocol);
     }
-    return _active = _Proxy(this, token);
+    return _active = _Proxy(this, target.portPath);
   }
 
   void _receive(Object? message) {

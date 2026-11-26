@@ -1,7 +1,9 @@
-import 'package:meshchan_core/meshchan_core.dart';
-
 import 'dart:async';
 import 'dart:isolate';
+
+import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart'
+    show ConnectionTarget, UsbSerialTarget;
 
 import 'protocol.dart';
 import 'worker.dart';
@@ -26,10 +28,13 @@ abstract interface class AppRuntime {
   Future<void> start();
   Future<ReplyValue> historyRequest(HistoryRequest request);
   Future<DevicePortsValue> refreshDevicePorts(int generation);
-  DeviceCheckHandle startDeviceCheck(String port, DeviceCheckOptions options);
+  DeviceCheckHandle startDeviceCheck(
+    ConnectionTarget target,
+    DeviceCheckOptions options,
+  );
   Future<void> cancelDeviceCheck(int id);
   DiagnosticHandle startRecordedDiagnostic(
-    String port,
+    ConnectionTarget target,
     EffectiveParameterRequest parameters,
   );
   Future<void> cancelRecordedDiagnostic(DiagnosticHandle handle);
@@ -471,7 +476,7 @@ final class RuntimeController implements AppRuntime {
 
   @override
   DiagnosticHandle startRecordedDiagnostic(
-    String port,
+    ConnectionTarget target,
     EffectiveParameterRequest parameters,
   ) {
     final id = ++_nextDiagnostic;
@@ -483,14 +488,14 @@ final class RuntimeController implements AppRuntime {
     }
     if (parameters is! PingParameterRequest &&
             parameters is! RespondParameterRequest ||
-        port.trim().isEmpty) {
+        target is! UsbSerialTarget) {
       return _diagnosticHandle(
         id,
         Future.error(const RuntimeFault(host: CoordinationFault.invalidState)),
       );
     }
     // request checks the other in-flight starts before this latch is installed.
-    final accepted = request(StartRecordedDiagnostic(id, port, parameters))
+    final accepted = request(StartRecordedDiagnostic(id, target, parameters))
         .then<void>((_) {});
     _diagnosticStarting = true;
     final observed = accepted.whenComplete(() => _diagnosticStarting = false);
@@ -519,7 +524,10 @@ final class RuntimeController implements AppRuntime {
       await request(RefreshDevicePorts(generation)) as DevicePortsValue;
 
   @override
-  DeviceCheckHandle startDeviceCheck(String port, DeviceCheckOptions options) {
+  DeviceCheckHandle startDeviceCheck(
+    ConnectionTarget target,
+    DeviceCheckOptions options,
+  ) {
     final id = ++_nextCheck;
     if (_checkStarting) {
       final rejected = Future<void>.error(
@@ -530,7 +538,7 @@ final class RuntimeController implements AppRuntime {
       );
       return DeviceCheckHandle(id, rejected);
     }
-    final reply = request(StartDeviceCheck(id, port, options));
+    final reply = request(StartDeviceCheck(id, target, options));
     _checkStarting = true;
     final accepted = reply
         .then<void>((_) {})

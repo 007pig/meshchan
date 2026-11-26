@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'package:meshchan_app/runtime/controller.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 import 'diagnostic_fixture.dart';
 import 'device_scenario.dart' show require, rejects, deviceState;
@@ -143,7 +144,7 @@ Future<void> main(List<String> args) async {
   );
   await rejects(runtime.historyRequest(ReadHistory(target.value)));
   final handle = runtime.startRecordedDiagnostic(
-    ' explicit fixture ',
+    UsbSerialTarget(portPath: ' explicit fixture '),
     diagnosticRequest(),
   );
   await handle.accepted;

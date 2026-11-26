@@ -8,6 +8,7 @@ import 'package:meshchan_app/drafts/quit_coordinator.dart';
 import 'package:meshchan_app/runtime/controller.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 import '../tool/device_fixture.dart';
 import '../tool/device_scenario.dart';
@@ -30,7 +31,7 @@ void main() {
         final commands = ((await ready) as DeviceFixtureReady).commands;
         port.close();
         final handle = runtime.startDeviceCheck(
-          'A',
+          UsbSerialTarget(portPath: 'A'),
           const DeviceCheckOptions(),
         );
         await handle.accepted;
@@ -118,7 +119,12 @@ void main() {
     );
     await runtime.start();
     final commands = (await ready.future).commands;
-    await runtime.startDeviceCheck('A', const DeviceCheckOptions()).accepted;
+    await runtime
+        .startDeviceCheck(
+          UsbSerialTarget(portPath: 'A'),
+          const DeviceCheckOptions(),
+        )
+        .accepted;
     await deviceState(runtime, (s) => s.deviceCheck?.info != null);
     final quit = DraftQuitCoordinator(runtime)..auxiliaryActive = true;
     await quit.profiles.newProfile(
@@ -161,7 +167,10 @@ void main() {
     );
     await runtime.start();
     final commands = (await ready.future).commands;
-    final handle = runtime.startDeviceCheck('A', const DeviceCheckOptions());
+    final handle = runtime.startDeviceCheck(
+      UsbSerialTarget(portPath: 'A'),
+      const DeviceCheckOptions(),
+    );
     final rejected = expectLater(handle.accepted, throwsA(isA<RuntimeFault>()));
     await deviceState(runtime, (s) => s.deviceCheck?.info != null);
     final info = runtime.snapshot.lastDeviceInfo;

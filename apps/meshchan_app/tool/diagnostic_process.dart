@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'package:meshchan_app/runtime/controller.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 import 'diagnostic_fixture.dart';
 import 'device_scenario.dart' show deviceState, require, rejects;
@@ -67,7 +68,7 @@ Future<void> main(List<String> args) async {
   await runtime.start();
   final control = await ready.future;
   final handle = runtime.startRecordedDiagnostic(
-    ' explicit fixture ',
+    UsbSerialTarget(portPath: ' explicit fixture '),
     diagnosticRequest(),
   );
   if (mode != 'normal') await handle.accepted;
@@ -78,7 +79,12 @@ Future<void> main(List<String> args) async {
   );
   await rejects(runtime.refreshDevicePorts(1));
   await rejects(
-    runtime.startDeviceCheck('other', const DeviceCheckOptions()).accepted,
+    runtime
+        .startDeviceCheck(
+          UsbSerialTarget(portPath: 'other'),
+          const DeviceCheckOptions(),
+        )
+        .accepted,
   );
   if (resolving) {
     // Actual resolver entry, before record, with responsive control channel.
@@ -124,13 +130,16 @@ Future<void> main(List<String> args) async {
       await rejects(runtime.resumeAdmission());
       await rejects(
         runtime
-            .startRecordedDiagnostic(' explicit fixture ', diagnosticRequest())
+            .startRecordedDiagnostic(
+              UsbSerialTarget(portPath: ' explicit fixture '),
+              diagnosticRequest(),
+            )
             .accepted,
       );
     } else {
       await runtime.listDrafts(); // No Resume required.
       final next = runtime.startRecordedDiagnostic(
-        ' explicit fixture ',
+        UsbSerialTarget(portPath: ' explicit fixture '),
         diagnosticRequest(),
       );
       await next.accepted;

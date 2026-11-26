@@ -4,6 +4,7 @@ import 'dart:isolate';
 
 import 'package:meshchan_app/runtime/controller.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 import 'device_fixture.dart';
 
@@ -26,7 +27,12 @@ Future<void> main(List<String> args) async {
     await runtime.start();
     final commands = ((await ready) as DeviceFixtureReady).commands;
     observer.close();
-    await runtime.startDeviceCheck('A', const DeviceCheckOptions()).accepted;
+    await runtime
+        .startDeviceCheck(
+          UsbSerialTarget(portPath: 'A'),
+          const DeviceCheckOptions(),
+        )
+        .accepted;
     await deviceState(runtime, (s) => s.deviceCheck?.info != null);
     commands.send(DeviceFixtureControl.release);
     await deviceState(runtime, (s) => s.phase == RuntimePhase.fault);

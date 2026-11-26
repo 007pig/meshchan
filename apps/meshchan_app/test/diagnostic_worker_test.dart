@@ -3,9 +3,14 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:meshchan_app/device/model.dart';
+import 'package:meshchan_app/diagnostics/model.dart';
+import 'package:meshchan_app/profiles/preview.dart';
 import 'package:meshchan_app/runtime/controller.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart'
+    show CompanionTransportKind, ConnectionTarget, TcpTarget, UsbSerialTarget;
 
 import '../tool/diagnostic_fixture.dart';
 import '../tool/device_scenario.dart' show deviceState;
@@ -34,11 +39,11 @@ void main() {
     });
     await runtime.start();
     final first = runtime.startRecordedDiagnostic(
-      ' explicit fixture ',
+      UsbSerialTarget(portPath: ' explicit fixture '),
       diagnosticRequest(),
     );
     final duplicate = runtime.startRecordedDiagnostic(
-      ' explicit fixture ',
+      UsbSerialTarget(portPath: ' explicit fixture '),
       diagnosticRequest(),
     );
     // Rejections are observed by the controller even if a caller attaches later.
@@ -50,8 +55,8 @@ void main() {
     );
     await expectLater(duplicate.accepted, throwsA(busy));
     final third = runtime.startRecordedDiagnostic(
-      ' explicit fixture ',
-      diagnosticRequest(),
+      TcpTarget(host: 'fixture.invalid', port: 5000),
+      SendParameterRequest(),
     );
     final thirdObserved = expectLater(third.accepted, throwsA(busy));
     expect(runtime.pendingCount, 1);
@@ -62,10 +67,25 @@ void main() {
     expect(counts, [1]);
     (await control.future).send(true);
     await first.accepted;
+    final invalid = runtime.startRecordedDiagnostic(
+      TcpTarget(host: 'fixture.invalid', port: 5000),
+      diagnosticRequest(),
+    );
+    await expectLater(
+      invalid.accepted,
+      throwsA(
+        isA<RuntimeFault>().having(
+          (e) => e.host,
+          'unsupported product target',
+          CoordinationFault.invalidState,
+        ),
+      ),
+    );
     expect(runtime.pendingCount, 0);
     expect((await runtime.shutdown()).canExit, true);
   });
-  test('typed product bridge records PING and finite zero-response Responder with fresh sessions', () async {
+  test('UI sends exact Check, Ping and Responder worker targets', () async {
+    const diagnosticPath = ' explicit\tfixture ';
     final dir = Directory.systemTemp.createTempSync(
       'meshchan-typed-recording-',
     );
@@ -83,23 +103,67 @@ void main() {
       expect(result.fullySuccessful, true);
       historicalIds[result.registration.snapshot!.runId] = version;
     }
+    final profiles = <bool, ConnectionProfile>{};
+    for (final respond in [false, true]) {
+      profiles[respond] = await historical.profiles.save(
+        ProfileContent(
+          name: respond ? 'Fixture Responder' : 'Fixture Ping',
+          portHint: 'different profile port',
+          parameters: (await historical.resolveParameters(
+            diagnosticRequest(respond: respond),
+          )).parameters,
+        ),
+      );
+    }
     await historical.close();
     final observer = ReceivePort();
     final runtime = RuntimeController(
       resolveDirectory: () async => dir.path,
-      entry: diagnosticFixtureEntry(observer.sendPort),
+      entry: diagnosticFixtureEntry(
+        observer.sendPort,
+        expectedPortPath: diagnosticPath,
+      ),
     );
     final facts = <String>[];
+    final observedTargets = <ConnectionTarget>[];
+    final factoriesObserved = Completer<void>();
     final subscription = observer.listen((e) {
       if (e is DiagnosticFact) facts.add(e.name);
+      if (e is ConnectionTarget) {
+        observedTargets.add(e);
+        if (observedTargets.length == 4) factoriesObserved.complete();
+      }
     });
+    final device = DeviceModel(runtime);
+    final diagnostics = DiagnosticsModel(runtime, device);
+    addTearDown(() async {
+      diagnostics.dispose();
+      device.dispose();
+      await runtime.shutdown();
+      await subscription.cancel();
+      observer.close();
+      dir.deleteSync(recursive: true);
+    });
+
     await runtime.start();
+    await device.refresh();
+    expect(device.selected, isNull);
     for (final respond in [false, true]) {
-      final handle = runtime.startRecordedDiagnostic(
-        ' explicit fixture ',
-        diagnosticRequest(respond: respond),
-      );
-      await handle.accepted;
+      final profile = profiles[respond]!;
+      diagnostics.changeOperation(profile.parameters.operation);
+      await diagnostics.select(profile.id.value);
+      expect(diagnostics.inherited?.portHint, 'different profile port');
+      if (!respond) {
+        expect(diagnostics.canStart, false);
+        diagnostics.mode = ContentMode.hex;
+        diagnostics.content.text = '0080ff';
+      }
+      device.select(diagnosticPath);
+      final starting = diagnostics.startDiagnostic();
+      final handle = diagnostics.handle!;
+      device.select(diagnosticFixtureCheckPath);
+      await starting;
+      expect(diagnostics.actionFailure, isNull);
       await deviceState(
         runtime,
         (s) =>
@@ -107,6 +171,7 @@ void main() {
             s.operation!.done &&
             s.gate == DeviceGateState.free,
       );
+      expect(diagnostics.attemptPort, diagnosticPath);
       final op = runtime.snapshot.operation!;
       expect(op.runId, isNotNull);
       expect(op.resourcesReleased, true);
@@ -129,15 +194,33 @@ void main() {
         expect(result.applicationRttUs, isNotNull);
       }
       await runtime.cancelRecordedDiagnostic(handle); // Settled idempotence.
-      await runtime
-          .startDeviceCheck('metadata fixture', const DeviceCheckOptions())
-          .accepted;
+      final checking = device.check();
+      final checkId = device.handle!.id;
+      device.select(diagnosticPath);
+      await checking;
+      expect(device.actionFailure, isNull);
       await deviceState(
         runtime,
         (s) =>
-            s.deviceCheck?.released == true && s.gate == DeviceGateState.free,
+            s.deviceCheck?.id == checkId &&
+            s.deviceCheck!.released &&
+            s.gate == DeviceGateState.free,
       );
+      expect(runtime.snapshot.deviceCheck!.port, diagnosticFixtureCheckPath);
+      expect(runtime.snapshot.lastDeviceInfo!.port, diagnosticFixtureCheckPath);
     }
+    await factoriesObserved.future;
+    expect(observedTargets, everyElement(isA<UsbSerialTarget>()));
+    expect(
+      observedTargets.map((target) => target.kind),
+      everyElement(CompanionTransportKind.usbSerial),
+    );
+    expect(observedTargets.cast<UsbSerialTarget>().map((t) => t.portPath), [
+      diagnosticPath,
+      diagnosticFixtureCheckPath,
+      diagnosticPath,
+      diagnosticFixtureCheckPath,
+    ]);
     expect(facts.where((s) => s == 'factory').length, 2);
     expect((await runtime.shutdown()).canExit, true);
     final storage = await CoreStorage.open(dataDirectory: dir);
@@ -162,9 +245,6 @@ void main() {
       expect((await reopened.history.read(entry.key)).appVersion, entry.value);
     }
     await reopened.close();
-    await subscription.cancel();
-    observer.close();
-    dir.deleteSync(recursive: true);
   });
 }
 

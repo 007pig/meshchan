@@ -9,7 +9,7 @@ import 'device_protocol.dart';
 final class FiniteDeviceCheck {
   FiniteDeviceCheck(
     this.id,
-    this.port,
+    this.target,
     this.options, {
     required this.createTransport,
     required this.publish,
@@ -33,9 +33,9 @@ final class FiniteDeviceCheck {
     StreamSubscription<MeshCoreSessionEvent> subscription,
   ) => subscription.cancel();
   final int id;
-  final String port;
+  final UsbSerialTarget target;
   final DeviceCheckOptions options;
-  final CompanionTransport Function(String) createTransport;
+  final CompanionTransportFactory createTransport;
   final MeshCoreSession Function(CompanionTransport, DeviceCheckOptions)
   createSession;
   final Future<void> Function(StreamSubscription<MeshCoreSessionEvent>)
@@ -51,7 +51,7 @@ final class FiniteDeviceCheck {
   DeviceInformation? _info;
   DeviceCheckSnapshot get snapshot => DeviceCheckSnapshot(
     id: id,
-    port: port,
+    port: target.portPath,
     options: options,
     state: _state,
     cancelApplied: _cancel,
@@ -94,7 +94,7 @@ final class FiniteDeviceCheck {
       // A processable stop/cancel checkpoint precedes construction/open.
       await Future<void>.delayed(Duration.zero);
       if (_cancel) return;
-      unowned = createTransport(port);
+      unowned = createTransport(target);
       _cleanup = DeviceCleanup.pending;
       final session = _sessionValue = createSession(unowned, options);
       unowned = null; // Session exclusively owns transport, including close.
@@ -117,7 +117,11 @@ final class FiniteDeviceCheck {
       if (_cancel) return;
       try {
         final info = await session.connect();
-        _info = DeviceInformation(info, port, DateTime.now().toUtc());
+        _info = DeviceInformation(
+          info,
+          target.portPath,
+          DateTime.now().toUtc(),
+        );
         _state = session.state;
         _emit(); // Information is visible even if close never settles.
       } catch (e) {

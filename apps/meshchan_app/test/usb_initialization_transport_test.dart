@@ -44,7 +44,7 @@ void main() {
       final raw = _Device();
       final check = FiniteDeviceCheck(
         1,
-        'explicit-owned-test-port',
+        UsbSerialTarget(portPath: 'explicit-owned-test-port'),
         const DeviceCheckOptions(requestSeconds: 15, initializationSeconds: 30),
         createTransport: (_) => UsbInitializationTransport(raw),
         publish: (_) {},

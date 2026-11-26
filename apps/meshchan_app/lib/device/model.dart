@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
-import 'package:meshcore_link/meshcore_link.dart' show SerialPortDescription;
+import 'package:meshcore_link/meshcore_link.dart'
+    show SerialPortDescription, UsbSerialTarget;
 
 import '../runtime/controller.dart';
 import '../runtime/protocol.dart';
@@ -101,22 +102,31 @@ final class DeviceModel extends ChangeNotifier {
   }
 
   Future<void> check() async {
-    if (!canAccess ||
-        !allowAction() ||
-        !available ||
-        stale ||
-        options == null) {
+    final path = selected;
+    if (!canAccess || !allowAction() || path == null || !available || stale) {
+      return;
+    }
+    final checkOptions = options;
+    if (checkOptions == null) return;
+    final UsbSerialTarget target;
+    try {
+      target = UsbSerialTarget(portPath: path);
+    } on ArgumentError {
+      actionFailure = const RuntimeFault(host: CoordinationFault.invalidState);
+      _notify();
       return;
     }
     starting = true;
     actionFailure = null;
     cancelRequested = null;
-    final next = handle = runtime.startDeviceCheck(selected!, options!);
-    _notify();
     try {
-      await next.accepted;
-    } catch (e) {
-      actionFailure = RuntimeFault.from(e);
+      final next = handle = runtime.startDeviceCheck(target, checkOptions);
+      _notify();
+      try {
+        await next.accepted;
+      } catch (e) {
+        actionFailure = RuntimeFault.from(e);
+      }
     } finally {
       starting = false;
       _notify();

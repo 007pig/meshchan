@@ -10,6 +10,7 @@ import 'package:meshchan_app/export/coordinator.dart';
 import 'package:meshchan_app/runtime/protocol.dart';
 import 'package:meshchan_app/runtime/controller.dart';
 import 'package:meshchan_core/meshchan_core.dart';
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 
 import 'support/draft_runtime.dart';
 
@@ -108,10 +109,11 @@ void main() {
       // No event-loop turn after Begin: the real host has not received an ACK.
       expect(r.ordinaryAdmissionOpen, false);
       final parameters = PingParameterRequest();
+      final usb = UsbSerialTarget(portPath: '/never');
       for (final request in <RuntimeRequest>[
         const RefreshDevicePorts(1),
-        StartDeviceCheck(1, '/never', const DeviceCheckOptions()),
-        StartRecordedDiagnostic(1, '/never', parameters),
+        StartDeviceCheck(1, usb, const DeviceCheckOptions()),
+        StartRecordedDiagnostic(1, usb, parameters),
         const ListDrafts(),
         const ListProfiles(),
         const ReadSettings(),

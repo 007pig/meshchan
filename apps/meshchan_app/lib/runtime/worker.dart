@@ -51,13 +51,15 @@ final class WorkerDispatcher {
     required this.finish,
     Future<CoreStorage> Function(Directory)? openStorage,
     List<SerialPortDescription> Function()? enumeratePorts,
-    CompanionTransport Function(String)? createCheckTransport,
-    CompanionTransport Function(String)? createDiagnosticTransport,
+    CompanionTransportFactory? createCheckTransport,
+    CompanionTransportFactory? createDiagnosticTransport,
   }) : _createDiagnosticTransport =
-           createDiagnosticTransport ?? createUsbCompanionTransport,
+           createDiagnosticTransport ??
+           createCompanionTransportFactory(appCompletionQueries: true),
        _enumeratePorts = enumeratePorts ?? SerialPorts().listPorts,
        _createCheckTransport =
-           createCheckTransport ?? createUsbCompanionTransport,
+           createCheckTransport ??
+           createCompanionTransportFactory(appCompletionQueries: true),
        _openStorage =
            openStorage ??
            ((directory) => CoreStorage.open(dataDirectory: directory));
@@ -66,8 +68,8 @@ final class WorkerDispatcher {
   final void Function() finish;
   final Future<CoreStorage> Function(Directory) _openStorage;
   final List<SerialPortDescription> Function() _enumeratePorts;
-  final CompanionTransport Function(String) _createCheckTransport;
-  final CompanionTransport Function(String) _createDiagnosticTransport;
+  final CompanionTransportFactory _createCheckTransport;
+  final CompanionTransportFactory _createDiagnosticTransport;
   _RecordingAttempt? _attempt;
   int _lastAttemptId = 0;
   FiniteDeviceCheck? _check;
@@ -272,9 +274,10 @@ final class WorkerDispatcher {
           return const Accepted();
         });
       case StartRecordedDiagnostic():
+        final target = request.target;
         try {
           if (request.id <= _lastAttemptId ||
-              request.port.trim().isEmpty ||
+              target is! UsbSerialTarget ||
               (request.parameters is! PingParameterRequest &&
                   request.parameters is! RespondParameterRequest)) {
             throw const RuntimeFault(host: CoordinationFault.invalidState);
@@ -282,7 +285,7 @@ final class WorkerDispatcher {
           _beginRecording(
             request.id,
             (storage) => storage.resolveParameters(request.parameters),
-            () => _createDiagnosticTransport(request.port),
+            () => _createDiagnosticTransport(target),
           );
           _lastAttemptId = request.id;
           _reply(id, value: const Accepted());
@@ -345,6 +348,7 @@ final class WorkerDispatcher {
         _emit();
         _reply(id, value: result);
       case StartDeviceCheck():
+        final target = request.target;
         if (!_canAdmit) {
           _reply(
             id,
@@ -353,7 +357,7 @@ final class WorkerDispatcher {
           return;
         }
         if (request.id <= _lastCheckId ||
-            request.port.trim().isEmpty ||
+            target is! UsbSerialTarget ||
             !request.options.valid) {
           _reply(
             id,
@@ -371,7 +375,7 @@ final class WorkerDispatcher {
         _lastCheckId = request.id;
         final check = _check = FiniteDeviceCheck(
           request.id,
-          request.port,
+          target,
           request.options,
           createTransport: _createCheckTransport,
           publish: (value) {

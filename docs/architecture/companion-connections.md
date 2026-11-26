@@ -5,8 +5,8 @@
 Phase 2 aims to unify access to Companion devices over USB, TCP, and BLE.
 Phase 2A establishes technical feasibility, the connection target model, and
 the adapter boundary, then migrates the existing USB entry points internally.
-Step 1 is the source review and documentation baseline. It authorizes no
-product or runtime changes. Production TCP belongs to 2B, production BLE to
+Step 1 established the source review and documentation baseline. Step 5 adds
+the pure Dart target model. Production TCP belongs to 2B, production BLE to
 2C, and saved connections and database migration to 2D.
 
 The baseline is macOS arm64, an explicitly selected device per operation, and
@@ -26,6 +26,7 @@ decision in the applicable later step.
 | Step 2 changes | The [transport baseline](companion-transport-baseline.md) pins the USB, TCP, and BLE sources, records initial acceptance targets, and sets the macOS BLE verification order. The [Step 2 validation record](../validation/phase-2a2-protocol-backends.md) records the separate checkout and static checks. |
 | Step 3 changes | The [standalone macOS BLE probe](../../tool/ble_probe/README.md) carries the pinned backend, a private transport, and structural evidence for finite query/start. The [Step 3 validation record](../validation/phase-2a3-ble-host.md) tracks software and real-device evidence. |
 | Step 4 changes | The standalone probe adds a private root-to-worker bridge and drives the existing runtime with an owned SQLite fixture. [Step 4 validation record](../validation/phase-2a4-ble-worker.md) |
+| Step 5 changes | The public link API adds typed USB serial, TCP, and BLE target values. The CLI and App still enter through their existing USB string factories. [Step 5 validation record](../validation/phase-2a5-connection-targets.md) |
 | Planned changes and open questions | The [proposed responsibilities](#responsibilities-and-future-seams), [compatibility inventory](#compatibility-inventory), and [handoffs](#phase-and-step-handoffs) identify the future work and the evidence it still needs. |
 
 ## Current call paths
@@ -126,7 +127,7 @@ handling confined to the USB adapter.
 
 | Concept | Responsibility | Status |
 | --- | --- | --- |
-| Connection target | Represent the explicit target of one operation. Construction performs no discovery or I/O. | Proposed. The current CLI and App pass the selected USB path. |
+| Connection target | Represent the explicit target of one operation. Construction performs no discovery or I/O. | Implemented in `meshcore_link`. The current CLI and App still pass the selected USB path. |
 | Transport | Own one local connection's lifecycle and exchange complete Companion frames. | Existing `CompanionTransport` boundary. A target-based factory is planned. |
 | Session | Own Companion initialization, command association, deadlines, and inbox access. | Existing `MeshCoreSession` boundary. |
 | Operation preset | Supply diagnostic parameters such as operation, channels, routes, endpoint test labels, and budgets. | Existing `ConnectionProfile` and resolver behavior. |
@@ -151,13 +152,104 @@ per-write results, safe faults, and affirmative close. Cancel starts physical
 cleanup independently of a pending open or write. A missing close or worker
 release keeps the corresponding owner unavailable. Normal Quit requires
 runtime release, acknowledgement, actual worker exit, and root cleanup.
-The joint host scenario verified query/start and physical release with the
-dual-patch 6.2.1 probe and paired Heltec target. Same-process reconnect has
-synthetic coverage. The bridge is private to the probe and the recording
-path retains its existing owner. [Step 4 decision](../validation/phase-2a4-ble-worker.md#execution-location-decision)
+The earlier signed dual-patch 6.2.1 probe verified query/start, physical
+release, and normal Quit with independent SQLite reopen on the paired
+Heltec target. The final review-fix build has software and guest fake-backend
+evidence. Real same-process reconnect, maximum frames, other devices, and
+broader recovery remain open. The bridge is private to the probe and the
+recording path retains its existing owner.
+[Case A receipt](../validation/phase-2a4-ble-worker.md#case-a-receipt-and-release) ·
+[Step 4 decision](../validation/phase-2a4-ble-worker.md#execution-location-decision) ·
+[Final build checks](../validation/phase-2a4-ble-worker.md#pre-pr-validation)
 [Link exports](../../packages/meshcore_link/lib/meshcore_link.dart) ·
 [Core boundaries](offline-core.md#package-responsibilities-and-dependency-direction) ·
 [App boundaries](flutter-host.md#package-boundaries-and-host-structure)
+
+## Connection targets
+
+`package:meshcore_link/meshcore_link.dart` exports the sealed
+`ConnectionTarget` family and `CompanionTransportKind`. Each variant is
+immutable and determines its own kind.
+
+| Target | Fields | Kind |
+| --- | --- | --- |
+| `UsbSerialTarget` | `String portPath` | `usbSerial` |
+| `TcpTarget` | `String host` and `int port` | `tcp` |
+| `BleTarget` | `String selectionId` | `ble` |
+
+```dart
+import 'package:meshcore_link/meshcore_link.dart';
+
+final usb = UsbSerialTarget(portPath: '/dev/cu.meshchan-example');
+final tcp = TcpTarget(host: 'companion.example.test.', port: 5050);
+final ble = BleTarget(selectionId: 'Host Selection:Example/A');
+```
+
+- **USB.** The caller supplies an explicit nonblank path without NUL. The
+  value preserves the entire string, including surrounding spaces, and
+  accepts platform spellings such as `/dev/ttyUSB0` and `COM3`. A path is
+  passed through without expansion or filesystem checks. The kind describes
+  the serial adapter category.
+- **TCP.** The port is required and ranges from 1 through 65535. The host
+  accepts ASCII DNS names, including single labels, `.local`, and already
+  encoded Punycode. DNS labels are 1 to 63 bytes of ASCII letters, digits,
+  or internal hyphens, with a total of at most 253 bytes before an optional
+  final dot. A numeric single label such as `123` or `123.` is allowed.
+  Dotted sequences of numeric labels must parse as IPv4 with four decimal
+  octets, without leading zeros or a final dot. A colon sends the complete
+  host to the bare IPv6 parser, so `2001:db8::1:5050` is an IPv6 address and
+  still requires a separate port. This contract rejects whitespace,
+  control characters, URI components, bracketed addresses, IPv6 zone IDs,
+  and raw Unicode domains. The TCP phase can explicitly extend the input
+  contract. Valid hosts keep their exact spelling, including case, the DNS
+  final dot, and the IPv6 representation.
+- **BLE.** The host supplies an opaque nonblank selection string without
+  surrounding whitespace or control characters. The value preserves the
+  exact text and accepts arbitrary formats within those constraints. The
+  selection has meaning within the supplying host's scope. The future host
+  verifies scope and generation, rejects stale selections, and maps a
+  valid selection to its physical connection. A selection carries no
+  authenticated device identity.
+
+Construction runs synchronous static checks and performs no discovery,
+platform queries, DNS resolution, storage access, or connection setup.
+Success only establishes input validity. The values carry no connection
+state, reselect or retry behavior, or serialized form. Callers can send
+the objects directly between isolates that share the same code.
+
+Equality requires the same variant and exact field values. Differences in
+TCP spelling can make values unequal even when the names or addresses
+refer to the same host. `hashCode` supports local sets and maps within an
+isolate. `safeSummary` and `toString()` return only the kind label
+(`usbSerial`, `tcp`, or `ble`). Validation errors expose the field and a
+fixed reason. The exact field values are available to callers for an
+explicit connection operation. Diagnostic snapshots and History exports
+continue to use their existing allowlists.
+
+`ConnectionProfile` remains an operation preset with an optional `portHint`.
+The resolver supplies parameters, and the invocation supplies the explicit
+selection. Saved selection configuration and its schema belong to 2D.
+The CLI and App still accept USB paths through their existing string entry
+points. Product TCP and BLE adapters belong to 2B and 2C, respectively.
+
+### Step 6 factory handoff
+
+Dispatch on the concrete `ConnectionTarget` variant and create a fresh
+transport per explicit operation. Pass `UsbSerialTarget.portPath` verbatim
+to `createUsbCompanionTransport`. Keep 115200 baud, the two-second serial
+write timeout, and the zero default startup delay. The factory must
+preserve CLI `appCompletionQueries: false` and the App's default `true`.
+
+A future TCP adapter takes the exact host and explicit port. A future BLE
+factory asks the root host to validate and map the opaque selection to a
+host-owned connection, then supplies a fresh transport proxy to the worker.
+Backend selection and resource acquisition stay with the factory or host.
+The Step 4 bridge protocol remains private to the probe.
+
+The transport, session, and host retain their lifecycle contracts. The
+owner subscribes before open, exchanges complete inner frames, and
+receives actual local write results. Logical completion and affirmative
+physical release remain separate, and release still controls lease reuse.
 
 ## Behavior to preserve
 
@@ -230,9 +322,9 @@ release on the same target.
 | 1 | Completed | Fix the scope and baseline in this document and the [validation record](../validation/phase-2a-connections.md). |
 | 2 | Completed | Pin the protocol baseline, acceptance targets, and BLE candidates in the [transport baseline](companion-transport-baseline.md) and [validation record](../validation/phase-2a2-protocol-backends.md). |
 | 3 | Host and software checks complete, paired main scenario passed | The [real scenario ledger](../validation/phase-2a3-ble-host.md#real-ble-scenario-ledger) retains both attempts, actual release, and remaining coverage. |
-| 4 | Joint hardware Case A and normal Quit passed | Adopt root BLE ownership and worker session, gate, and storage for the remaining design. The [scenario ledger](../validation/phase-2a4-ble-worker.md#real-ble-scenarios) retains the synthetic and outstanding hardware boundaries. |
-| 5 | Planned | Implement pure Dart targets for one explicit operation. Carry identity as data and keep target construction free of discovery, plugin startup, or implicit selection. Preserve the existing USB path semantics. |
-| 6 | Planned | Create a fresh transport per selected target. Preserve subscribe-before-open and the complete-frame, local-write, and actual-release contracts. A future BLE factory can supply a worker proxy to a root-owned connection. |
+| 4 | Execution location adopted | The earlier signed probe passed [real Case A and normal Quit](../validation/phase-2a4-ble-worker.md#case-a-receipt-and-release). The final review-fix build carries [software and guest fake-backend evidence](../validation/phase-2a4-ble-worker.md#pre-pr-validation). |
+| 5 | Completed | The [public model](#connection-targets) represents explicit USB serial, TCP, and BLE selections as plain values. [Validation record](../validation/phase-2a5-connection-targets.md) |
+| 6 | Planned | Create a fresh transport per target with the existing ownership and lifecycle guarantees. [Factory handoff](#step-6-factory-handoff) |
 | 7 | Planned | Migrate internal CLI entry points. |
 | 8 | Planned | Migrate App requests and worker entry points. |
 | 9 | Planned | Run targeted regressions and build verification. |

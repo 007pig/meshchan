@@ -565,8 +565,10 @@ one worker-owned session, the existing gate, and an owned SQLite fixture.
 The chosen direction keeps GATT, CoreBluetooth callbacks, and native
 receipt checks on the Flutter root isolate. The worker transport uses
 correlated readiness, complete frames, local write results, and affirmative
-physical release. The final dual-patch probe passed the joint host
+physical release. The earlier signed dual-patch probe passed the joint host
 query/start scenario and normal Quit with independent SQLite reopen on the
-paired target. The launch, fault results, release boundaries, untested
-hardware scenarios, and Steps 5 and 6 constraints are in the
-[Step 4 validation record](../validation/phase-2a4-ble-worker.md).
+paired target. The final review-fix build passed software checks and guest
+Quit and reopen with the fake backend. The hardware receipt and final
+software evidence belong to their respective executable hashes.
+[Case A receipt](../validation/phase-2a4-ble-worker.md#case-a-receipt-and-release) ·
+[Final build checks](../validation/phase-2a4-ble-worker.md#pre-pr-validation)

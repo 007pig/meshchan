@@ -1,11 +1,12 @@
 // Controlled child process for actual OS-signal/storage ownership tests.
 import 'dart:io';
 
+import 'package:meshcore_link/meshcore_link.dart' show UsbSerialTarget;
 import 'package:meshctl/meshctl.dart';
 import 'package:meshctl/src/process_io.dart';
 
 import '../../../../packages/meshchan_core/test/history/support.dart' as f;
-import '../datagram_cli_test.dart' show args;
+import '../datagram_cli_test.dart' show args, syntheticPortPath;
 import '../datagram_storage_signals_test.dart'
     show StorageGates, successfulSend;
 
@@ -28,7 +29,12 @@ Future<void> main(List<String> arguments) async {
     output: stdout,
     error: stderr,
     openStorage: (_) => storage.open(),
-    createTransport: (_) => successfulSend(),
+    createTransport: (target) {
+      if (target is! UsbSerialTarget || target.portPath != syntheticPortPath) {
+        throw StateError('Unexpected CLI serial target.');
+      }
+      return successfulSend();
+    },
     stopRequests: processStopRequests().map((request) {
       // Acknowledge actual OS delivery before the parent releases storage.
       stderr.writeln('TEST_SIGNAL:${request.name}');

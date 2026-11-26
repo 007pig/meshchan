@@ -18,6 +18,10 @@ import 'src/version.dart';
 
 export 'src/session_command.dart' show CliStopRequest;
 
+final _defaultCompanionTransportFactory = createCompanionTransportFactory(
+  appCompletionQueries: false,
+);
+
 /// Runs meshctl with injectable output, diagnostics, transport, and cancellation.
 /// Unknown programming errors propagate to the process boundary after cleanup.
 Future<int> runCli(
@@ -25,7 +29,7 @@ Future<int> runCli(
   required StringSink output,
   required StringSink error,
   SerialPorts? serialPorts,
-  CompanionTransport Function(String path)? createTransport,
+  CompanionTransportFactory? createTransport,
   Stream<CliStopRequest>? stopRequests,
   Duration Function()? diagnosticElapsed,
   Uint8List Function()? diagnosticNonceFactory,
@@ -56,7 +60,7 @@ Future<int> _run(
   List<String> arguments,
   CliOutput io,
   SerialPorts? serialPorts,
-  CompanionTransport Function(String)? createTransport,
+  CompanionTransportFactory? createTransport,
   Stream<CliStopRequest>? stopRequests,
   Duration Function()? diagnosticElapsed,
   Uint8List Function()? diagnosticNonceFactory,
@@ -221,7 +225,7 @@ Future<int> _run(
       datagram!,
       io,
       open,
-      createTransport ?? _createUsbSessionTransport,
+      createTransport ?? _defaultCompanionTransportFactory,
       stopRequests,
       elapsed: diagnosticElapsed,
       nonceFactory: diagnosticNonceFactory,
@@ -248,7 +252,7 @@ Future<int> _run(
           : null;
       sessionOptions = SessionOptions(
         command: name,
-        port: requiredPortOption(command),
+        target: requiredUsbTarget(command),
         json: command.flag('json'),
         verbose: command.flag('verbose'),
         requestTimeout: Duration(seconds: request),
@@ -266,7 +270,7 @@ Future<int> _run(
     return runSessionCommand(
       sessionOptions,
       io,
-      createTransport ?? _createUsbSessionTransport,
+      createTransport ?? _defaultCompanionTransportFactory,
       stopRequests,
     );
   }
@@ -449,6 +453,3 @@ List<String> _literalOptionValues(ArgParser parser, List<String> arguments) {
   }
   return result;
 }
-
-CompanionTransport _createUsbSessionTransport(String path) =>
-    createUsbCompanionTransport(path, appCompletionQueries: false);

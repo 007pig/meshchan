@@ -15,6 +15,7 @@ import 'session_cli_test.dart'
     show FakeCompanionTransport, ControlledSink, Outcome, deviceInfo, selfInfo;
 
 const second = Duration(seconds: 1);
+const syntheticPortPath = ' synthetic ';
 final clocks = <FakeAsync>[];
 final checks = <void Function()>[];
 void test(String description, FutureOr<void> Function() body) {
@@ -46,7 +47,7 @@ List<String> args(
 }) => [
   'datagram',
   operation,
-  '--port= synthetic ',
+  '--port=$syntheticPortPath',
   if (json) '--json',
   '--task-timeout=20',
   if (operation != 'listen') ...['--send-channel=3', '--route-descriptor=0xFF'],
@@ -94,8 +95,8 @@ final class Harness {
           arguments,
           output: output ?? out,
           error: error ?? err,
-          createTransport: (path) {
-            paths.add(path);
+          createTransport: (target) {
+            targets.add(target);
             return transport;
           },
           stopRequests: stops.stream,
@@ -109,7 +110,7 @@ final class Harness {
   final FakeAsync clock;
   final transport = FakeCompanionTransport();
   final out = StringBuffer(), err = StringBuffer();
-  final paths = <String>[];
+  final targets = <ConnectionTarget>[];
   int subscriptions = 0, cancellations = 0;
   Object? cancelError;
   late final StreamController<CliStopRequest> stops;
@@ -224,7 +225,7 @@ void main() {
     virtual((clock) {
       final transport = FakeCompanionTransport();
       final out = StringBuffer(), err = StringBuffer();
-      var cancels = 0;
+      var cancels = 0, factories = 0;
       final stops = StreamController<CliStopRequest>(
         onCancel: () {
           cancels++;
@@ -236,7 +237,10 @@ void main() {
           args('ping'),
           output: out,
           error: err,
-          createTransport: (_) => transport,
+          createTransport: (_) {
+            factories++;
+            return transport;
+          },
           stopRequests: ImmediateSignal(stops.stream),
           diagnosticElapsed: () => clock.elapsed,
         ),
@@ -245,6 +249,7 @@ void main() {
       settled(() {
         expect(result.value, 130);
         expect(cancels, 1);
+        expect(factories, 0);
         expect(transport.opens, 0);
         expect(transport.closes, 0);
         final record = jsonDecode(out.toString());
@@ -486,7 +491,7 @@ void main() {
         h.ok();
         h.end(0);
         settled(() {
-          expect(h.paths, [' synthetic ']);
+          expect(h.targets, [UsbSerialTarget(portPath: syntheticPortPath)]);
           expect(h.lines, hasLength(1));
           expect(h.facts['send']['deviceAcceptanceConfirmed'], true);
         });

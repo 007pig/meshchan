@@ -15,7 +15,7 @@ import 'session_command.dart';
 Future<int> runDatagramCommand(
   DatagramOptions options,
   CliOutput io,
-  CompanionTransport Function(String) createTransport,
+  CompanionTransportFactory createTransport,
   DatagramSignals stopRequests, {
   Duration Function()? elapsed,
   Uint8List Function()? nonceFactory,
@@ -39,7 +39,7 @@ Future<int> runDatagramCommand(
     if (io.failed) stop('output_failure', 74);
     if (report.code == 0) {
       session = MeshCoreSession(
-        transport: createTransport(options.port),
+        transport: createTransport(options.target),
         appName: 'Meshchan',
         requestTimeout: options.requestTimeout,
         initializationTimeout: options.initializationTimeout,

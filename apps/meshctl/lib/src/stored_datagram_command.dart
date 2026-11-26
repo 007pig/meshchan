@@ -2,7 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:meshchan_core/meshchan_core.dart';
-import 'package:meshcore_link/meshcore_link.dart' show CompanionTransport;
+import 'package:meshcore_link/meshcore_link.dart'
+    show CompanionTransportFactory;
 
 import 'business_storage.dart';
 import 'cli_display.dart';
@@ -19,7 +20,7 @@ Future<int> runStoredDatagram(
   DatagramInput input,
   CliOutput io,
   Future<CoreStorage> Function() open,
-  CompanionTransport Function(String) createTransport,
+  CompanionTransportFactory createTransport,
   Stream<CliStopRequest>? stopRequests, {
   Duration Function()? elapsed,
   Uint8List Function()? nonceFactory,

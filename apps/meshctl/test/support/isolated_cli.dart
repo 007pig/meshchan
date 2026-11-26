@@ -12,7 +12,7 @@ Future<int> runCli(
   required StringSink output,
   required StringSink error,
   SerialPorts? serialPorts,
-  CompanionTransport Function(String)? createTransport,
+  CompanionTransportFactory? createTransport,
   Stream<cli.CliStopRequest>? stopRequests,
   Duration Function()? diagnosticElapsed,
   Uint8List Function()? diagnosticNonceFactory,

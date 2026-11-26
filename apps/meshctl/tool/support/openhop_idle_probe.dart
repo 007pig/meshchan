@@ -89,7 +89,7 @@ Future<Map<String, Object?>> runOpenHopIdleProbe({
   final code = await runSessionCommand(
     SessionOptions(
       command: 'watch',
-      port: 'openhop-b',
+      target: UsbSerialTarget(portPath: 'openhop-b'),
       json: true,
       verbose: false,
       requestTimeout: commandTimeout,

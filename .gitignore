@@ -25,3 +25,6 @@ __pycache__/
 .DS_Store
 # Widget Preview related
 .widget_preview/
+
+# Claude Code local settings (shared .claude/ files stay tracked).
+.claude/settings.local.json

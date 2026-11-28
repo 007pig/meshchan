@@ -45,3 +45,16 @@
 - Coordinate resource-heavy builds and tests on the shared Mac. At handoff,
   stop temporary background jobs started for the task and remove temporary
   files that are no longer needed. Retain validation evidence.
+
+## Shared Agent skills
+
+- Keep each shared skill, including `SKILL.md`, `scripts/`, `references/` and
+  `assets/`, in `.agents/skills/<name>/`. This is the only copy. Edit it there.
+  Codex reads that directory. Claude Code reads it through the relative
+  symlink `.claude/skills -> ../.agents/skills`. Adding, editing, renaming
+  or deleting a skill needs no other step. Do not put files in
+  `.claude/skills/` directly; they land in `.agents/skills/`.
+- Follow the open [Agent Skills specification](https://agentskills.io/specification).
+  Keep `SKILL.md` free of tool names and frontmatter fields that belong to
+  one agent. Put platform metadata in its own file, such as
+  `agents/openai.yaml`.
